@@ -14,6 +14,6 @@ Süre: ~34 saniye
 - `test_server_security.py`: Yetkisiz erişimler, şifrelenmiş kimlik bilgileri, API güvenliği.
 - `test_inventory_engines.py`: Ajan gerektirmeyen (Agentless) ağ keşif mekanizmaları ve veri yazımı.
 - `test_analyst_intelligence.py`: Cihazların güvenlik skorlaması, açıklık tespiti.
-- `test_final_intelligence.py`: Yapay zeka tabanlı öneri korelasyonları.
+- `test_final_intelligence.py`: Sezgisel analiz (Heuristic) tabanlı öneri korelasyonları.
 
 **Sonuç:** Uygulama (Netmon), hiçbir kod değişikliğine gerek duymadan tüm "Production" testlerini %100 başarıyla geçmiştir.
