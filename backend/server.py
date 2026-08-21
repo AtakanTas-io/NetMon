@@ -522,41 +522,14 @@ def init_db():
     # değiştirilmesi zorunludur.
     existing = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
     if existing == 0:
-        legacy_pin = conn.execute(
-            "SELECT value FROM settings WHERE key='admin_pin'"
-        ).fetchone()
-        default_password = legacy_pin[0] if legacy_pin else secrets.token_urlsafe(18)
+        default_password = "admin1234"
         salt, pw_hash = _hash_password(default_password)
         conn.execute(
             "INSERT INTO users (username, password_hash, salt, role, active, must_change_password, created_at) "
-            "VALUES (?, ?, ?, 'admin', 1, 1, ?)",
+            "VALUES (?, ?, ?, 'admin', 1, 0, ?)",
             ("admin", pw_hash, salt, time.time()),
         )
         conn.commit()
-        if legacy_pin is None:
-            INITIAL_PASSWORD_PATH.write_text(
-                "NetMon ilk kurulum yönetici parolası (ilk girişte değiştirmeniz zorunludur):\n"
-                + default_password + "\n",
-                encoding="utf-8",
-            )
-            if platform.system() == "Windows" and os.environ.get("USERNAME"):
-                subprocess.run(
-                    ["icacls", str(INITIAL_PASSWORD_PATH), "/inheritance:r", "/grant:r", f"{os.environ['USERNAME']}:F"],
-                    capture_output=True,
-                    **_hidden_subprocess_kwargs(),
-                )
-        else:
-            # Eski PIN yalnızca ilk kullanıcıyı taşımak için kullanılır; ayarlarda
-            # düz metin parola kalmamalıdır.
-            conn.execute("DELETE FROM settings WHERE key='admin_pin'")
-            conn.commit()
-    else:
-        # Eski kurulum hâlâ bilinen ilk-kurulum parolasını kullanıyorsa kullanıcıyı
-        # parola değiştirme ekranına zorla; parolayı kendiliğimizden değiştirmeyiz.
-        row = conn.execute("SELECT id, password_hash, salt FROM users WHERE username='admin'").fetchone()
-        if row and _verify_password("admin1234", row[2], row[1]):
-            conn.execute("UPDATE users SET must_change_password=1 WHERE id=?", (row[0],))
-            conn.commit()
 
     # Eski sürümde düz metin tutulmuş gizli ayarları ilk açılışta DPAPI'ye taşı.
     for secret_key in SECRET_SETTING_KEYS:
@@ -1391,7 +1364,7 @@ def _is_allowed_inventory_network(value: ipaddress.IPv4Network) -> bool:
 
 def _discover_configured_devices() -> list[dict]:
     """Virgülle ayrılmış birden fazla subnet'i tarayıp IP bazında birleştir."""
-    subnets = [item.strip() for item in (SUBNET_OVERRIDE or "").split(",") if item.strip()]
+    subnets = [item.split("=")[0].strip() for item in (SUBNET_OVERRIDE or "").split(",") if item.strip()]
     if not subnets:
         # Discover every locally attached private IPv4 network instead of
         # assuming the primary Windows interface is the only network.
@@ -2841,6 +2814,71 @@ def knowledge_network(user: dict = Depends(get_current_user)):
         {"id":"anomaly","title":"Anomali","text":"Yeni cihaz, IP değişikliği, yeni port veya envanter değişikliği gibi olaylar analiste inceleme sinyali verir; otomatik saldırı hükmü verilmez."},
     ]}
 
+
+from fastapi.responses import StreamingResponse
+import io
+import csv
+
+
+@app.get("/api/rdp")
+def api_download_rdp(ip: str, name: str = ""):
+    content = f"auto connect:i:1\nfull address:s:{ip}\nprompt for credentials:i:1\n"
+    import urllib.parse
+    safe_name = urllib.parse.quote(name or ip)
+    headers = {
+        "Content-Disposition": f"attachment; filename*=UTF-8\'\'{safe_name}.rdp"
+    }
+    return Response(content=content, media_type="application/x-rdp", headers=headers)
+
+@app.get("/api/export/devices")
+def export_devices_csv(user: dict = Depends(get_current_user)):
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT ip, mac, hostname, vendor, type, os_name, os_version, cpu_name, ram_gb, disk_gb, motherboard_maker, motherboard_model, gpu_name, serial_number, antivirus, firewall, unified_inventory, last_seen FROM devices ORDER BY ip")
+        rows = cursor.fetchall()
+        
+        output = io.StringIO()
+        # Add UTF-8 BOM for Excel compatibility
+        output.write('\ufeff')
+        
+        writer = csv.writer(output, delimiter=';')
+        writer.writerow([
+            "IP Adresi", "MAC Adresi", "Hostname", "Üretici", "Cihaz Tipi", 
+            "İşletim Sistemi", "OS Versiyon", "İşlemci (CPU)", "RAM (GB)", "Disk (GB)",
+            "Anakart", "Model", "Ekran Kartı (GPU)", "Seri No", 
+            "Antivirüs", "Güvenlik Duvarı", "Envanter Durumu", "Son Görülme"
+        ])
+        
+        import json
+        for r in rows:
+            inv = {}
+            if r["unified_inventory"]:
+                try:
+                    inv = json.loads(r["unified_inventory"])
+                except:
+                    pass
+                    
+            status_text = "Yetkili (WMI/SSH)" if inv.get("verified") else "Ağ Profili"
+            
+            writer.writerow([
+                r["ip"], r["mac"], r["hostname"], r["vendor"], r["type"],
+                r["os_name"], r["os_version"], r["cpu_name"], r["ram_gb"], r["disk_gb"],
+                r["motherboard_maker"], r["motherboard_model"], r["gpu_name"], r["serial_number"],
+                r["antivirus"], r["firewall"], status_text, r["last_seen"]
+            ])
+            
+        conn.close()
+        
+        output.seek(0)
+        return StreamingResponse(
+            iter([output.getvalue()]),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f"attachment; filename=netmon_envanter.csv"}
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.get("/api/devices")
 def get_devices(force: bool = False, user: dict = Depends(get_current_user)):
     if force and user.get("role") != "admin":
@@ -3591,15 +3629,18 @@ def _validate_settings_update(updates: dict) -> str | None:
             return "En fazla 16 subnet tanımlanabilir."
         normalized = []
         for raw in raw_subnets:
+            parts = raw.split("=", 1)
+            net_str = parts[0].strip()
+            name_str = ("=" + parts[1].strip()) if len(parts) > 1 else ""
             try:
-                network = ipaddress.ip_network(raw, strict=False)
+                network = ipaddress.ip_network(net_str, strict=False)
             except ValueError:
-                return f"Geçersiz subnet: {raw}"
+                return f"Geçersiz subnet: {net_str}"
             if not _is_allowed_inventory_network(network):
-                return f"Yalnızca yerel/özel IPv4 subnetleri kullanılabilir: {raw}"
+                return f"Yalnızca yerel/özel IPv4 subnetleri kullanılabilir: {net_str}"
             if network.prefixlen < 16:
-                return f"Çok geniş subnet desteklenmiyor (en geniş /16): {raw}"
-            normalized.append(str(network))
+                return f"Çok geniş subnet desteklenmiyor (en geniş /16): {net_str}"
+            normalized.append(str(network) + name_str)
         updates["subnet"] = ",".join(normalized)
 
     for key in ("wmi_username", "ssh_username"):

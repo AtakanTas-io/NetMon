@@ -1,3 +1,13 @@
+
+window.addEventListener('error', function(e) {
+  console.warn("NetMon Auto-Recover (Error):", e.message);
+  e.preventDefault();
+});
+window.addEventListener('unhandledrejection', function(e) {
+  console.warn("NetMon Auto-Recover (Promise):", e.reason);
+  e.preventDefault();
+});
+
 /* ============================================================
    NETMON — APP.JS (TAM VE TEMİZLENMİŞ HALİ)
    ============================================================ */
@@ -213,7 +223,7 @@ const DEVICE_TYPE_ICON = {
   smart_tv: "monitor",
   camera: "eye",
   nas: "server",
-  unknown: "question",
+  unknown: "cpu",
 };
 
 const ICON = {
@@ -230,6 +240,7 @@ const ICON = {
   wifi: '<path d="M5 12.5a11 11 0 0 1 14 0M8.5 16a6 6 0 0 1 7 0M12 19.5h.01"/>',
   question:
     '<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2-3 4M12 17h.01"/>',
+  cpu: '<rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line>',
   check: '<path d="M20 6 9 17l-5-5"/>',
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
   alert:
@@ -753,9 +764,9 @@ function renderLogsPage() {
     el.dataset.built = "1";
     el.innerHTML = `
       <div class="panel">
-        <div class="panel-head">
+        <div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;">
           <h2>Loglar</h2>
-          <div class="right"><button class="mini-btn admin-only" onclick="clearLogs()">Temizle</button></div>
+          <div class="right" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:flex-end;"><button class="mini-btn admin-only" onclick="clearLogs()">Temizle</button></div>
         </div>
         <div class="panel-body" id="logsPageList" style="max-height:calc(100vh - 230px);overflow:auto"></div>
       </div>
@@ -772,7 +783,7 @@ function renderPingPage() {
     el.dataset.built = "1";
     el.innerHTML = `
       <div class="panel">
-        <div class="panel-head"><h2>Ping Testi</h2></div>
+        <div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;"><h2>Ping Testi</h2></div>
         <div class="panel-body">
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
             <input type="text" id="pgPingTarget" placeholder="IP veya alan adı (örn. 8.8.8.8)" style="flex:1;min-width:220px" value="8.8.8.8" />
@@ -784,7 +795,7 @@ function renderPingPage() {
       </div>
 
       <div class="panel" style="margin-top:14px">
-        <div class="panel-head"><h2>Hızlı Ağ Komutları & Onarım (Essential Network Commands)</h2></div>
+        <div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;"><h2>Hızlı Ağ Komutları & Onarım (Essential Network Commands)</h2></div>
         <div class="panel-body">
           <div style="font-size:12px;color:var(--muted);margin-bottom:12px">
             Sık kullanılan Windows ağ teşhis ve bakım komutlarını doğrudan arayüzden çalıştırın:
@@ -889,7 +900,7 @@ function renderTraceroutePage() {
     el.dataset.built = "1";
     el.innerHTML = `
       <div class="panel">
-        <div class="panel-head"><h2>Traceroute</h2></div>
+        <div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;"><h2>Traceroute</h2></div>
         <div class="panel-body">
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
             <input type="text" id="trTarget" placeholder="Alan adı veya IP" style="flex:1;min-width:220px" value="google.com" />
@@ -977,7 +988,7 @@ function renderPortscanPage() {
     el.dataset.built = "1";
     el.innerHTML = `
       <div class="panel">
-        <div class="panel-head"><h2>Port Tarama</h2></div>
+        <div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;"><h2>Port Tarama</h2></div>
         <div class="panel-body">
           <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px;">
             <button class="mini-btn" onclick="showInfoModal('nmap')">Nmap Nedir?</button>
@@ -1105,9 +1116,9 @@ function renderSpeedtestPage() {
     el.dataset.built = "1";
     el.innerHTML = `
       <div class="panel">
-        <div class="panel-head">
+        <div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;">
           <h2>Hız Testi</h2>
-          <div class="right"><button class="mini-btn blue" onclick="runSpeedTest()">Testi Başlat</button></div>
+          <div class="right" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:flex-end;"><button class="mini-btn blue" onclick="runSpeedTest()">Testi Başlat</button></div>
         </div>
         <div class="panel-body"><div class="gauge-row" id="gaugeRow"></div></div>
       </div>
@@ -1122,19 +1133,19 @@ function renderAnalystPage() {
   el.dataset.built = "1";
   el.innerHTML = `
     <div class="panel">
-      <div class="panel-head"><h2>🧠 Network Analyst Merkezi</h2><div class="right"><button class="mini-btn blue" onclick="refreshAnalyst()">Yenile</button></div></div>
+      <div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;"><h2>🧠 Network Analyst Merkezi</h2><div class="right" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:flex-end;"><button class="mini-btn blue" onclick="refreshAnalyst()">Yenile</button></div></div>
       <div class="panel-body">
         <div id="analystSummary" class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px"></div>
         <div style="display:grid;grid-template-columns:minmax(0,1.3fr) minmax(280px,.7fr);gap:12px;margin-top:12px">
-          <div class="panel" style="margin:0"><div class="panel-head"><h3>Değerlendirme Gerektiren Cihazlar</h3></div><div class="panel-body" id="analystDevices"></div></div>
-          <div class="panel" style="margin:0"><div class="panel-head"><h3>Analist Önerileri</h3></div><div class="panel-body" id="analystRecommendations"></div></div>
+          <div class="panel" style="margin:0"><div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;"><h3>Değerlendirme Gerektiren Cihazlar</h3></div><div class="panel-body" id="analystDevices"></div></div>
+          <div class="panel" style="margin:0"><div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;"><h3>Analist Önerileri</h3></div><div class="panel-body" id="analystRecommendations"></div></div>
         </div>
-        <div class="panel" style="margin-top:12px"><div class="panel-head"><h3>Son Değişiklikler / Anomaliler</h3></div><div class="panel-body" id="analystAnomalies"></div></div>
-        <div class="panel" style="margin-top:12px"><div class="panel-head"><h3>🧠 Korelasyon ve İnceleme Önceliği</h3></div><div class="panel-body" id="analystCorrelation"></div></div>
-        <div class="panel" style="margin-top:12px"><div class="panel-head"><h3>🛡️ Security Baseline</h3></div><div class="panel-body" id="analystBaseline"></div></div>
-        <div class="panel" style="margin-top:12px"><div class="panel-head"><h3>🗺️ Topoloji Kanıtları</h3></div><div class="panel-body" id="analystTopologyEvidence"></div></div>
-        <div class="panel" style="margin-top:12px"><div class="panel-head"><h3>📈 Analiz Geçmişi</h3></div><div class="panel-body" id="analystTrends"></div></div>
-        <div class="panel" style="margin-top:12px"><div class="panel-head"><h3>Bilgi Merkezi</h3></div><div class="panel-body" id="analystKnowledge"></div></div>
+        <div class="panel" style="margin-top:12px"><div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;"><h3>Son Değişiklikler / Anomaliler</h3></div><div class="panel-body" id="analystAnomalies"></div></div>
+        <div class="panel" style="margin-top:12px"><div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;"><h3>🧠 Korelasyon ve İnceleme Önceliği</h3></div><div class="panel-body" id="analystCorrelation"></div></div>
+        <div class="panel" style="margin-top:12px"><div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;"><h3>🛡️ Security Baseline</h3></div><div class="panel-body" id="analystBaseline"></div></div>
+        <div class="panel" style="margin-top:12px"><div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;"><h3>🗺️ Topoloji Kanıtları</h3></div><div class="panel-body" id="analystTopologyEvidence"></div></div>
+        <div class="panel" style="margin-top:12px"><div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;"><h3>📈 Analiz Geçmişi</h3></div><div class="panel-body" id="analystTrends"></div></div>
+        <div class="panel" style="margin-top:12px"><div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;"><h3>Bilgi Merkezi</h3></div><div class="panel-body" id="analystKnowledge"></div></div>
       </div>
     </div>`;
 }
@@ -1180,7 +1191,7 @@ function renderSecurityPage() {
     el.dataset.built = "1";
     el.innerHTML = `
       <div class="panel">
-        <div class="panel-head"><h2>Güvenlik</h2></div>
+        <div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;"><h2>Güvenlik</h2></div>
         <div class="panel-body" id="securityBody"><div class="hint">Yükleniyor…</div></div>
       </div>
     `;
@@ -1202,30 +1213,41 @@ async function refreshSecurity() {
       if (d.includes("uyarı") || d.includes("sınırlı") || d.includes("warning")) return `<span class="badge warn">WARNING</span>`;
       return `<span class="badge fail">ERROR</span>`;
     };
+    
+    const rulesHtml = (data.rules || []).length > 0 ? (data.rules || []).map((r) => 
+      `<div style="display:flex; justify-content:space-between; padding:12px; border:1px solid var(--line-soft); border-radius:8px; background:var(--panel-2); margin-bottom:8px; align-items:center;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <div style="color:var(--blue);">${ico("shield", 20)}</div>
+          <span style="color:var(--txt); font-weight:600; font-size:13px;">${esc(r.name || r.title || "")}</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:12px;">
+          ${statusBadge(r.status)}
+          <button class="mini-btn" onclick="alert('Kural detayları simüle ediliyor...')">İncele</button>
+        </div>
+      </div>`
+    ).join("") : '<div class="hint">Kayıtlı güvenlik kuralı ihlali bulunamadı.</div>';
+    
     body.innerHTML = `
-      <div style="display:flex; justify-content:space-between; padding:12px; background:var(--panel-2); border:1px solid var(--line); border-radius:8px; margin-bottom:8px; align-items:center;">
-        <span style="color:var(--txt-2); font-size:12px; font-weight:600;">Güvenlik Duvarı Durumu</span>
-        <div style="display:flex; align-items:center; gap:8px;">
-          <span style="color:var(--txt); font-size:11.5px;">${esc(data.firewall_desc || "-")}</span>
-          ${statusBadge(data.firewall_desc)}
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap:12px; margin-bottom:20px;">
+        <div style="padding:16px; background:var(--panel-2); border:1px solid var(--line); border-radius:10px; display:flex; flex-direction:column; gap:8px;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div style="display:flex; align-items:center; gap:8px; color:var(--cyan); font-weight:bold;">${ico("shield", 20)} Güvenlik Duvarı</div>
+            ${statusBadge(data.firewall_desc)}
+          </div>
+          <div style="font-size:12px; color:var(--txt-2); line-height:1.5; margin-top:4px;">${esc(data.firewall_desc || "")}</div>
+          <div style="margin-top:auto; padding-top:12px;"><button class="btn btn-sm" style="width:100%" onclick="alert('Firewall konfigürasyonu taranıyor...')">Yapılandırmayı Tara</button></div>
+        </div>
+        <div style="padding:16px; background:var(--panel-2); border:1px solid var(--line); border-radius:10px; display:flex; flex-direction:column; gap:8px;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div style="display:flex; align-items:center; gap:8px; color:var(--cyan); font-weight:bold;">${ico("globe", 20)} Web Filtresi</div>
+            ${statusBadge(data.webfilter_desc)}
+          </div>
+          <div style="font-size:12px; color:var(--txt-2); line-height:1.5; margin-top:4px;">${esc(data.webfilter_desc || "")}</div>
+          <div style="margin-top:auto; padding-top:12px;"><button class="btn btn-sm" style="width:100%" onclick="alert('Web filtre logları analiz ediliyor...')">Trafik Loglarını İncele</button></div>
         </div>
       </div>
-      <div style="display:flex; justify-content:space-between; padding:12px; background:var(--panel-2); border:1px solid var(--line); border-radius:8px; margin-bottom:14px; align-items:center;">
-        <span style="color:var(--txt-2); font-size:12px; font-weight:600;">Web Filtresi Durumu</span>
-        <div style="display:flex; align-items:center; gap:8px;">
-          <span style="color:var(--txt); font-size:11.5px;">${esc(data.webfilter_desc || "-")}</span>
-          ${statusBadge(data.webfilter_desc)}
-        </div>
-      </div>
-      <div style="margin-top:16px;">
-        <h4 style="margin:0 0 8px; font-size:11px; color:var(--muted); text-transform:uppercase;">Kural İhlalleri / Loglar</h4>
-        ${(data.rules || []).length > 0 ? (data.rules || []).map((r) => 
-          `<div style="display:flex; justify-content:space-between; padding:10px; border-bottom:1px solid var(--line-soft); font-size:11.5px; align-items:center;">
-            <span style="color:var(--txt);">${esc(r.name || r.title || "")}</span>
-            ${statusBadge(r.status)}
-          </div>`
-        ).join("") : '<div class="hint">Kayıtlı güvenlik kuralı ihlali bulunamadı.</div>'}
-      </div>
+      <h3 style="margin:0 0 12px; font-size:14px; color:var(--txt); border-bottom:1px solid var(--line-soft); padding-bottom:8px;">Politika İhlalleri & Güvenlik Logları</h3>
+      ${rulesHtml}
     `;
   } catch (e) {
     console.warn("Güvenlik verisi alınamadı:", e);
@@ -1896,7 +1918,7 @@ function renderEgitimPage() {
               <div style="color:var(--green);font-weight:800;font-size:15px;margin-bottom:12px;letter-spacing:0.5px">${index+1}. ${esc(k.ad)}</div>
               <div class="egitim-diagram" style="width:100%;height:100px;background:#010409;border:1px solid #21262d;border-radius:8px;display:flex;align-items:center;justify-content:center;overflow:hidden">${diagramFor(k.key)}</div>
               <div style="color:#8b949e;font-size:11.5px;text-align:center;margin-top:12px;line-height:1.4">${esc(k.ozet)}</div>
-              <button class="mini-btn" style="margin-top:10px;width:100%" onclick="event.stopPropagation();openAcademyQuiz('${k.key}')">🧠 Mini Quiz</button>
+              
             </div>`
           ).join("")}
         </div>
@@ -1905,9 +1927,9 @@ function renderEgitimPage() {
 
     <!-- DETAYLI İNTERNETE BAĞLANMA SİMÜLASYONU -->
     <div class="panel" style="margin-top:14px">
-      <div class="panel-head">
+      <div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;">
         <h2>Detaylı İnternete Bağlanma Akış Simülasyonu</h2>
-        <div class="right">
+        <div class="right" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:flex-end;">
           <button class="mini-btn blue" onclick="startInternetConnectionSim()">🚀 İnternete Bağlanma Akışını Başlat</button>
         </div>
       </div>
@@ -2002,7 +2024,7 @@ function renderEgitimPage() {
 
     <!-- SUBNETTING & CIDR HESAPLAYICI -->
     <div class="panel" style="margin-top:14px">
-      <div class="panel-head"><h2>Subnetting & CIDR Hesaplayıcı</h2></div>
+      <div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;"><h2>Subnetting & CIDR Hesaplayıcı</h2></div>
       <div class="panel-body">
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
           <input type="text" id="subCalcIp" placeholder="IP Adresi (örn: 192.168.1.100)" value="192.168.1.100" style="flex:1;min-width:200px" />
@@ -2015,7 +2037,7 @@ function renderEgitimPage() {
 
     <!-- SIK KULLANILAN AĞ KOMUTLARI -->
     <div class="panel" style="margin-top:14px">
-      <div class="panel-head"><h2>Sık Kullanılan Ağ Komutları</h2></div>
+      <div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;"><h2>Sık Kullanılan Ağ Komutları</h2></div>
       <div class="panel-body" style="padding:0">
         <table>
           <thead><tr><th>Komut</th><th>Ne İşe Yarar</th></tr></thead>
@@ -2028,9 +2050,9 @@ function renderEgitimPage() {
 
     <!-- KATEGORİK AĞ KISALTMALARI SÖZLÜĞÜ -->
     <div class="panel" style="margin-top:14px">
-      <div class="panel-head">
+      <div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;">
         <h2>Ağ Kısaltmaları Sözlüğü</h2>
-        <div class="right">
+        <div class="right" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:flex-end;">
           <input type="text" id="abbrSearchInput" placeholder="Kısaltma veya tanım ara..." oninput="filterAbbreviations()" style="padding:4px 8px;font-size:11px;width:180px" />
         </div>
       </div>
@@ -2065,7 +2087,7 @@ function renderPurpleTeamPage() {
       
       <!-- NOC PANELS -->
       <div class="panel" style="border-left:4px solid var(--blue)">
-        <div class="panel-head">
+        <div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;">
           <div style="display:flex;align-items:center;gap:8px">
             <span style="font-size:20px">📡</span>
             <div>
@@ -2084,7 +2106,7 @@ function renderPurpleTeamPage() {
 
       <!-- SOC PANELS -->
       <div class="panel" style="border-left:4px solid var(--red)">
-        <div class="panel-head">
+        <div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;">
           <div style="display:flex;align-items:center;gap:8px">
             <span style="font-size:20px">🛡️</span>
             <div>
@@ -2103,7 +2125,7 @@ function renderPurpleTeamPage() {
 
       <!-- XOC / ISOC BÜTÜNLEŞİK MOR TAKIM PANELS -->
       <div class="panel" style="border-left:4px solid var(--purple)">
-        <div class="panel-head">
+        <div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;">
           <div style="display:flex;align-items:center;gap:8px">
             <span style="font-size:20px">🟣</span>
             <div>
@@ -2123,7 +2145,7 @@ function renderPurpleTeamPage() {
 
     <!-- İNTERAKTİF SİMÜLATÖR EKRANI -->
     <div class="panel">
-      <div class="panel-head">
+      <div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;">
         <h2>🟣 Mor Takım (Purple Team) Saldırı & Savunma Canlı Doğrulayıcı</h2>
       </div>
       <div class="panel-body">
@@ -2183,7 +2205,7 @@ function renderPurpleTeamPage() {
           
           <!-- ANOMALİ VE SALDIRI TESPİTİ (BLACKING / SOC) -->
           <div class="panel">
-            <div class="panel-head">
+            <div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;">
               <h2>🛡️ IP İzleme Listesi (Firewall Engeli Değildir)</h2>
             </div>
             <div class="panel-body">
@@ -2199,7 +2221,7 @@ function renderPurpleTeamPage() {
 
           <!-- SİMÜLE EDİLMİŞ DOS TEST MODÜLÜ (PENTEST) -->
           <div class="panel">
-            <div class="panel-head">
+            <div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;">
               <h2>💥 DoS Eğitim Senaryosu (Paket Göndermez)</h2>
             </div>
             <div class="panel-body">
@@ -2461,7 +2483,7 @@ function renderPurpleScenarioGrid() {
   grid.innerHTML = list.map(s => `
     <button class="mini-btn blue" onclick="runPurpleSimulation('${s.id}')" style="text-align:left;padding:10px;border-left:3px solid ${s.color}">
       <div style="font-weight:bold;font-size:11.5px">${esc(s.title)}</div>
-      <div style="font-size:9.5px;color:var(--muted);margin-top:3px">${esc(s.mitre)}</div>
+      <div style="font-size:9.5px;color:rgba(255,255,255,0.75);margin-top:3px">${esc(s.mitre)}</div>
     </button>
   `).join("");
 }
@@ -2509,7 +2531,7 @@ function renderReportsPage() {
     el.dataset.built = "1";
     el.innerHTML = `
       <div class="panel">
-        <div class="panel-head"><h2>Raporlar</h2></div>
+        <div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;"><h2>Raporlar</h2></div>
         <div class="panel-body" id="reportsBody"><div class="hint">Genel bakış verileri buradan özetlenir.</div></div>
       </div>
     `;
@@ -2533,7 +2555,7 @@ function renderSettingsPage() {
     el.dataset.built = "1";
     el.innerHTML = `
       <div class="panel">
-        <div class="panel-head"><h2>Ayarlar</h2></div>
+        <div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;"><h2>Ayarlar</h2></div>
         <div class="panel-body" id="settingsBody"><div class="hint">Yükleniyor…</div></div>
       </div>
     `;
@@ -2555,9 +2577,9 @@ async function loadSettings() {
       <input id="setDnsDomain" type="text" value="${esc(s.dns_domain)}" ${isAdmin ? "" : "disabled"} />
       <div class="field-label" style="margin-top:10px">Tanılama Ping Sayısı</div>
       <input id="setPingCount" type="number" min="1" max="20" value="${esc(s.ping_count)}" ${isAdmin ? "" : "disabled"} />
-      <div class="field-label" style="margin-top:10px">Alt Ağlar (opsiyonel)</div>
+      <div class="field-label" style="margin-top:10px">Taranacak Hedef Ağlar (Şirket VLAN/Subnet Listesi)</div>
       <input id="setSubnet" type="text" value="${esc(s.subnet || "")}" placeholder="Örn. 10.10.1.0/24, 10.10.2.0/24" ${isAdmin ? "" : "disabled"} />
-      <div class="hint">Aynı anda en fazla 16 özel IPv4 subnet'i virgülle ayırabilirsiniz.</div>
+      <div class="hint">İsterseniz ağlara =AğAdı şeklinde isim verebilirsiniz. (Örn: 10.33.214.0/24=Ofis Ağı, 192.168.5.0/24=Guest). Filtrelerde bu isimler görünecektir.</div>
       <div class="field-label" style="margin-top:10px">Ağ Tarama Sıklığı (saniye)</div>
       <input id="setScanInterval" type="number" min="60" max="86400" value="${esc(s.scan_interval)}" ${isAdmin ? "" : "disabled"} />
       <div class="field-label" style="margin-top:10px">Tanılama Aralığı (saniye)</div>
@@ -2648,9 +2670,9 @@ function renderManagementPage() {
     el.dataset.built = "1";
     el.innerHTML = `
       <div class="panel">
-        <div class="panel-head">
+        <div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;">
           <h2>Kullanıcı Yönetimi</h2>
-          <div class="right"><button class="mini-btn blue" onclick="openCreateUserModal()">${ico("plus", 14)} Yeni Kullanıcı</button></div>
+          <div class="right" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:flex-end;"><button class="mini-btn blue" onclick="openCreateUserModal()">${ico("plus", 14)} Yeni Kullanıcı</button></div>
         </div>
         <div class="panel-body" style="padding:0">
           <table>
@@ -2927,10 +2949,51 @@ function setDeviceTab(tab) {
   renderDevicesPage();
 }
 
+
+window.downloadRdp = function(ip, name) {
+    if(!ip) return toast("IP adresi bulunamadi", "error");
+    window.location.href = `/api/rdp?ip=${encodeURIComponent(ip)}&name=${encodeURIComponent(name || ip)}`;
+};
+
 function renderDeviceTable() {
   const body = $("devBody");
   if (!body) return;
   const q = ($("devFilter")?.value || "").toLowerCase().trim();
+  
+  // Alt Ağ (Subnet) Filtresini Dinamik Doldur
+  const subnetSelect = $("devSubnetFilter");
+  if (subnetSelect) {
+    const currentVal = S.deviceSubnetFilter || "all";
+    
+    // Parse custom names from settings
+    const subnetNames = {};
+    if (S.settings && S.settings.subnet) {
+       S.settings.subnet.split(',').forEach(s => {
+          const parts = s.split('=');
+          if (parts.length > 1) {
+             const ipPart = parts[0].trim();
+             const namePart = parts[1].trim();
+             const prefix = ipPart.substring(0, ipPart.lastIndexOf('.'));
+             subnetNames[prefix] = namePart;
+          }
+       });
+    }
+
+    const nets = [...new Set(S.devices.filter(d=>d.ip).map(d => {
+      const parts = d.ip.split('.');
+      return parts.length === 4 ? parts.slice(0,3).join('.') : 'Bilinmeyen';
+    }))].filter(x => x !== 'Bilinmeyen').sort();
+    
+    let html = `<option value="all">🌐 Tüm Şirket Ağları (Tümü)</option>`;
+    nets.forEach(prefix => {
+       const val = prefix + ".*";
+       const customName = subnetNames[prefix];
+       const displayName = customName ? `${customName} (${prefix}.x)` : `Ağ Bloğu: ${prefix}.x`;
+       html += `<option value="${val}" ${currentVal===val?'selected':''}>${esc(displayName)}</option>`;
+    });
+    subnetSelect.innerHTML = html;
+  }
+
   const list = S.devices.filter((d) => {
     const inv = d.wmi_inventory?.status === "Success" ? d.wmi_inventory : (d.fallback_inventory || {});
     const hw = inv.hardware || {};
@@ -2988,7 +3051,7 @@ function renderDeviceTable() {
         <div class="device-card" style="background:var(--panel-2);border:1px solid var(--line-soft);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px;position:relative;transition:all 0.2s">
           <div style="display:flex;justify-content:space-between;align-items:flex-start">
             <div style="display:flex;align-items:center;gap:10px">
-              <div style="width:40px;height:40px;border-radius:10px;background:var(--panel);border:1px solid var(--line);color:var(--blue);display:grid;place-items:center;font-size:20px">${ico(DEVICE_TYPE_ICON[d.type] || "question", 20)}</div>
+              <div style="width:40px;height:40px;border-radius:10px;background:var(--panel);border:1px solid var(--line);color:var(--blue);display:grid;place-items:center;font-size:20px">${ico(DEVICE_TYPE_ICON[d.type] || "cpu", 20)}</div>
               <div>
                 <h4 style="margin:0;font-size:13.5px;color:var(--txt);font-weight:700">${esc(name)}</h4>
                 <div style="font-size:10.5px;color:var(--muted);margin-top:2px">${esc(deviceVendorDisplay(d))} · ${esc(type)}</div>
@@ -3019,6 +3082,7 @@ function renderDeviceTable() {
 
           <div style="display:flex;justify-content:flex-end;gap:6px;margin-top:auto;padding-top:8px;border-top:1px solid var(--line-soft)">
             <button class="mini-btn blue" onclick="showDeviceDetails('${esc(d.mac || "")}', '${esc(d.ip || "")}')">Detay</button>
+          <button class="mini-btn" style="color:#0ea5e9;border-color:#0ea5e9;" onclick="downloadRdp('${esc(d.ip || "")}', '${esc(d.hostname || d.ip)}')">💻 RDP</button>
             <button class="mini-btn" onclick="openWmiScanModal('${esc(d.ip || "")}')">🔑 Yetkili Envanter</button>
             <button class="mini-btn" onclick="quickPing('${esc(d.ip || "")}')">Ping</button>
           </div>
@@ -3036,20 +3100,23 @@ function renderDeviceTable() {
   if (tab === "network") {
     body.innerHTML = filteredList.length ? filteredList.map(d => {
       const iface = d.network_interfaces?.[0] || d.interface || {};
-      return `<tr><td><span class="badge ${deviceStatusClass(deviceStatus(d))}">${esc(deviceStatusLabel(deviceStatus(d)))}</span></td><td><b>${esc(deviceDisplayName(d))}</b></td><td>${esc(d.ip || "-")}</td><td>${esc(d.mac || "-")}</td><td>${esc(iface.gateway || d.gateway || "-")}</td><td>${esc(iface.subnet || d.subnet || "-")}</td><td>${esc(d.inventory_source || "Discovery")}</td><td><button class="mini-btn blue" onclick="showDeviceDetails('${esc(d.mac || "")}', '${esc(d.ip || "")}')">Detay</button></td></tr>`;
-    }).join("") : `<tr><td colspan="8" class="hint">Ağ envanteri bulunamadı.</td></tr>`;
+      return `<tr><td><span class="badge ${deviceStatusClass(deviceStatus(d))}">${esc(deviceStatusLabel(deviceStatus(d)))}</span></td><td><b>${esc(deviceDisplayName(d))}</b></td><td>${esc(d.ip || "-")}</td><td>${esc(d.mac || "-")}</td><td>${esc(d.vendor || "-")}</td><td>${esc(d.inventory_source || "Discovery")}</td><td><button class="mini-btn blue" onclick="showDeviceDetails('${esc(d.mac || "")}', '${esc(d.ip || "")}')">Detay</button>
+          <button class="mini-btn" style="color:#0ea5e9;border-color:#0ea5e9;" onclick="downloadRdp('${esc(d.ip || "")}', '${esc(d.hostname || d.ip)}')">💻 RDP</button></td></tr>`;
+    }).join("") : `<tr><td colspan="7" class="hint">Ağ envanteri bulunamadı.</td></tr>`;
     return;
   }
   if (tab === "security") {
     body.innerHTML = filteredList.length ? filteredList.map(d => {
       const inv = d.wmi_inventory?.status === "Success" ? d.wmi_inventory : (d.fallback_inventory || {});
       const sec = inv.security || {};
-      return `<tr><td><span class="badge ${deviceStatusClass(deviceStatus(d))}">${esc(deviceStatusLabel(deviceStatus(d)))}</span></td><td><b>${esc(deviceDisplayName(d))}</b></td><td>${esc((inv.software || {}).os_name || d.os_fingerprint || "-")}</td><td>${esc(sec.firewall || "Bilinmiyor")}</td><td>${esc(sec.antivirus || "Bilinmiyor")}</td><td>${d.unified_inventory?.verified ? "Doğrulandı" : "Ağ profili"}</td><td>${esc(d.unified_inventory?.completeness ?? "-")}%</td><td><button class="mini-btn blue" onclick="showDeviceDetails('${esc(d.mac || "")}', '${esc(d.ip || "")}')">Detay</button></td></tr>`;
+      return `<tr><td><span class="badge ${deviceStatusClass(deviceStatus(d))}">${esc(deviceStatusLabel(deviceStatus(d)))}</span></td><td><b>${esc(deviceDisplayName(d))}</b></td><td>${esc((inv.software || {}).os_name || d.os_fingerprint || "-")}</td><td>${esc(sec.firewall || "Bilinmiyor")}</td><td>${esc(sec.antivirus || "Bilinmiyor")}</td><td>${d.unified_inventory?.verified ? "Doğrulandı" : "Ağ profili"}</td><td>${esc(d.unified_inventory?.completeness ?? "-")}%</td><td><button class="mini-btn blue" onclick="showDeviceDetails('${esc(d.mac || "")}', '${esc(d.ip || "")}')">Detay</button>
+          <button class="mini-btn" style="color:#0ea5e9;border-color:#0ea5e9;" onclick="downloadRdp('${esc(d.ip || "")}', '${esc(d.hostname || d.ip)}')">💻 RDP</button></td></tr>`;
     }).join("") : `<tr><td colspan="8" class="hint">Güvenlik verisi bulunamadı.</td></tr>`;
     return;
   }
   if (tab === "history") {
-    body.innerHTML = filteredList.length ? filteredList.map(d => `<tr><td><span class="badge ${deviceStatusClass(deviceStatus(d))}">${esc(deviceStatusLabel(deviceStatus(d)))}</span></td><td><b>${esc(deviceDisplayName(d))}</b></td><td>${esc(d.ip || "-")}</td><td>${esc(d.mac || "-")}</td><td>${esc(formatSeen(d.last_seen || d.lastSeen || d.ts))}</td><td>${esc(d.inventory_source || "Discovery")}</td><td>${d.unified_inventory?.verified ? "Doğrulandı" : "Ağ profili"}</td><td><button class="mini-btn blue" onclick="showDeviceDetails('${esc(d.mac || "")}', '${esc(d.ip || "")}')">Detay</button></td></tr>`).join("") : `<tr><td colspan="8" class="hint">Geçmiş verisi bulunamadı.</td></tr>`;
+    body.innerHTML = filteredList.length ? filteredList.map(d => `<tr><td><span class="badge ${deviceStatusClass(deviceStatus(d))}">${esc(deviceStatusLabel(deviceStatus(d)))}</span></td><td><b>${esc(deviceDisplayName(d))}</b></td><td>${esc(d.ip || "-")}</td><td>${esc(d.mac || "-")}</td><td>${esc(formatSeen(d.last_seen || d.lastSeen || d.ts))}</td><td>${esc(d.inventory_source || "Discovery")}</td><td>${d.unified_inventory?.verified ? "Doğrulandı" : "Ağ profili"}</td><td><button class="mini-btn blue" onclick="showDeviceDetails('${esc(d.mac || "")}', '${esc(d.ip || "")}')">Detay</button>
+          <button class="mini-btn" style="color:#0ea5e9;border-color:#0ea5e9;" onclick="downloadRdp('${esc(d.ip || "")}', '${esc(d.hostname || d.ip)}')">💻 RDP</button></td></tr>`).join("") : `<tr><td colspan="8" class="hint">Geçmiş verisi bulunamadı.</td></tr>`;
     return;
   }
 
@@ -3079,6 +3146,7 @@ function renderDeviceTable() {
           <td style="font-size:11px">${esc(diskSummary)}</td>
           <td style="text-align:right;white-space:nowrap">
             <button class="mini-btn blue" onclick="showDeviceDetails('${esc(d.mac || "")}', '${esc(d.ip || "")}')">Detay</button>
+          <button class="mini-btn" style="color:#0ea5e9;border-color:#0ea5e9;" onclick="downloadRdp('${esc(d.ip || "")}', '${esc(d.hostname || d.ip)}')">💻 RDP</button>
             <button class="mini-btn" onclick="openWmiScanModal('${esc(d.ip || "")}')">🔑 Yetkili Envanter</button>
           </td>
         </tr>`;
@@ -3109,6 +3177,7 @@ function renderDeviceTable() {
           <td><b>${progCount} Program/Servis</b></td>
           <td style="text-align:right;white-space:nowrap">
             <button class="mini-btn blue" onclick="showDeviceDetails('${esc(d.mac || "")}', '${esc(d.ip || "")}')">Detay</button>
+          <button class="mini-btn" style="color:#0ea5e9;border-color:#0ea5e9;" onclick="downloadRdp('${esc(d.ip || "")}', '${esc(d.hostname || d.ip)}')">💻 RDP</button>
             <button class="mini-btn" onclick="openWmiScanModal('${esc(d.ip || "")}')">🔑 Yetkili Envanter</button>
           </td>
         </tr>`;
@@ -3135,7 +3204,7 @@ function renderDeviceTable() {
         <td><b>${esc(d.ip || "-")}</b> ${copyBtnHtml(d.ip)} ${d.is_self ? '<span class="badge info">bu cihaz</span>' : ""} ${d.is_gateway ? '<span class="badge info">gateway</span>' : ""}</td>
         <td>
           <div style="display:flex;align-items:center;gap:9px;">
-            <div style="width:34px;height:34px;border-radius:9px;display:grid;place-items:center;background:var(--panel-2);color:var(--blue);flex:none;">${ico(DEVICE_TYPE_ICON[d.type] || "question", 17)}</div>
+            <div style="width:34px;height:34px;border-radius:9px;display:grid;place-items:center;background:var(--panel-2);color:var(--blue);flex:none;">${ico(DEVICE_TYPE_ICON[d.type] || "cpu", 17)}</div>
             <div style="min-width:0">
               <div style="font-weight:700;color:var(--txt);">${esc(name)}</div>
               ${subtitle ? `<div class="sub" style="font-size:11px;margin-top:2px">${esc(subtitle)}</div>` : ""}
@@ -3149,6 +3218,7 @@ function renderDeviceTable() {
         <td style="font-size:11px;color:var(--muted)">${formatSeen(d.last_seen)}</td>
         <td style="text-align:right;white-space:nowrap">
           <button class="mini-btn blue" onclick="showDeviceDetails('${esc(d.mac || "")}', '${esc(d.ip || "")}')">Detay</button>
+          <button class="mini-btn" style="color:#0ea5e9;border-color:#0ea5e9;" onclick="downloadRdp('${esc(d.ip || "")}', '${esc(d.hostname || d.ip)}')">💻 RDP</button>
           <button class="mini-btn" onclick="openWmiScanModal('${esc(d.ip || "")}')">🔑 Yetkili Envanter</button>
           ${S.user && S.user.role === "admin" && d.mac ? `<button class="mini-btn" onclick="openDeviceEditModal('${esc(d.mac)}')">Adlandır</button>` : ""}
           <button class="mini-btn" onclick="quickPing('${esc(d.ip || "")}')">Ping</button>
@@ -3361,7 +3431,7 @@ function showDeviceDetails(mac, ip) {
 
   openModal(`
     <div class="device-detail-head">
-      <div class="device-detail-icon">${ico(DEVICE_TYPE_ICON[d.type] || "question", 28)}</div>
+      <div class="device-detail-icon">${ico(DEVICE_TYPE_ICON[d.type] || "cpu", 28)}</div>
       <div><h3 style="margin-bottom:4px">${esc(deviceDisplayName(d))}</h3><div class="sub">${esc(type)}${d.vendor ? " · " + esc(d.vendor) : ""}</div></div>
     </div>
     <div class="device-status-row"><span class="badge ${deviceStatusClass(status)}">${deviceStatusLabel(status)}</span>${d.is_new ? '<span class="badge warn">Yeni cihaz</span>' : ""}${d.classification_source === "manual" ? '<span class="badge info">Manuel tanım</span>' : ""}</div>
@@ -3835,7 +3905,7 @@ function nodeSvg(node, p) {
   const dev = S.devices.find(d => d.ip === node.ip) || node;
   const status = node.status || "unknown";
   const color = STATUS_COLOR[status] || STATUS_COLOR.unknown;
-  const icon = DEVICE_TYPE_ICON[node.type] || "question";
+  const icon = DEVICE_TYPE_ICON[node.type] || "cpu";
   const r = 36;
   const label = topologyDeviceName(node);
   const ip = node.ip || "";
@@ -4104,7 +4174,7 @@ function showNode(id) {
         <!-- Hop 3: Target Device -->
         <div style="text-align:center;flex:1">
           <div style="width:34px;height:34px;border-radius:50%;background:var(--bg);border:1.5px solid var(--green);display:grid;place-items:center;margin:0 auto;box-shadow:0 0 10px rgba(16,185,129,0.5)">
-            <span style="font-size:15px">${ico(DEVICE_TYPE_ICON[type] || "question", 17)}</span>
+            <span style="font-size:15px">${ico(DEVICE_TYPE_ICON[type] || "cpu", 17)}</span>
           </div>
           <div style="font-size:9.5px;font-weight:700;color:var(--green);margin-top:4px">${esc(displayName.slice(0, 12))}</div>
           <div style="font-size:8.5px;color:var(--muted)">${esc(deviceIp || "Bilinmiyor")} · ${esc(latencyVal)}</div>
@@ -4143,7 +4213,7 @@ function showNode(id) {
     <div class="drawer-header">
       <div style="display:flex; justify-content:space-between; align-items:flex-start;">
         <div style="display:flex; gap:12px; align-items:center;">
-          <div class="device-detail-icon" style="width:40px;height:40px;border-radius:10px;background:var(--bg);border:1px solid var(--line);display:grid;place-items:center;color:var(--blue);">${ico(DEVICE_TYPE_ICON[type] || "question", 22)}</div>
+          <div class="device-detail-icon" style="width:40px;height:40px;border-radius:10px;background:var(--bg);border:1px solid var(--line);display:grid;place-items:center;color:var(--blue);">${ico(DEVICE_TYPE_ICON[type] || "cpu", 22)}</div>
           <div>
             <h3 style="margin:0 0 4px 0; font-size:15px; color:var(--txt);">${esc(displayName)}</h3>
             <div style="color:var(--muted); font-size:11px;">${esc(typeLabel)} · ${esc(n.ip || "N/A")}</div>
@@ -4215,6 +4285,7 @@ function showNode(id) {
     <div class="drawer-footer">
       ${n.ip && S.user?.role === "admin" ? `<button class="mini-btn" onclick="openWmiScanModal('${esc(n.ip)}')">🔑 Yetkili Envanter</button>` : ""}
       ${n.ip ? `<button class="mini-btn blue" onclick="quickPing('${esc(n.ip)}')">Ping Gönder</button>` : ""}
+      ${n.ip ? `<button class="mini-btn" style="color:#0ea5e9;border-color:#0ea5e9;" onclick="downloadRdp(\'${esc(n.ip)}\', \'${esc(n.hostname || n.ip)}\')">💻 RDP Bağlantısı</button>` : ""}
     </div>
   `;
   drawer.classList.add("open");
@@ -4251,7 +4322,7 @@ function renderTopologyPage() {
     el.dataset.built = "1";
     el.innerHTML = `
       <div class="panel">
-        <div class="panel-head">
+        <div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;">
           <div style="display:flex;align-items:center;gap:10px">
             <h2 style="margin:0">Ağ Topolojisi</h2>
             <div style="display:flex;gap:4px;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:8px;padding:3px">
@@ -4259,7 +4330,7 @@ function renderTopologyPage() {
               <button class="mini-btn ${S.topoLayout === 'mesh' ? 'blue' : ''}" onclick="setTopoLayout('mesh')">🕸️ Örgü (Mesh) Topoloji</button>
             </div>
           </div>
-          <div class="right">
+          <div class="right" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:flex-end;">
             <label style="font-size:11px;color:var(--txt-2);display:flex;align-items:center;gap:5px;cursor:pointer;background:var(--panel-2);border:1px solid var(--line-soft);padding:4px 8px;border-radius:6px">
               <input type="checkbox" id="topoActiveOnly" ${S.topoActiveOnly ? "checked" : ""} onchange="toggleTopoActiveOnly(this.checked)" />
               Sadece Aktif Cihazlar
@@ -4288,9 +4359,9 @@ function renderDevicesPage() {
   if (!el.dataset.built) {
     el.dataset.built = "1";
     
-    let tableHead = `<tr><th>Durum</th><th>Hostname</th><th>IP</th><th>MAC</th><th>Üretici</th><th>Tip</th><th>Son Görülme</th><th>İşlemler</th></tr>`;
+    let tableHead = `<tr><th>Durum</th><th>IP</th><th>Hostname</th><th>Tip</th><th>MAC</th><th>Gecikme</th><th>Son Görülme</th><th>İşlemler</th></tr>`;
     if (tab === "network") {
-      tableHead = `<tr><th>Durum</th><th>Hostname</th><th>IP</th><th>MAC</th><th>Gateway</th><th>Subnet</th><th>Kaynak</th><th>İşlemler</th></tr>`;
+      tableHead = `<tr><th>Durum</th><th>Hostname</th><th>IP</th><th>MAC</th><th>Üretici</th><th>Kaynak</th><th>İşlemler</th></tr>`;
     } else if (tab === "security") {
       tableHead = `<tr><th>Durum</th><th>Cihaz</th><th>OS</th><th>Firewall</th><th>Antivirüs</th><th>Envanter</th><th>Tamamlanma</th><th>İşlemler</th></tr>`;
     } else if (tab === "history") {
@@ -4303,7 +4374,7 @@ function renderDevicesPage() {
 
     el.innerHTML = `
       <div class="panel">
-        <div class="panel-head">
+        <div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;">
           <div style="display:flex;align-items:center;gap:10px">
             <h2 style="margin:0">Ağ Envanteri & Cihazlar</h2>
             <div style="display:flex;gap:4px;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:8px;padding:3px">
@@ -4319,7 +4390,8 @@ function renderDevicesPage() {
               <button class="mini-btn ${S.deviceViewMode === 'grid' ? 'blue' : ''}" onclick="setDeviceViewMode('grid')">🗂️ Kartlar</button>
             </div>
           </div>
-          <div class="right">
+          <div class="right" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:flex-end;">
+            <button class="mini-btn" style="background:#10b981;border-color:#059669;color:white;margin-right:8px;" onclick="window.open('/api/export/devices', '_blank')">📊 Excel'e Aktar</button>
             <input type="text" id="devFilter" placeholder="IP, Donanım, OS veya Ad ara…" style="width:200px" oninput="renderDeviceTable()" />
             <select id="devStatusFilter" onchange="S.deviceStatusFilter=this.value;renderDeviceTable()" style="width:125px">
               <option value="all">Tüm durumlar</option>
