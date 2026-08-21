@@ -19,9 +19,9 @@ $commitMsg = "Otomatik Güncelleme: $date"
 # Commit yap
 git commit -m "$commitMsg"
 
-# GitHub (AtakaanShiva) profiline pushla
+# GitHub (AtakanTas-io) profiline pushla
 # Not: Branch adınız 'main' veya 'master' olabilir, duruma göre aşağıyı değiştirin.
 Write-Host "Kodlar GitHub'a gönderiliyor..." -ForegroundColor Cyan
 git push origin main
 
-Write-Host "Başarıyla AtakaanShiva profiline işlendi!" -ForegroundColor Green
+Write-Host "Başarıyla AtakanTas-io profiline işlendi!" -ForegroundColor Green

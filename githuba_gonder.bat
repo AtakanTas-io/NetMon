@@ -4,7 +4,7 @@ echo ===================================================
 echo       NETMON - GITHUB OTOMATIK YUKLEME ARACI
 echo ===================================================
 echo.
-echo Kodlar GitHub deponuza (AtakaanShiva) gonderiliyor...
+echo Kodlar GitHub deponuza (AtakanTas-io) gonderiliyor...
 echo.
 
 powershell.exe -ExecutionPolicy Bypass -File "%~dp0auto-push.ps1"

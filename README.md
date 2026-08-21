@@ -112,5 +112,5 @@ Yükleme sonrasında `tests/` klasöründeki 80+ güvenlik ve envanter testi Git
 
 ---
 <div align="center">
-  <sub>Geliştiren <a href="https://github.com/AtakaanShiva">AtakaanShiva</a> | <a href="LICENSE">MIT Lisansı</a> ile sunulmaktadır.</sub>
+  <sub>Geliştiren <a href="https://github.com/AtakanTas-io">AtakanTas-io</a> | <a href="LICENSE">MIT Lisansı</a> ile sunulmaktadır.</sub>
 </div>

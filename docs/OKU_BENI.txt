@@ -33,7 +33,7 @@ Notlar
 
 Geliştirici ve CI/CD Otomasyonu (YENİ)
 ----------------------------------------
-- Kodlarda veya tasarımlarda değişiklik yaptıktan sonra bunu GitHub'a (AtakaanShiva hedefine) yollamak istersen, sadece klasör içinde sağ tıklayıp PowerShell aç ve şu komutu gir:
+- Kodlarda veya tasarımlarda değişiklik yaptıktan sonra bunu GitHub'a (AtakanTas-io hedefine) yollamak istersen, sadece klasör içinde sağ tıklayıp PowerShell aç ve şu komutu gir:
   .\auto-push.ps1
 - Bu komut kodu GitHub'a yollar ve "GitHub Actions" sunucularında 80 adet güvenlik/ağ testini otomatik olarak çalıştırarak projenizin bozulup bozulmadığını denetler!
 
