@@ -3341,6 +3341,7 @@ function showDeviceDetails(mac, ip) {
         <div style="background:var(--panel-2);border:1px solid var(--line-soft);border-radius:10px;padding:10px 12px">
           <h4 style="margin:0 0 8px; color:var(--cyan); font-size:12px; text-transform:uppercase; letter-spacing:0.5px">💻 YAZILIM & GÜVENLİK PROFiLİ</h4>
           <div style="margin-bottom:4px">İşletim Sistemi: <b>${esc(sw.os_name || "-")}</b></div>
+          <div style="margin-bottom:4px">Lisans Anahtarı: <b>${esc(sw.product_key || "-")}</b></div>
           <div style="margin-bottom:4px">Aktif Oturum Kullanıcısı: <b>${esc(sec.active_user || "-")}</b></div>
           <div style="margin-bottom:4px">Antivirüs Koruması: <b class="${sec.antivirus && !['Bilinmiyor','Bulunamadı'].includes(sec.antivirus) ? 'c-green' : 'c-orange'}">${esc(sec.antivirus || "Bilinmiyor")}</b></div>
           <div style="margin-bottom:4px">Güvenlik Duvarı (Firewall): <b class="${sec.firewall === 'Açık' ? 'c-green' : 'c-orange'}">${esc(sec.firewall || "Bilinmiyor")}</b></div>

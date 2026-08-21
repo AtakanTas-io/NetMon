@@ -177,6 +177,7 @@ try {
         os_build = $os.BuildNumber
         os_architecture = $os.OSArchitecture
         installed_programs = $programs
+        product_key = (Get-CimInstance SoftwareLicensingService | Select-Object -ExpandProperty OA3xOriginalProductKey -ErrorAction SilentlyContinue)
     }
     security = [ordered]@{
         active_user = $cs.UserName
@@ -387,7 +388,8 @@ try {
                     "os_name": os_info.Caption,
                     "os_build": os_info.BuildNumber,
                     "os_architecture": os_info.OSArchitecture,
-                    "installed_programs": software_list
+                    "installed_programs": software_list,
+                    "product_key": getattr(connection.SoftwareLicensingService()[0], "OA3xOriginalProductKey", None) if connection.SoftwareLicensingService() else None
                 },
                 "security": {
                     "active_user": active_user,
