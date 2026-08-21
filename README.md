@@ -93,6 +93,15 @@ Uygulamayı LAN'a açmak için `NETMON_HOST` kullanılabilir; bu durumda ters pr
 
 Veritabanı ve ilk-parola dosyasını farklı bir kurumsal veri dizinine almak için uygulamayı başlatmadan önce `NETMON_DATA_DIR` ortam değişkeni ayarlanabilir.
 
+## Sürekli Entegrasyon (CI/CD) ve Otomasyon
+
+Proje, GitHub Actions kullanılarak tam otomatik Sürekli Entegrasyon altyapısına kavuşturulmuştur. Kodlarınızdaki güncellemeleri GitHub'a yüklemek için kök dizindeki betiği kullanabilirsiniz:
+
+```powershell
+.\auto-push.ps1
+```
+Bu betik dosyalarınızı GitHub (AtakaanShiva/Netmon) deponuza aktarır. Yükleme sonrasında `tests/` klasöründeki 80+ adet güvenlik, envanter ve analiz testi bulutta otomatik olarak çalıştırılır. Böylece üretim (production) hatalarının önüne geçilir.
+
 ## Test ve paketleme
 
 ```cmd

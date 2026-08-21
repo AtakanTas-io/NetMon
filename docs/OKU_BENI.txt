@@ -31,6 +31,12 @@ Notlar
   sayfasında var — istediğin herhangi bir IP adresine veya alan
   adına (örn. 192.168.1.1, 8.8.8.8, google.com) ping atabilirsin.
 
+Geliştirici ve CI/CD Otomasyonu (YENİ)
+----------------------------------------
+- Kodlarda veya tasarımlarda değişiklik yaptıktan sonra bunu GitHub'a (AtakaanShiva hedefine) yollamak istersen, sadece klasör içinde sağ tıklayıp PowerShell aç ve şu komutu gir:
+  .\auto-push.ps1
+- Bu komut kodu GitHub'a yollar ve "GitHub Actions" sunucularında 80 adet güvenlik/ağ testini otomatik olarak çalıştırarak projenizin bozulup bozulmadığını denetler!
+
 Bir sorun çıkarsa
 -----------------
 build.bat çalışırken kırmızı bir hata görürsen, o ekran görüntüsünü
