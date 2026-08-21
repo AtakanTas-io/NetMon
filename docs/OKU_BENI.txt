@@ -1,0 +1,37 @@
+NetMon — Hızlı Başlangıç
+==========================
+
+BU KLASÖRÜ WINDOWS BİLGİSAYARINA KOPYALA, sonra:
+
+1) build.bat dosyasına ÇİFT TIKLA.
+   - İlk seferde Python paketlerini indirir (birkaç dakika sürebilir).
+   - İşlem bitince backend\dist\NetMon.exe dosyası oluşur ve klasör
+     otomatik açılır.
+
+2) O tek NetMon.exe dosyasını istediğin kişiye gönder (mail, USB,
+   WhatsApp, Drive — fark etmez). Karşı taraf çift tıklayınca uygulama
+   direkt açılır; Python kurmasına, hiçbir şey yüklemesine gerek yok.
+
+Notlar
+------
+- build.bat'i çalıştırmak için SENİN bilgisayarında Python kurulu
+  olması gerekiyor (bir kereliğine, derleme için). Python yoksa:
+  https://www.python.org/downloads/  →  kurulumda "Add python.exe to
+  PATH" kutusunu işaretlemeyi unutma.
+- Derledikten sonra oluşan NetMon.exe'yi alan kişide Python'a gerek
+  YOK — dosya kendi içinde her şeyi taşıyor.
+- Uygulama ilk açıldığında Windows Defender/SmartScreen "bilinmeyen
+  yayıncı" uyarısı gösterebilir — bu normaldir (imzasız exe olduğu
+  için). "Yine de çalıştır" / "Daha fazla bilgi" ile devam edilebilir.
+- calistir.bat: exe'ye çevirmeden, hızlıca deneme yapmak istersen.
+- Ağ Topolojisi sayfasında cihazları görebilmek için "Ağı Tara"
+  butonuna basman gerekiyor; bulunan cihazlar (bilgisayar, telefon,
+  yazıcı vb.) switch'in etrafında otomatik yerleşir.
+- Ping Testi hem Dashboard'da hem de sol menüdeki "Ping Testi"
+  sayfasında var — istediğin herhangi bir IP adresine veya alan
+  adına (örn. 192.168.1.1, 8.8.8.8, google.com) ping atabilirsin.
+
+Bir sorun çıkarsa
+-----------------
+build.bat çalışırken kırmızı bir hata görürsen, o ekran görüntüsünü
+paylaş, birlikte çözelim.

@@ -1,0 +1,33 @@
+# Python bytecode & build caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.buildenv/
+
+# Environment & IDEs
+.venv/
+env/
+venv/
+ENV/
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# NetMon Databases & Runtime Logs
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.log
+netmon.db*
+network_inventory.log
+initial_admin_password.txt
+
+# Build & Dist Outputs
+build/
+dist/
+*.spec
+*.exe
