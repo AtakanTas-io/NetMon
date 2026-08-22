@@ -1,0 +1,7 @@
+              onclick="go('settings')"
+              <div class="nms-pill total" onclick="go('devices')"><span>📡 Toplam Cihaz:</span><b id="nmsTotalCnt">-</b></div>
+              <div class="nms-pill online" onclick="go('devices')"><span>🟢 Çevrimiçi:</span><b id="nmsOnlineCnt">-</b></div>
+              <div class="nms-pill warn" onclick="go('devices')"><span>⚠️ Yanıtsız / ICMP Engel:</span><b id="nmsWarnCnt">-</b></div>
+              <div class="nms-pill critical" onclick="go('devices')"><span>🔴 Kritik Durum:</span><b id="nmsCritCnt">0</b></div>
+                <button class="mini-btn" onclick="go('topology')">Topolojiyi Aç</button>
+                <div class="panel-head"><h2>Envanterde Aksiyon Gerekenler</h2><div class="right"><button class="mini-btn" onclick="go('devices')">Cihazlar</button></div></div>

@@ -2,12 +2,9 @@ fastapi>=0.110
 uvicorn[standard]>=0.29
 psutil>=5.9
 pywebview>=5.0
-pydantic>=2.0
-pythonnet; platform_system=="Windows"
-pyinstaller>=6.6
-speedtest-cli
-wmi; platform_system=="Windows"
-pywin32; platform_system=="Windows"
-pywinrm>=0.5; platform_system=="Windows"
 paramiko>=3.4
-defusedxml>=0.7
+cryptography>=42.0
+pytest==7.4.3
+httpx==0.25.1
+pysnmp>=4.4.12
+ldap3>=2.9

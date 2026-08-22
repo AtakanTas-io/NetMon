@@ -2588,6 +2588,22 @@ async function loadSettings() {
       <input id="setRetention" type="number" min="1" max="8760" value="${esc(s.retention_hours)}" ${isAdmin ? "" : "disabled"} />
       
       <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line-soft)">
+        <h4 style="margin:0 0 4px;color:var(--red);font-size:13px">🚨 Rogue DHCP Koruması</h4>
+        <div class="field-label">Onaylı DHCP Sunucuları (IP Adresleri)</div>
+        <input id="setAuthDhcp" type="text" value="${esc(s.authorized_dhcp_servers || "")}" placeholder="Örn. 192.168.1.1, 10.0.0.1" ${isAdmin ? "" : "disabled"} />
+        <div class="hint">Bu listeye eklenmeyen bir IP'den DHCP teklifi (Offer) gelirse anında kritik güvenlik alarmı üretilir.</div>
+      </div>
+      
+      <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line-soft)">
+        <h4 style="margin:0 0 4px;color:var(--purple);font-size:13px">🏢 Active Directory / LDAP Entegrasyonu</h4>
+        <div class="field-label">AD Sunucu IP/Hostname</div>
+        <input id="setAdServer" type="text" value="${esc(s.ad_server || "")}" placeholder="Örn. 192.168.1.10 veya dc.sirket.local" ${isAdmin ? "" : "disabled"} />
+        <div class="field-label" style="margin-top:10px">AD Domain (Kısa veya tam)</div>
+        <input id="setAdDomain" type="text" value="${esc(s.ad_domain || "")}" placeholder="Örn. sirket.local veya sirket" ${isAdmin ? "" : "disabled"} />
+        <div class="hint">Doldurulduğunda, sisteme giriş yapan kullanıcılar önce Active Directory üzerinde doğrulanır. Başarılı olursa otomatik 'user' rolü ile hesap oluşturulur. Lokal hesaplar çalışmaya devam eder.</div>
+      </div>
+      
+      <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line-soft)">
         <h4 style="margin:0 0 4px;color:var(--blue);font-size:13px">🔑 Yetkili Envanter Kimlik Bilgileri</h4>
         <div class="hint" style="margin-bottom:10px">Windows için WMI/WinRM, Linux için SSH ve ağ cihazları için SNMP salt-okuma bilgileri kullanılır.</div>
         <div class="field-label">WMI Yönetici Kullanıcı Adı</div>
@@ -3440,6 +3456,7 @@ function showDeviceDetails(mac, ip) {
       <div><span>MAC</span><b>${esc(d.mac || "-")}</b></div>
       <div><span>Hostname</span><b>${esc(d.hostname || "-")}</b></div>
       <div><span>Üretici (Vendor)</span><b>${esc(d.vendor || "Bilinmiyor")}</b></div>
+      ${d.unified_inventory?.switch_port ? `<div><span>Fiziksel Konum</span><b style="color:var(--blue)">${esc(d.unified_inventory.switch_port.switch_name)} (Port: ${d.unified_inventory.switch_port.port})</b></div>` : ""}
       <div><span>Gecikme</span><b>${d.latency ?? "-"}${d.latency !== null && d.latency !== undefined ? " ms" : ""}</b></div>
       <div><span>Paket Kaybı</span><b>${d.packet_loss ?? "-"}${d.packet_loss !== null && d.packet_loss !== undefined ? "%" : ""}</b></div>
       <div><span>Tanımlama Güveni</span><b>${confidence === null ? "-" : "%" + confidence}</b></div>

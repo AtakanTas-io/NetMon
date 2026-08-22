@@ -307,6 +307,17 @@ def init_db():
         )
     """)
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS ssl_certificates (
+            ip TEXT PRIMARY KEY,
+            hostname TEXT,
+            issuer TEXT,
+            valid_from TEXT,
+            valid_to TEXT,
+            days_left INTEGER,
+            last_checked REAL
+        )
+    """)
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
@@ -2396,6 +2407,10 @@ def _enrich_device_inventory(dev: dict, allow_deep: bool = False):
 
     verified_deep = dev.get("deep_inventory", {}).get("status") == "Success"
     verified_wmi = dev.get("wmi_inventory", {}).get("status") == "Success"
+    mac_upper = (dev.get("mac") or "").upper()
+    switch_port_info = _mac_to_switch_port.get(mac_upper) if mac_upper else None
+    if switch_port_info:
+        dev["switch_port"] = switch_port_info
     dev["unified_inventory"] = {
         "ip": ip,
         "mac": dev.get("mac"),
@@ -2410,6 +2425,7 @@ def _enrich_device_inventory(dev: dict, allow_deep: bool = False):
         "wmi": dev.get("wmi_inventory"),
         "deep": dev.get("deep_inventory"),
         "fallback": dev.get("fallback_inventory"),
+        "switch_port": dev.get("switch_port"),
     }
 
 @app.get("/api/inventory/summary")
@@ -2879,6 +2895,13 @@ def export_devices_csv(user: dict = Depends(get_current_user)):
     except Exception as e:
         return {"error": str(e)}
 
+@app.get("/api/ssl-certs")
+def get_ssl_certs(user: dict = Depends(get_current_user)):
+    conn = db_conn()
+    rows = conn.execute("SELECT ip, hostname, issuer, valid_from, valid_to, days_left, last_checked FROM ssl_certificates ORDER BY days_left ASC").fetchall()
+    conn.close()
+    return {"certs": [{"ip": r[0], "hostname": r[1], "issuer": r[2], "valid_from": r[3], "valid_to": r[4], "days_left": r[5], "last_checked": r[6]} for r in rows]}
+
 @app.get("/api/devices")
 def get_devices(force: bool = False, user: dict = Depends(get_current_user)):
     if force and user.get("role") != "admin":
@@ -3162,6 +3185,7 @@ def trigger_network_scan(req: Optional[NetworkScanRequest] = None, user: dict = 
         devices = enrich_devices(devices)
         devices = merge_scan_into_inventory(devices)
         manager.broadcast_threadsafe({"type": "scan_wave", "wave": 3, "label": "Wave 3: Service Probing & Unified Inventory", "progress": 100})
+        _update_switch_mac_tables(devices)
         
         if devices:
             if scan_mode == "deep":
@@ -3729,6 +3753,35 @@ def api_login(body: LoginRequest):
         "SELECT id, username, password_hash, salt, role, active, must_change_password FROM users WHERE username=?",
         (body.username,),
     ).fetchone()
+
+    ad_success = False
+    try:
+        from ldap3 import Server, Connection, ALL
+        settings = dict(conn.execute("SELECT key, value FROM settings").fetchall())
+        ad_server = settings.get("ad_server")
+        ad_domain = settings.get("ad_domain")
+        if ad_server and ad_domain:
+            user_dn = f"{body.username}@{ad_domain}"
+            server = Server(ad_server, get_info=ALL, connect_timeout=2)
+            c = Connection(server, user=user_dn, password=body.password, auto_bind=True)
+            c.unbind()
+            ad_success = True
+            if row is None:
+                import secrets, time
+                new_salt = secrets.token_urlsafe(16)
+                new_hash = _hash_password(secrets.token_urlsafe(32), new_salt)
+                conn.execute(
+                    "INSERT INTO users (username, password_hash, salt, role, created_at, must_change_password) VALUES (?, ?, ?, ?, ?, ?)",
+                    (body.username, new_hash, new_salt, 'user', time.time(), 0)
+                )
+                conn.commit()
+                row = conn.execute(
+                    "SELECT id, username, password_hash, salt, role, active, must_change_password FROM users WHERE username=?",
+                    (body.username,),
+                ).fetchone()
+    except Exception:
+        pass
+
     if row is None:
         _register_login_failure(conn, body.username)
         conn.close()
@@ -3740,7 +3793,7 @@ def api_login(body: LoginRequest):
         conn.close()
         _audit(username, "login", "devre dışı hesap", success=False)
         return JSONResponse(status_code=403, content={"error": "Bu hesap devre dışı bırakılmış."})
-    if not _verify_password(body.password, salt, pw_hash):
+    if not ad_success and not _verify_password(body.password, salt, pw_hash):
         _register_login_failure(conn, body.username)
         conn.close()
         _audit(username, "login", "yanlış şifre", success=False)
