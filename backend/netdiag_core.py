@@ -421,15 +421,15 @@ class NetworkDiagnostics:
         if vend:
             evidence.append("oui")
             if any(x in vend for x in ("apple", "samsung", "xiaomi", "huawei", "oppo", "vivo", "oneplus")):
-                # Vendor alone is weak evidence; hostname/mDNS can raise it.
-                add("phone", 0.22, f"vendor: {vendor}")
-                add("tablet", 0.16, f"vendor: {vendor}")
+                # Vendor is strong evidence for mobile devices if no other identity exists
+                add("phone", 0.40, f"vendor: {vendor}")
+                add("tablet", 0.35, f"vendor: {vendor}")
             if any(x in vend for x in ("hp", "hewlett", "canon", "epson", "brother", "xerox", "ricoh", "kyocera")):
                 add("printer", 0.35, f"vendor: {vendor}")
                 add("computer", 0.08, f"vendor: {vendor}")
-            if any(x in vend for x in ("dell", "lenovo", "acer", "asus", "intel", "microsoft", "gigabyte", "msi")):
+            if any(x in vend for x in ("dell", "lenovo", "acer", "asus", "intel", "microsoft", "gigabyte", "msi", "azurewave")):
                 add("computer", 0.35, f"vendor: {vendor}")
-            if any(x in vend for x in ("cisco", "fortinet", "fortigate", "mikrotik", "ubiquiti", "tp-link", "zyxel", "netgear", "d-link", "aruba", "juniper", "hpe", "hewlett packard enterprise")):
+            if any(x in vend for x in ("cisco", "fortinet", "fortigate", "mikrotik", "ubiquiti", "tp-link", "zyxel", "netgear", "d-link", "aruba", "juniper", "hpe", "hewlett packard enterprise", "tenda")):
                 add("network_device", 0.42, f"vendor: {vendor}")
             if any(x in vend for x in ("fortinet", "fortigate", "palo alto", "watchguard", "sophos")):
                 add("firewall", 0.46, f"vendor: {vendor}")
@@ -440,7 +440,7 @@ class NetworkDiagnostics:
             if any(x in vend for x in ("hikvision", "dahua", "reolink", "axis", "amcrest")):
                 add("camera", 0.55, f"vendor: {vendor}")
             if any(x in vend for x in ("raspberry", "espressif", "tuya", "ring", "amazon", "google")):
-                add("iot", 0.28, f"vendor: {vendor}")
+                add("iot", 0.45, f"vendor: {vendor}")
 
         if not vend and mac:
             evidence.append("mac_privacy")
@@ -514,7 +514,7 @@ class NetworkDiagnostics:
         # şekilde %90+ güven üretemez.
         margin = max(0.0, top_score - second_score)
         confidence = min(0.99, max(0.15, top_score * 0.72 + min(margin, 0.45) * 0.55)) if ranked else 0.15
-        if top_score < 0.35:
+        if top_score < 0.25:
             best_type = "unknown"
             confidence = 0.15
 
@@ -569,44 +569,44 @@ class NetworkDiagnostics:
         return None
 
     def _get_mac_vendor(self, mac: str) -> str:
-        """MAC OUI için yerleşik yaygın üretici sözlüğü.
-        Bu kesin cihaz kimliği değildir; yalnızca fingerprint kanıtıdır.
-        """
+        """MAC OUI için yerleşik veya gömülü JSON sözlüğü kullanır."""
         if not mac:
             return ""
-        prefix = mac.upper()[:8]
-        vendors = {
-            # Apple / mobile
-            "00:03:93":"Apple", "00:05:02":"Apple", "00:0A:27":"Apple", "00:11:24":"Apple", "00:14:51":"Apple", "00:16:CB":"Apple", "00:17:F2":"Apple", "00:19:E3":"Apple", "00:1B:63":"Apple", "00:1C:B3":"Apple", "00:1E:52":"Apple", "00:1F:5B":"Apple", "00:21:E9":"Apple", "00:22:41":"Apple", "00:23:12":"Apple", "00:23:32":"Apple", "00:23:6C":"Apple", "00:25:00":"Apple", "00:26:08":"Apple", "40:E9:9B":"Apple", "AC:DE:48":"Apple", "F0:18:98":"Apple", "F8:1E:DF":"Apple",
-             "00:0A:95":"Apple", "00:24:36":"Apple", "00:25:4B":"Apple", "00:25:BC":"Apple", "00:26:4A":"Apple", "00:26:B0":"Apple", "00:26:BB":"Apple", "3C:50:02":"Apple", "54:29:06":"Apple", "60:81:10":"Apple", "68:44:65":"Apple", "6C:12:70":"Apple", "74:CC:40":"Apple", "7C:D2:DA":"Apple", "8C:33:96":"Apple", "94:2B:68":"Apple", "9C:F3:AC":"Apple", "A0:EE:1A":"Apple", "A4:F9:21":"Apple", "B0:92:00":"Apple", "D4:57:63":"Apple", "E4:E4:AB":"Apple", "F8:38:80":"Apple",
-            "3C:5A:B4":"Samsung", "50:01:BB":"Samsung", "5C:0A:5B":"Samsung", "8C:71:F8":"Samsung", "A8:06:00":"Samsung", "BC:44:86":"Samsung", "CC:07:AB":"Samsung", "D0:22:BE":"Samsung", "E4:7C:F9":"Samsung",
-            "28:FF:3C":"Xiaomi", "34:CE:00":"Xiaomi", "50:64:2B":"Xiaomi", "64:09:80":"Xiaomi", "74:23:44":"Xiaomi", "78:11:DC":"Xiaomi", "8C:BE:BE":"Xiaomi", "AC:C1:EE":"Xiaomi", "F8:A4:5F":"Xiaomi",
-            "00:E0:FC":"Huawei", "00:46:4B":"Huawei", "10:44:00":"Huawei", "20:F3:A3":"Huawei", "28:52:E0":"Huawei", "48:46:F1":"Huawei", "54:89:98":"Huawei", "60:DE:44":"Huawei", "88:28:B3":"Huawei", "AC:E2:D3":"Huawei",
-            # PC / server
-            "00:1B:21":"Intel", "00:1E:67":"Intel", "00:21:5C":"Intel", "00:22:FA":"Intel", "3C:97:0E":"Intel", "48:2A:E3":"Intel", "7C:7A:91":"Intel", "8C:8C:AA":"Intel",
-            "00:1C:42":"Dell", "18:03:73":"Dell", "24:B6:FD":"Dell", "34:17:EB":"Dell", "48:4D:7E":"Dell", "B0:83:FE":"Dell", "D0:67:E5":"Dell",
-            "00:23:24":"HP", "00:25:B3":"HP", "3C:4A:92":"HP", "64:51:06":"HP", "78:48:59":"HP", "94:57:A5":"HP", "B4:B5:2F":"HP", "EC:B1:D7":"HP",
-            "00:1C:25":"Lenovo", "28:D2:44":"Lenovo", "50:7B:9D":"Lenovo", "54:EE:75":"Lenovo", "98:FA:9B":"Lenovo", "C8:5B:76":"Lenovo",
-            "00:0C:6E":"ASUS", "00:1A:92":"ASUS", "00:1B:FC":"ASUS", "2C:56:DC":"ASUS", "40:16:7E":"ASUS", "50:46:5D":"ASUS", "AC:22:0B":"ASUS", "E0:3F:49":"ASUS",
-            # Network vendors
-            "00:1A:A1":"Cisco", "00:1B:54":"Cisco", "00:1C:58":"Cisco", "00:1D:45":"Cisco", "00:1E:49":"Cisco", "00:1F:9E":"Cisco", "00:21:A0":"Cisco", "00:22:55":"Cisco", "00:23:33":"Cisco", "00:24:14":"Cisco", "00:25:45":"Cisco",
-            "00:0C:29":"VMware", "00:50:56":"VMware", "00:05:69":"VMware",
-            "00:0F:66":"TP-Link", "14:CC:20":"TP-Link", "30:DE:4B":"TP-Link", "50:C7:BF":"TP-Link", "54:C8:0F":"TP-Link", "60:32:B1":"TP-Link", "98:DA:C4":"TP-Link", "C0:06:C3":"TP-Link", "EC:08:6B":"TP-Link",
-            "00:15:6D":"Ubiquiti", "04:18:D6":"Ubiquiti", "18:E8:29":"Ubiquiti", "24:5A:4C":"Ubiquiti", "44:D9:E7":"Ubiquiti", "68:72:51":"Ubiquiti", "74:AC:B9":"Ubiquiti", "80:2A:A8":"Ubiquiti", "B4:FB:E4":"Ubiquiti",
-            "00:0C:42":"MikroTik", "2C:C8:1B":"MikroTik", "48:8F:5A":"MikroTik", "64:D1:54":"MikroTik", "6C:3B:6B":"MikroTik", "74:4D:28":"MikroTik", "B8:69:F4":"MikroTik",
-            "00:10:4B":"D-Link", "00:1C:F0":"D-Link", "00:22:B0":"D-Link", "1C:7E:E5":"D-Link", "28:10:7B":"D-Link", "34:08:04":"D-Link", "90:94:E4":"D-Link",
-            "00:1D:7E":"Zyxel", "00:A0:C5":"Zyxel", "5C:63:BF":"Zyxel", "B0:5B:99":"Zyxel",
-            "00:09:0F":"Fortinet", "00:0C:E6":"Fortinet", "04:01:A1":"Fortinet", "04:D5:90":"Fortinet",
-             "48:3A:02":"Fortinet", "5C:63:B0":"Fortinet", "68:CC:AE":"Fortinet", "70:4C:A5":"Fortinet", "74:78:A6":"Fortinet", "78:18:EC":"Fortinet", "80:5A:70":"Fortinet", "80:80:2C":"Fortinet", "84:39:8F":"Fortinet", "90:6C:AC":"Fortinet", "94:F3:92":"Fortinet", "94:FF:3C":"Fortinet", "AC:71:2E":"Fortinet", "D4:76:A0":"Fortinet", "D4:B4:C0":"Fortinet", "E0:23:FF":"Fortinet", "E8:1C:BA":"Fortinet",
-            # Printers / IoT
-            "00:00:85":"Canon", "00:1E:8F":"Canon", "18:0C:AC":"Canon", "90:E8:68":"Canon",
-            "00:00:48":"Epson", "00:1B:A9":"Epson", "44:D2:44":"Epson", "AC:17:C8":"Epson",
-            "00:1E:8C":"Brother", "00:80:77":"Brother", "30:05:5C":"Brother",
-            "B8:27:EB":"Raspberry Pi", "DC:A6:32":"Raspberry Pi", "E4:5F:01":"Raspberry Pi", "28:CD:C1":"Raspberry Pi",
-            "24:0A:C4":"Espressif", "24:6F:28":"Espressif", "3C:61:05":"Espressif", "84:CC:A8":"Espressif",
-            "B0:BE:76":"Google", "F4:F5:D8":"Google", "54:60:09":"Amazon", "74:75:48":"Amazon",
-             "70:08:94":"Liteon Technology", "50:BB:B5":"AzureWave Technology",
+        mac = mac.upper()
+        prefix = mac[:8] # Format XX:XX:XX
+        
+        # Load oui.json on first access
+        if not hasattr(self, "_oui_cache"):
+            self._oui_cache = {}
+            try:
+                import json
+                import os
+                import sys
+                
+                # Check if frozen
+                if getattr(sys, 'frozen', False):
+                    base_path = sys._MEIPASS
+                else:
+                    base_path = os.path.dirname(os.path.abspath(__file__))
+                    
+                oui_path = os.path.join(base_path, 'oui.json')
+                
+                if os.path.exists(oui_path):
+                    with open(oui_path, 'r', encoding='utf-8') as f:
+                        self._oui_cache = json.load(f)
+            except Exception as e:
+                logger.error(f"OUI yuklenemedi: {e}")
+                
+        # Hardcoded fallbacks if JSON failed
+        vendors = self._oui_cache or {
+            "00:03:93":"Apple", "3C:5A:B4":"Samsung", "28:FF:3C":"Xiaomi",
+            "00:E0:FC":"Huawei", "00:1B:21":"Intel", "00:1C:42":"Dell",
+            "00:23:24":"HP", "00:1C:25":"Lenovo", "00:0C:6E":"ASUS",
+            "00:00:0C":"Cisco", "00:1D:A1":"D-Link", "00:0D:3A":"Microsoft",
+            "B8:27:EB":"Raspberry Pi", "DC:A6:32":"Raspberry Pi",
+            "EC:1A:59":"Belkin", "00:01:42":"Cisco", "CC:2D:21":"Xiaomi",
         }
+        
         return vendors.get(prefix, "")
 
     @staticmethod

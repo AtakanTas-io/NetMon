@@ -8,7 +8,7 @@ REM   gerek YOK - exe tek basina calisir.)
 REM ============================================================
 
 setlocal
-cd /d "%~dp0backend"
+cd /d "%~dp0..\..\backend"
 
 echo.
 echo === [1/4] Python kontrol ediliyor ===

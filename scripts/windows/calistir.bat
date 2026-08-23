@@ -1,7 +1,7 @@
 @echo off
 REM Gelistirme/onizleme icin: .exe derlemeden dogrudan uygulamayi acar.
 setlocal
-cd /d "%~dp0backend"
+cd /d "%~dp0..\..\backend"
 
 if exist ".buildenv" (
     if not exist ".buildenv\Scripts\python.exe" (

@@ -1094,6 +1094,11 @@
         font-size: 10.5px;
         border: 1px solid transparent;
       }
+      .mono {
+        font-family: 'Consolas', 'Courier New', monospace;
+        letter-spacing: -0.2px;
+        font-size: 11.5px;
+      }
       .badge.ok {
         background: rgba(61, 220, 132, 0.12);
         color: var(--green);
@@ -1841,6 +1846,7 @@
 
           <!-- ============ DASHBOARD ============ -->
           <section class="page active" id="page-dashboard">
+            <div id="securityBannerContainer"></div>
             <!-- NMS DURUM BARI (Görsel 3 Referansı) -->
             <div class="nms-status-bar" id="nmsStatusBar">
               <div class="nms-pill total" onclick="go('devices')"><span>📡 Toplam Cihaz:</span><b id="nmsTotalCnt">-</b></div>
@@ -1861,28 +1867,18 @@
             </div>
             <div class="stat-row" id="statRow"></div>
 
-            <div class="grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; align-items: start;">
+            <div class="grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start;">
               <div class="panel">
-                <div class="panel-head"><h2>Keşif Kapsamı</h2></div>
-                <div class="panel-body"><div class="coverage-grid" id="coveragePanel">Yükleniyor...</div></div>
-              </div>
-
-              <div class="panel">
-                <div class="panel-head"><h2>Envanterde Aksiyon Gerekenler</h2><div class="right"><button class="mini-btn" onclick="go('devices')">Cihazlar</button></div></div>
-                <div class="panel-body"><div class="inventory-focus" id="inventoryFocus">Yükleniyor...</div></div>
-              </div>
-
-              <div class="panel">
-                <div class="panel-head"><h2>Ağ Sağlığı</h2></div>
+                <div class="panel-head"><h2>Ağ Sağlığı (Network Health)</h2></div>
                 <div class="panel-body"><div id="healthPanel">Yükleniyor...</div></div>
               </div>
               
               <div class="panel">
-                <div class="panel-head"><h2>Live Traffic</h2></div>
+                <div class="panel-head"><h2>Canlı Ağ Trafiği (Live Traffic)</h2></div>
                 <div class="panel-body"><canvas id="trafficChart" height="150"></canvas></div>
               </div>
               
-              <div class="panel" style="display:flex; flex-direction:column; height: 100%;">
+              <div class="panel" style="display:flex; flex-direction:column; height: 100%; grid-column: 1 / -1;">
                 <div class="panel-head">
                   <div style="display:flex;align-items:center;gap:8px">
                     <i class="dot pulse red"></i><h2 style="margin:0">Active Alerts & Logs</h2>

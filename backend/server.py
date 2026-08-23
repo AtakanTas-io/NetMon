@@ -185,11 +185,12 @@ _sim_tick = {"n": 0}
 # ============================================================
 # TRAFİK ANOMALİ TESPİTİ
 # ============================================================
-_traffic_window: list[tuple[float, float]] = []
+import collections
+_traffic_window = collections.deque()
 _last_anomaly_ts = 0.0
 ANOMALY_WINDOW_SECONDS = 3600
 ANOMALY_MIN_SAMPLES = 30
-ANOMALY_MIN_BASELINE_BPS = 50_000
+ANOMALY_MIN_BASELINE_BPS = 1_000_000
 ANOMALY_RATIO = 3.0
 ANOMALY_COOLDOWN_SECONDS = 300
 
@@ -390,6 +391,7 @@ def init_db():
             hostname TEXT,
             device_type TEXT,
             classification_source TEXT DEFAULT 'auto',
+            owner TEXT DEFAULT '',
             notes TEXT DEFAULT '',
             first_seen REAL NOT NULL,
             last_seen REAL NOT NULL
@@ -533,14 +535,15 @@ def init_db():
     # değiştirilmesi zorunludur.
     existing = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
     if existing == 0:
-        default_password = "admin1234"
+        default_password = secrets.token_urlsafe(16)
         salt, pw_hash = _hash_password(default_password)
         conn.execute(
             "INSERT INTO users (username, password_hash, salt, role, active, must_change_password, created_at) "
-            "VALUES (?, ?, ?, 'admin', 1, 0, ?)",
+            "VALUES (?, ?, ?, 'admin', 1, 1, ?)",
             ("admin", pw_hash, salt, time.time()),
         )
         conn.commit()
+        INITIAL_PASSWORD_PATH.write_text(f"Default admin password:\n{default_password}\n", encoding="utf-8")
 
     # Eski sürümde düz metin tutulmuş gizli ayarları ilk açılışta DPAPI'ye taşı.
     for secret_key in SECRET_SETTING_KEYS:
@@ -613,7 +616,7 @@ def _check_traffic_anomaly(now: float, total_bps: float, conn: sqlite3.Connectio
     _traffic_window.append((now, total_bps))
     cutoff = now - ANOMALY_WINDOW_SECONDS
     while _traffic_window and _traffic_window[0][0] < cutoff:
-        _traffic_window.pop(0)
+        _traffic_window.popleft()
 
     if len(_traffic_window) < ANOMALY_MIN_SAMPLES:
         return
@@ -627,7 +630,7 @@ def _check_traffic_anomaly(now: float, total_bps: float, conn: sqlite3.Connectio
         and (now - _last_anomaly_ts) > ANOMALY_COOLDOWN_SECONDS
     ):
         _last_anomaly_ts = now
-        pct = int((total_bps / avg - 1) * 100) if avg else 0
+        pct = min(999, int((total_bps / avg - 1) * 100)) if avg else 0
         message = f"Sıra dışı trafik aktivitesi! Anlık trafik, son 1 saatin ortalamasının %{pct} üzerinde."
         conn.execute("INSERT OR REPLACE INTO alerts (ts, level, message) VALUES (?, ?, ?)",
                      (now, "warning", message))
@@ -739,7 +742,7 @@ def diagnostics_loop(stop_event: threading.Event):
                     conn.execute("INSERT OR REPLACE INTO alerts (ts, level, message) VALUES (?, ?, ?)",
                                  (now, level, message))
                     conn.commit()
-                manager.broadcast_threadsafe({"type": "alert", "ts": now, "level": level, "message": message, "simulated": sim})
+                manager.broadcast_threadsafe({"type": "system_alert", "ts": now, "level": level, "message": message, "simulated": sim})
 
             prev_status = cur_status
             if now - last_prune > 3600:
@@ -842,9 +845,12 @@ def _load_last_known_devices_into_cache():
     logger.info("[STARTUP] %d bilinen cihaz önbelleğe yüklendi (stale=true, tarama devam ediyor)", len(devices))
 
 
+from dhcp_monitor import start_dhcp_monitor, stop_dhcp_monitor
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _stop_event.clear()
+    start_dhcp_monitor()
     _threads.clear()
     init_db()
     apply_settings_to_runtime(get_all_settings())
@@ -1666,14 +1672,35 @@ def get_topology(user: dict = Depends(get_current_user)):
             "first_seen": dev.get("first_seen"),
             "last_seen": dev.get("last_seen"),
             "discovery_sources": dev.get("discovery_sources", []),
+            "switch_ip": dev.get("switch_ip"),
+            "switch_port": dev.get("switch_port")
         })
+
+    # Build a lookup for IPs to node_ids
+    ip_to_node = {n["ip"]: n["id"] for n in nodes if n.get("ip")}
+    
+    physical_switch_discovered = False
+    
+    for idx, dev in enumerate(unique_devices_list):
+        if dev.get("is_gateway") or dev.get("ip") == gateway:
+            continue
+            
+        node_id = f"dev-{idx}"
         edge_status = "online" if dev.get("status") == "online" else ("discovered" if dev.get("status") == "discovered" else dev.get("status", "unknown"))
-        edges.append({"from": "lan", "to": node_id, "status": edge_status, "kind": "logical_access", "logical": True})
+        
+        switch_ip = dev.get("switch_ip")
+        switch_port = dev.get("switch_port")
+        
+        if switch_ip and switch_ip in ip_to_node:
+            physical_switch_discovered = True
+            edges.append({"from": ip_to_node[switch_ip], "to": node_id, "status": edge_status, "kind": "physical_access", "logical": False, "label": f"Port {switch_port}"})
+        else:
+            edges.append({"from": "lan", "to": node_id, "status": edge_status, "kind": "logical_access", "logical": True})
 
     return {"nodes": nodes, "edges": edges, "meta": {
         "gateway": gateway, "gateway_type": gateway_type,
-        "physical_switch_discovered": False,
-        "note": "ARP tablosundan fiziksel switch/port topolojisi çıkarılamaz; LAN düğümü mantıksal gösterimdir."
+        "physical_switch_discovered": physical_switch_discovered,
+        "note": "Gercek switch/port topolojisi kullaniliyor." if physical_switch_discovered else "Fiziksel switch kesfedilmedi; LAN mantiksal gosterimdir."
     }}
 
 @app.get("/api/logs")
@@ -1720,9 +1747,11 @@ def enrich_devices(devices: list[dict]) -> list[dict]:
         local_ctx = diag.get_network_context()
         local_mac = _normalize_mac(local_ctx.get("local_mac"))
         local_hostname = (socket.gethostname() or "").strip()
+        current_network = local_ctx.get("ssid") or local_ctx.get("cidr") or ""
     except Exception:
         local_mac = ""
         local_hostname = ""
+        current_network = ""
 
     for device in devices:
         if (device.get("is_self") or device.get("ip") == local_ctx.get("local_ip")) and not device.get("mac") and local_mac:
@@ -1737,7 +1766,7 @@ def enrich_devices(devices: list[dict]) -> list[dict]:
 
         if mac:
             row = conn.execute(
-                "SELECT friendly_name, hostname, device_type, classification_source, notes, first_seen, last_ip, last_status, last_latency, last_packet_loss, last_arp_seen, last_icmp_seen, last_hostname_seen, last_vendor, last_discovery_sources, connectivity_status, identification_status FROM known_devices WHERE mac=?",
+                "SELECT friendly_name, hostname, device_type, classification_source, notes, first_seen, last_ip, last_status, last_latency, last_packet_loss, last_arp_seen, last_icmp_seen, last_hostname_seen, last_vendor, last_discovery_sources, connectivity_status, identification_status, last_network, open_ports FROM known_devices WHERE mac=?",
                 (mac,),
             ).fetchone()
 
@@ -1745,7 +1774,19 @@ def enrich_devices(devices: list[dict]) -> list[dict]:
                 (friendly_name, saved_hostname, saved_type, classification_source, notes, first_seen,
                  previous_ip, previous_status, previous_latency, previous_packet_loss,
                  previous_arp_seen, previous_icmp_seen, previous_hostname_seen, previous_vendor,
-                 previous_sources, previous_connectivity, previous_identification) = row
+                 previous_sources, previous_connectivity, previous_identification, previous_network, previous_open_ports) = row
+                
+                # Check for new ports
+                current_ports = classification.get('open_ports', [])
+                if previous_open_ports:
+                    import json
+                    try:
+                        prev_ports_list = json.loads(previous_open_ports)
+                        new_ports = [p for p in current_ports if p not in prev_ports_list]
+                        if new_ports:
+                            alert_msg = f"{device.get('ip')} ({hostname or mac}) cihazi uzerinde YENI PORT(LAR) tespit edildi: {', '.join(map(str, new_ports))}"
+                            conn.execute("INSERT INTO alerts (ts, level, message) VALUES (?, ?, ?)", (time.time(), "warning", alert_msg))
+                    except: pass
                 if not hostname:
                     hostname = saved_hostname
                 # Eski veritabanında yerel PC hostname'i başka bir MAC'e
@@ -1764,26 +1805,29 @@ def enrich_devices(devices: list[dict]) -> list[dict]:
                 classification_source = "auto"
                 is_new = True
                 conn.execute(
-                    "INSERT INTO known_devices (mac, friendly_name, hostname, device_type, classification_source, notes, first_seen, last_seen, last_ip, last_status, last_latency, last_packet_loss, last_arp_seen, last_icmp_seen, last_hostname_seen, last_vendor, last_discovery_sources, connectivity_status, identification_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (mac, None, hostname, device_type, classification_source, "", now, now, device.get("ip"),
+                    "INSERT INTO known_devices (mac, friendly_name, hostname, device_type, classification_source, owner, notes, first_seen, last_seen, last_ip, last_status, last_latency, last_packet_loss, last_arp_seen, last_icmp_seen, last_hostname_seen, last_vendor, last_discovery_sources, connectivity_status, identification_status, last_network, open_ports) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (mac, None, hostname, device_type, classification_source, "", "", now, now, device.get("ip"),
                      device.get("status", "unknown"), device.get("latency"), device.get("packet_loss"),
                      device.get("last_arp_seen"), device.get("last_icmp_seen"), device.get("last_hostname_seen"),
                      vendor or None, json.dumps(device.get("discovery_sources", []), ensure_ascii=False),
-                     device.get("connectivity_status", "unknown"), device.get("identification_status", "unknown")),
+                     device.get("connectivity_status", "unknown"), device.get("identification_status", "unknown"),
+                     current_network, json.dumps(classification.get('open_ports', []))),
                 )
 
             conn.execute(
-                "UPDATE known_devices SET hostname=?, device_type=?, last_seen=?, last_ip=?, last_status=?, last_latency=?, last_packet_loss=?, last_arp_seen=?, last_icmp_seen=?, last_hostname_seen=?, last_vendor=?, last_discovery_sources=?, connectivity_status=?, identification_status=? WHERE mac=?",
+                "UPDATE known_devices SET hostname=?, device_type=?, last_seen=?, last_ip=?, last_status=?, last_latency=?, last_packet_loss=?, last_arp_seen=?, last_icmp_seen=?, last_hostname_seen=?, last_vendor=?, last_discovery_sources=?, connectivity_status=?, identification_status=?, last_network=?, open_ports=? WHERE mac=?",
                 (hostname, device_type, now, device.get("ip"), device.get("status", "unknown"), device.get("latency"),
                  device.get("packet_loss"), device.get("last_arp_seen"), device.get("last_icmp_seen"),
                  device.get("last_hostname_seen"), vendor or None,
                  json.dumps(device.get("discovery_sources", []), ensure_ascii=False),
-                 device.get("connectivity_status", "unknown"), device.get("identification_status", "unknown"), mac),
+                 device.get("connectivity_status", "unknown"), device.get("identification_status", "unknown"),
+                 current_network, json.dumps(classification.get('open_ports', [])), mac),
             )
         else:
             # ARP/MAC bilgisi olmayan SSDP/mDNS cihazları yine gösterilir;
             # kalıcı kimlik için MAC görüldüğü ilk taramada kullanılacaktır.
             friendly_name = device.get("friendly_name")
+            owner = device.get("owner") or ""
             notes = device.get("notes") or ""
             first_seen = device.get("first_seen") or now
             classification_source = device.get("classification_source") or "auto"
@@ -1792,9 +1836,11 @@ def enrich_devices(devices: list[dict]) -> list[dict]:
             "mac": mac,
             "hostname": hostname,
             "friendly_name": friendly_name,
+            "owner": owner,
             "vendor": vendor or None,
             "type": device_type,
             "classification_source": classification_source or "auto",
+            "owner": owner or "",
             "notes": notes or "",
             "first_seen": first_seen,
             "last_seen": now,
@@ -1811,12 +1857,12 @@ def enrich_devices(devices: list[dict]) -> list[dict]:
     seen_macs = {d.get("mac") for d in result if d.get("mac")}
     seen_ips = {d.get("ip") for d in result if d.get("ip")}
     offline_rows = conn.execute(
-        "SELECT mac, friendly_name, hostname, device_type, classification_source, notes, first_seen, last_seen, last_ip, last_status, last_latency, last_packet_loss, last_arp_seen, last_icmp_seen, last_hostname_seen, last_vendor, last_discovery_sources, connectivity_status, identification_status "
+        "SELECT mac, friendly_name, hostname, device_type, classification_source, owner, notes, first_seen, last_seen, last_ip, last_status, last_latency, last_packet_loss, last_arp_seen, last_icmp_seen, last_hostname_seen, last_vendor, last_discovery_sources, connectivity_status, identification_status "
         "FROM known_devices WHERE last_seen IS NOT NULL AND last_seen >= ? ORDER BY last_seen DESC",
         (now - 2 * 3600,),
     ).fetchall()
     for row in offline_rows:
-        (mac, friendly_name, saved_hostname, saved_type, classification_source, notes, first_seen, last_seen,
+        (mac, friendly_name, saved_hostname, saved_type, classification_source, owner, notes, first_seen, last_seen,
          last_ip, last_status, last_latency, last_packet_loss, last_arp_seen, last_icmp_seen,
          last_hostname_seen, last_vendor, last_discovery_sources, saved_connectivity, saved_identification) = row
         if (mac and mac in seen_macs) or (last_ip and last_ip in seen_ips):
@@ -1835,6 +1881,7 @@ def enrich_devices(devices: list[dict]) -> list[dict]:
             "vendor": last_vendor,
             "type": saved_type or "unknown",
             "classification_source": classification_source or "auto",
+            "owner": owner or "",
             "notes": notes or "",
             "first_seen": first_seen,
             "last_seen": last_seen,
@@ -1976,15 +2023,15 @@ def rename_device(body: DeviceRenameRequest, user: dict = Depends(require_admin)
 def list_known_devices(user: dict = Depends(get_current_user)):
     conn = db_conn()
     rows = conn.execute(
-        "SELECT mac, friendly_name, hostname, device_type, classification_source, notes, first_seen, last_seen FROM known_devices ORDER BY last_seen DESC"
+        "SELECT mac, friendly_name, hostname, device_type, classification_source, owner, notes, first_seen, last_seen FROM known_devices ORDER BY last_seen DESC"
     ).fetchall()
     conn.close()
     return {
         "devices": [
             {
                 "mac": r[0], "friendly_name": r[1], "hostname": r[2],
-                "type": r[3], "classification_source": r[4] or "auto", "notes": r[5] or "",
-                "first_seen": r[6], "last_seen": r[7],
+                "type": r[3], "classification_source": r[4] or "auto", "owner": r[5] or "", "notes": r[6] or "",
+                "first_seen": r[7], "last_seen": r[8],
             }
             for r in rows
         ]
@@ -2830,70 +2877,80 @@ def knowledge_network(user: dict = Depends(get_current_user)):
         {"id":"anomaly","title":"Anomali","text":"Yeni cihaz, IP değişikliği, yeni port veya envanter değişikliği gibi olaylar analiste inceleme sinyali verir; otomatik saldırı hükmü verilmez."},
     ]}
 
-
 from fastapi.responses import StreamingResponse
 import io
 import csv
+import platform
+import json
 
-
-@app.get("/api/rdp")
-def api_download_rdp(ip: str, name: str = ""):
-    content = f"auto connect:i:1\nfull address:s:{ip}\nprompt for credentials:i:1\n"
-    import urllib.parse
-    safe_name = urllib.parse.quote(name or ip)
-    headers = {
-        "Content-Disposition": f"attachment; filename*=UTF-8\'\'{safe_name}.rdp"
-    }
-    return Response(content=content, media_type="application/x-rdp", headers=headers)
+@app.post("/api/tools/rdp")
+def api_launch_rdp(ip: str, user: dict = Depends(get_current_user)):
+    if platform.system() == "Windows":
+        import subprocess
+        try:
+            # We use CREATE_NO_WINDOW so it doesn't pop up a cmd window
+            subprocess.Popen(["mstsc.exe", f"/v:{ip}"], **_hidden_subprocess_kwargs())
+            return {"ok": True, "message": f"{ip} için RDP başlatıldı."}
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"error": f"RDP başlatılamadı: {e}"})
+    return JSONResponse(status_code=400, content={"error": "RDP sadece Windows'ta destekleniyor."})
 
 @app.get("/api/export/devices")
 def export_devices_csv(user: dict = Depends(get_current_user)):
     try:
-        conn = get_db_connection()
+        conn = db_conn()
         cursor = conn.cursor()
-        cursor.execute("SELECT ip, mac, hostname, vendor, type, os_name, os_version, cpu_name, ram_gb, disk_gb, motherboard_maker, motherboard_model, gpu_name, serial_number, antivirus, firewall, unified_inventory, last_seen FROM devices ORDER BY ip")
+        
+        cursor.execute("""
+            SELECT mac, friendly_name, hostname, device_type, first_seen, last_seen, last_ip, 
+                   last_vendor, last_network, connectivity_status, identification_status 
+            FROM known_devices 
+            ORDER BY last_network, last_ip
+        """)
         rows = cursor.fetchall()
         
         output = io.StringIO()
-        # Add UTF-8 BOM for Excel compatibility
-        output.write('\ufeff')
+        output.write("\ufeff") # BOM for Excel
+        writer = csv.writer(output, delimiter=";")
         
-        writer = csv.writer(output, delimiter=';')
-        writer.writerow([
-            "IP Adresi", "MAC Adresi", "Hostname", "Üretici", "Cihaz Tipi", 
-            "İşletim Sistemi", "OS Versiyon", "İşlemci (CPU)", "RAM (GB)", "Disk (GB)",
-            "Anakart", "Model", "Ekran Kartı (GPU)", "Seri No", 
-            "Antivirüs", "Güvenlik Duvarı", "Envanter Durumu", "Son Görülme"
-        ])
+        writer.writerow(["Wi-Fi Agi (Subnet/SSID)", "Durum", "IP Adresi", "MAC Adresi", "Hostname", "Uretici", "Cihaz Tipi", "Ozel Isim", "Ilk Gorulme", "Son Gorulme"])
         
-        import json
+        import datetime
         for r in rows:
-            inv = {}
-            if r["unified_inventory"]:
-                try:
-                    inv = json.loads(r["unified_inventory"])
-                except:
-                    pass
-                    
-            status_text = "Yetkili (WMI/SSH)" if inv.get("verified") else "Ağ Profili"
+            network = r["last_network"] or "Bilinmiyor"
+            status = r["connectivity_status"] or "unknown"
+            
+            if status == "online": status_text = "Cevrimici"
+            elif status == "offline": status_text = "Cevrimdisi"
+            elif status == "stale": status_text = "Duragan"
+            else: status_text = "Bilinmiyor"
+            
+            first = datetime.datetime.fromtimestamp(r["first_seen"]).strftime('%Y-%m-%d %H:%M:%S') if r["first_seen"] else ""
+            last = datetime.datetime.fromtimestamp(r["last_seen"]).strftime('%Y-%m-%d %H:%M:%S') if r["last_seen"] else ""
             
             writer.writerow([
-                r["ip"], r["mac"], r["hostname"], r["vendor"], r["type"],
-                r["os_name"], r["os_version"], r["cpu_name"], r["ram_gb"], r["disk_gb"],
-                r["motherboard_maker"], r["motherboard_model"], r["gpu_name"], r["serial_number"],
-                r["antivirus"], r["firewall"], status_text, r["last_seen"]
+                network,
+                status_text,
+                r["last_ip"] or "",
+                r["mac"] or "",
+                r["hostname"] or "",
+                r["last_vendor"] or "",
+                r["device_type"] or "unknown",
+                r["friendly_name"] or "",
+                first,
+                last
             ])
             
         conn.close()
-        
         output.seek(0)
+        
         return StreamingResponse(
             iter([output.getvalue()]),
             media_type="text/csv; charset=utf-8",
             headers={"Content-Disposition": f"attachment; filename=netmon_envanter.csv"}
         )
     except Exception as e:
-        return {"error": str(e)}
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 @app.get("/api/ssl-certs")
 def get_ssl_certs(user: dict = Depends(get_current_user)):
@@ -3767,7 +3824,6 @@ def api_login(body: LoginRequest):
             c.unbind()
             ad_success = True
             if row is None:
-                import secrets, time
                 new_salt = secrets.token_urlsafe(16)
                 new_hash = _hash_password(secrets.token_urlsafe(32), new_salt)
                 conn.execute(

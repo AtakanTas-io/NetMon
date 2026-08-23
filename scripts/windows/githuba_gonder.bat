@@ -1,4 +1,5 @@
 @echo off
+cd /d "%~dp0..\..\"
 color 0B
 echo ===================================================
 echo       NETMON - GITHUB OTOMATIK YUKLEME ARACI

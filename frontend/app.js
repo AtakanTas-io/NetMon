@@ -2966,9 +2966,19 @@ function setDeviceTab(tab) {
 }
 
 
-window.downloadRdp = function(ip, name) {
-    if(!ip) return toast("IP adresi bulunamadi", "error");
-    window.location.href = `/api/rdp?ip=${encodeURIComponent(ip)}&name=${encodeURIComponent(name || ip)}`;
+window.downloadRdp = async function(ip) {
+    if(!ip) return toast("IP adresi bulunamadı", "error");
+    try {
+        const res = await fetch(`/api/tools/rdp?ip=${encodeURIComponent(ip)}`, {
+            method: "POST",
+            headers: { "Authorization": `Bearer ${S.token}` }
+        });
+        const data = await res.json();
+        if(!res.ok) throw new Error(data.error || "RDP başlatılamadı.");
+        toast(data.message || "RDP Başlatıldı.", "success");
+    } catch(err) {
+        toast(err.message, "error");
+    }
 };
 
 function renderDeviceTable() {
@@ -3022,7 +3032,7 @@ function renderDeviceTable() {
   });
 
   const tab = S.deviceTab || "all";
-  const statusFilter = S.deviceStatusFilter || "all";
+  const statusFilter = S.deviceStatusFilter || "online";
   const typeFilter = S.deviceTypeFilter || "all";
   const filteredList = list.filter((d) => {
     const st = deviceStatus(d);
@@ -3116,7 +3126,7 @@ function renderDeviceTable() {
   if (tab === "network") {
     body.innerHTML = filteredList.length ? filteredList.map(d => {
       const iface = d.network_interfaces?.[0] || d.interface || {};
-      return `<tr><td><span class="badge ${deviceStatusClass(deviceStatus(d))}">${esc(deviceStatusLabel(deviceStatus(d)))}</span></td><td><b>${esc(deviceDisplayName(d))}</b></td><td>${esc(d.ip || "-")}</td><td>${esc(d.mac || "-")}</td><td>${esc(d.vendor || "-")}</td><td>${esc(d.inventory_source || "Discovery")}</td><td><button class="mini-btn blue" onclick="showDeviceDetails('${esc(d.mac || "")}', '${esc(d.ip || "")}')">Detay</button>
+      return `<tr><td><span class="badge ${deviceStatusClass(deviceStatus(d))}">${esc(deviceStatusLabel(deviceStatus(d)))}</span></td><td><b>${esc(deviceDisplayName(d))}</b></td><td class="mono">${esc(d.ip || "-")}</td><td class="mono">${esc(d.mac || "-")}</td><td>${esc(d.vendor || "-")}</td><td>${esc(d.inventory_source || "Discovery")}</td><td><button class="mini-btn blue" onclick="showDeviceDetails('${esc(d.mac || "")}', '${esc(d.ip || "")}')">Detay</button>
           <button class="mini-btn" style="color:#0ea5e9;border-color:#0ea5e9;" onclick="downloadRdp('${esc(d.ip || "")}', '${esc(d.hostname || d.ip)}')">💻 RDP</button></td></tr>`;
     }).join("") : `<tr><td colspan="7" class="hint">Ağ envanteri bulunamadı.</td></tr>`;
     return;
@@ -3131,7 +3141,7 @@ function renderDeviceTable() {
     return;
   }
   if (tab === "history") {
-    body.innerHTML = filteredList.length ? filteredList.map(d => `<tr><td><span class="badge ${deviceStatusClass(deviceStatus(d))}">${esc(deviceStatusLabel(deviceStatus(d)))}</span></td><td><b>${esc(deviceDisplayName(d))}</b></td><td>${esc(d.ip || "-")}</td><td>${esc(d.mac || "-")}</td><td>${esc(formatSeen(d.last_seen || d.lastSeen || d.ts))}</td><td>${esc(d.inventory_source || "Discovery")}</td><td>${d.unified_inventory?.verified ? "Doğrulandı" : "Ağ profili"}</td><td><button class="mini-btn blue" onclick="showDeviceDetails('${esc(d.mac || "")}', '${esc(d.ip || "")}')">Detay</button>
+    body.innerHTML = filteredList.length ? filteredList.map(d => `<tr><td><span class="badge ${deviceStatusClass(deviceStatus(d))}">${esc(deviceStatusLabel(deviceStatus(d)))}</span></td><td><b>${esc(deviceDisplayName(d))}</b></td><td class="mono">${esc(d.ip || "-")}</td><td class="mono">${esc(d.mac || "-")}</td><td>${esc(formatSeen(d.last_seen || d.lastSeen || d.ts))}</td><td>${esc(d.inventory_source || "Discovery")}</td><td>${d.unified_inventory?.verified ? "Doğrulandı" : "Ağ profili"}</td><td><button class="mini-btn blue" onclick="showDeviceDetails('${esc(d.mac || "")}', '${esc(d.ip || "")}')">Detay</button>
           <button class="mini-btn" style="color:#0ea5e9;border-color:#0ea5e9;" onclick="downloadRdp('${esc(d.ip || "")}', '${esc(d.hostname || d.ip)}')">💻 RDP</button></td></tr>`).join("") : `<tr><td colspan="8" class="hint">Geçmiş verisi bulunamadı.</td></tr>`;
     return;
   }
@@ -3154,7 +3164,9 @@ function renderDeviceTable() {
         <tr>
           <td><span class="badge ${isVerified ? 'ok' : 'gray'}">${isVerified ? 'Envanter Doğrulandı' : 'Ağ Profili'}</span></td>
           <td><b>${esc(d.ip || "-")}</b> ${copyBtnHtml(d.ip)} ${d.is_self ? '<span class="badge info">bu cihaz</span>' : ''}</td>
-          <td><b>${esc(deviceDisplayName(d))}</b><div class="sub" style="font-size:10.5px">${esc(d.vendor || "Bilinmeyen Üretici")}</div></td>
+          <td><b>${esc(deviceDisplayName(d))}</b>
+    ${d.owner ? `<div class="sub" style="font-size:11px;color:var(--primary);margin-top:2px;">👤 Sahip: <b>${esc(d.owner)}</b></div>` : ''}
+    <div class="sub" style="font-size:10.5px">${esc(d.vendor || "Bilinmeyen Üretici")}</div></td>
           <td>${esc(cpuDisplay)}${hw.cores ? " (" + hw.cores + " Çek)" : ""}</td>
           <td><b>${hw.ram_gb ? hw.ram_gb + " GB" : "-"}</b></td>
           <td>${esc(hw.gpu || "-")}</td>
@@ -3210,11 +3222,16 @@ function renderDeviceTable() {
         const type = TYPE_LABEL[d.type] || d.type || "Bilinmeyen";
         const confidence = deviceConfidence(d);
         const status = deviceStatus(d);
+        const inv = d.wmi_inventory?.status === "Success" ? d.wmi_inventory : (d.fallback_inventory || {});
+        const osName = (inv.software?.os_name || d.os_fingerprint || "").toLowerCase();
+        const isLegacyOs = osName.includes("windows 7") || osName.includes("windows 8") || osName.includes("windows server 2008") || osName.includes("xp");
+
         return `
       <tr>
         <td>
           <span class="badge ${deviceStatusClass(status)}">${deviceStatusLabel(status)}</span>
           ${d.is_new ? ' <span class="badge warn">Yeni</span>' : ""}
+          ${isLegacyOs ? ' <span class="badge fail">Riskli OS</span>' : ""}
           <div style="font-size:10px;color:var(--muted);margin-top:4px">${esc(connectivityLabel(d))}</div>
         </td>
         <td><b>${esc(d.ip || "-")}</b> ${copyBtnHtml(d.ip)} ${d.is_self ? '<span class="badge info">bu cihaz</span>' : ""} ${d.is_gateway ? '<span class="badge info">gateway</span>' : ""}</td>
@@ -3494,6 +3511,8 @@ function openDeviceEditModal(mac) {
     <input id="editDeviceName" value="${esc(d.friendly_name || "")}" placeholder="Örn. Muhasebe PC" />
     <div class="field-label" style="margin-top:10px">Cihaz tipi</div>
     <select id="editDeviceType">${options.map(t => `<option value="${t}" ${t === d.type ? "selected" : ""}>${esc(TYPE_LABEL[t] || t)}</option>`).join("")}</select>
+    <div class="field-label" style="margin-top:10px">Sahip / Sorumlu</div>
+    <input id="editDeviceOwner" value="${esc(d.owner || "")}" placeholder="Örn. Atakan, Muhasebe Departmanı" />
     <div class="field-label" style="margin-top:10px">Not</div>
     <input id="editDeviceNotes" value="${esc(d.notes || "")}" placeholder="Örn. 2. kattaki yazıcı" />
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px"><button class="mini-btn" onclick="closeModalForce()">İptal</button><button class="mini-btn blue" onclick="saveDeviceEdit('${esc(mac)}')">Kaydet</button></div>
@@ -4373,6 +4392,7 @@ function renderTopologyPage() {
 function renderDevicesPage() {
   const el = $("page-devices");
   const tab = S.deviceTab || "all";
+  const statusFilter = S.deviceStatusFilter || "all";
   if (!el.dataset.built) {
     el.dataset.built = "1";
     
@@ -4411,11 +4431,11 @@ function renderDevicesPage() {
             <button class="mini-btn" style="background:#10b981;border-color:#059669;color:white;margin-right:8px;" onclick="window.open('/api/export/devices', '_blank')">📊 Excel'e Aktar</button>
             <input type="text" id="devFilter" placeholder="IP, Donanım, OS veya Ad ara…" style="width:200px" oninput="renderDeviceTable()" />
             <select id="devStatusFilter" onchange="S.deviceStatusFilter=this.value;renderDeviceTable()" style="width:125px">
-              <option value="all">Tüm durumlar</option>
-              <option value="online">Çevrimiçi</option>
-              <option value="discovered">Görüldü</option>
-              <option value="offline">Çevrimdışı</option>
-              <option value="stale">Eski kayıt</option>
+              <option value="all" ${statusFilter==='all'?'selected':''}>Tüm durumlar</option>
+              <option value="online" ${statusFilter==='online'?'selected':''}>Çevrimiçi</option>
+              <option value="discovered" ${statusFilter==='discovered'?'selected':''}>Görüldü</option>
+              <option value="offline" ${statusFilter==='offline'?'selected':''}>Çevrimdışı</option>
+              <option value="stale" ${statusFilter==='stale'?'selected':''}>Eski kayıt</option>
             </select>
             <select id="devTypeFilter" onchange="S.deviceTypeFilter=this.value;renderDeviceTable()" style="width:135px">
               <option value="all">Tüm cihazlar</option>
@@ -4780,7 +4800,10 @@ async function handleLoginSubmit(e) {
     } catch (err) {}
 
     if (!res.ok) {
-      if (errBox) errBox.textContent = data.error || "Giriş başarısız.";
+      if (errBox) {
+        if (data.error) errBox.textContent = data.error;
+        else errBox.textContent = `Hata: HTTP ${res.status} (Sunucu yanıt vermedi veya yol bulunamadı)`;
+      }
       return false;
     }
 
@@ -4943,6 +4966,26 @@ async function handleNetworkMessage(message) {
     if (S.sparkDown.length > MAX_POINTS) S.sparkDown.shift();
     if (typeof renderStats === "function") renderStats();
     if (typeof drawTrafficChart === "function") drawTrafficChart();
+    return;
+  }
+
+  if (type === "alert") {
+    const banner = document.getElementById("securityBannerContainer");
+    if (banner) {
+        banner.innerHTML = `<div style="background-color: var(--fail); color: #fff; padding: 12px; margin-bottom: 15px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 4px 12px rgba(239,68,68,0.2);">
+            <div>
+                <strong style="display:block; margin-bottom: 4px;">⚠️ Güvenlik Uyarısı</strong>
+                <span style="font-size: 13px;">${message.message || "Bilinmeyen Güvenlik Uyarısı"}</span>
+            </div>
+            <button onclick="this.parentElement.style.display='none'" style="background: rgba(255,255,255,0.2); border: none; color: white; padding: 4px 10px; border-radius: 4px; cursor: pointer;">Kapat</button>
+        </div>`;
+    }
+    toast("⚠️ " + (message.message || "Güvenlik uyarısı"), message.level === "critical" ? "fail" : "warn");
+    return;
+  }
+
+  if (type === "system_alert") {
+    toast(message.message || "Sistem Uyarısı", message.level === "critical" ? "fail" : "warn");
     return;
   }
 

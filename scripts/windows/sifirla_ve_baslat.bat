@@ -1,6 +1,6 @@
 @echo off
 setlocal
-cd /d "%~dp0"
+cd /d "%~dp0..\..\"
 color 0E
 echo ==============================================================
 echo NETMON VERITABANI YEDEKLEME VE SIFIRLAMA ARACI
@@ -31,4 +31,4 @@ if errorlevel 1 (
   exit /b 1
 )
 
-start "" calistir.bat
+start "" scripts\windows\calistir.bat

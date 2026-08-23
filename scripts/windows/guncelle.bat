@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 > nul
 setlocal
-cd /d "%~dp0"
+cd /d "%~dp0..\..\"
 title NetMon - Guvenli Guncelleme
 
 where git >nul 2>nul
