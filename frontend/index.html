@@ -1747,6 +1747,218 @@
         border-radius: 8px;
         padding: 4px 8px;
       }
+
+      /* ============ SKELETON LOADER ============ */
+      .skeleton-box {
+        background: linear-gradient(90deg, var(--panel-2) 25%, rgba(255,255,255,0.06) 50%, var(--panel-2) 75%);
+        background-size: 200% 100%;
+        animation: skeletonShimmer 1.5s infinite;
+        border-radius: 6px;
+      }
+      .skeleton-line {
+        height: 14px;
+        margin: 6px 0;
+      }
+      @keyframes skeletonShimmer {
+        0% { background-position: 200% 0; }
+        100% { background-position: -200% 0; }
+      }
+
+      /* ============ TOP TALKERS STYLES ============ */
+      .talker-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 12px;
+        border-radius: 9px;
+        background: var(--panel-2);
+        border: 1px solid var(--line-soft);
+        margin-bottom: 8px;
+        transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+      }
+      .talker-row:hover {
+        transform: translateY(-2px);
+        border-color: rgba(56, 189, 248, 0.4);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+      }
+      .talker-rank {
+        width: 26px;
+        height: 26px;
+        border-radius: 7px;
+        background: rgba(56, 189, 248, 0.15);
+        color: var(--cyan);
+        font-weight: 700;
+        font-size: 11px;
+        display: grid;
+        place-items: center;
+        flex-shrink: 0;
+      }
+      .talker-info {
+        flex: 1;
+        min-width: 0;
+      }
+      .talker-title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--txt);
+      }
+      .talker-proto-badge {
+        font-size: 10px;
+        padding: 2px 7px;
+        border-radius: 4px;
+        background: rgba(99, 102, 241, 0.18);
+        color: #a5b4fc;
+        border: 1px solid rgba(99, 102, 241, 0.3);
+        font-weight: 500;
+      }
+      .talker-bar-bg {
+        width: 100%;
+        height: 6px;
+        border-radius: 3px;
+        background: rgba(255, 255, 255, 0.08);
+        margin-top: 6px;
+        overflow: hidden;
+      }
+      .talker-bar-fill {
+        height: 100%;
+        border-radius: 3px;
+        background: linear-gradient(90deg, #38bdf8, #818cf8, #c084fc);
+        transition: width 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      .talker-speed {
+        text-align: right;
+        flex-shrink: 0;
+      }
+      .talker-speed b {
+        font-size: 13px;
+        color: var(--cyan);
+        display: block;
+      }
+      .talker-speed span {
+        font-size: 10px;
+        color: var(--muted);
+      }
+
+      /* ============ IPAM & CONFLICT STYLES ============ */
+      .conflict-alert-card {
+        background: linear-gradient(135deg, rgba(239, 68, 68, 0.15), rgba(185, 28, 28, 0.08));
+        border: 1px solid rgba(239, 68, 68, 0.5);
+        border-radius: 12px;
+        padding: 14px 18px;
+        margin-bottom: 16px;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        box-shadow: 0 0 20px rgba(239, 68, 68, 0.15);
+        animation: threatAuraPulse 2s infinite;
+      }
+      .ipam-grid-map {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(36px, 1fr));
+        gap: 4px;
+        padding: 12px;
+        background: var(--panel-2);
+        border-radius: 10px;
+        border: 1px solid var(--line-soft);
+        max-height: 280px;
+        overflow-y: auto;
+      }
+      .ipam-ip-node {
+        aspect-ratio: 1;
+        border-radius: 6px;
+        font-size: 9px;
+        display: grid;
+        place-items: center;
+        font-weight: 600;
+        cursor: pointer;
+        transition: transform 0.15s ease, filter 0.15s ease;
+      }
+      .ipam-ip-node:hover {
+        transform: scale(1.2);
+        z-index: 5;
+        filter: brightness(1.3);
+      }
+      .ipam-ip-node.used { background: rgba(56, 189, 248, 0.25); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); }
+      .ipam-ip-node.gateway { background: rgba(16, 185, 129, 0.25); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.5); }
+      .ipam-ip-node.conflict { background: rgba(239, 68, 68, 0.35); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.8); animation: threatAuraPulse 1.2s infinite; }
+      .ipam-ip-node.free { background: rgba(255, 255, 255, 0.03); color: var(--muted); border: 1px solid rgba(255, 255, 255, 0.05); }
+
+      /* ============ GITHUB-STYLE CONFIG DIFF ============ */
+      .diff-container {
+        font-family: 'Consolas', 'Fira Code', monospace;
+        font-size: 12px;
+        background: #020617;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        overflow: hidden;
+        margin-top: 12px;
+      }
+      .diff-header-bar {
+        background: var(--panel-2);
+        padding: 10px 14px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 1px solid var(--line);
+      }
+      .diff-stats {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 11px;
+      }
+      .diff-badge-add { color: #34d399; font-weight: 700; background: rgba(16,185,129,0.15); padding: 2px 6px; border-radius: 4px; }
+      .diff-badge-del { color: #f87171; font-weight: 700; background: rgba(239,68,68,0.15); padding: 2px 6px; border-radius: 4px; }
+      .diff-table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      .diff-line {
+        display: flex;
+        width: 100%;
+        line-height: 20px;
+      }
+      .diff-num {
+        width: 44px;
+        flex-shrink: 0;
+        text-align: right;
+        padding-right: 8px;
+        color: #475569;
+        user-select: none;
+        background: #090d16;
+        border-right: 1px solid rgba(255, 255, 255, 0.05);
+      }
+      .diff-content {
+        flex: 1;
+        padding-left: 10px;
+        white-space: pre;
+        overflow-x: auto;
+      }
+      .diff-line.diff-add {
+        background: rgba(16, 185, 129, 0.12);
+        color: #34d399;
+      }
+      .diff-line.diff-add .diff-num {
+        background: rgba(16, 185, 129, 0.2);
+        color: #34d399;
+      }
+      .diff-line.diff-del {
+        background: rgba(239, 68, 68, 0.12);
+        color: #f87171;
+      }
+      .diff-line.diff-del .diff-num {
+        background: rgba(239, 68, 68, 0.2);
+        color: #f87171;
+      }
+      .diff-line.diff-hunk {
+        background: rgba(99, 102, 241, 0.15);
+        color: #818cf8;
+        font-style: italic;
+        padding: 4px 10px;
+      }
 </style>
   </head>
   <body>
@@ -1906,6 +2118,41 @@
                 <div class="panel-head"><h2>Canlı Ağ Trafiği (Live Traffic)</h2></div>
                 <div class="panel-body"><canvas id="trafficChart" height="150"></canvas></div>
               </div>
+
+              <!-- CANLI TOP TALKERS WIDGET -->
+              <div class="panel">
+                <div class="panel-head">
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <span style="color:var(--cyan)">📊</span>
+                    <h2 style="margin:0">Canlı Top Talkers (Bant Genişliği)</h2>
+                  </div>
+                  <div class="right"><button class="mini-btn blue" onclick="go('toptalkers')">Detaylı Gör</button></div>
+                </div>
+                <div class="panel-body">
+                  <div id="dashboardTopTalkersList">
+                    <div class="skeleton-box skeleton-line" style="height:40px; margin-bottom:8px"></div>
+                    <div class="skeleton-box skeleton-line" style="height:40px; margin-bottom:8px"></div>
+                    <div class="skeleton-box skeleton-line" style="height:40px"></div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- IPAM & IP CONFLICT WIDGET -->
+              <div class="panel">
+                <div class="panel-head">
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <span style="color:#34d399">⚡</span>
+                    <h2 style="margin:0">Subnet Havuz & IPAM Sağlığı</h2>
+                  </div>
+                  <div class="right"><button class="mini-btn" onclick="go('ipam')">IPAM Havuzu</button></div>
+                </div>
+                <div class="panel-body">
+                  <div id="dashboardIpamSummary">
+                    <div class="skeleton-box skeleton-line" style="height:40px; margin-bottom:8px"></div>
+                    <div class="skeleton-box skeleton-line" style="height:40px"></div>
+                  </div>
+                </div>
+              </div>
               
               <div class="panel" style="display:flex; flex-direction:column; height: 100%; grid-column: 1 / -1;">
                 <div class="panel-head">
@@ -1924,6 +2171,9 @@
           <!-- ============ DIGER SAYFALAR ============ -->
           <section class="page" id="page-topology"></section>
           <section class="page" id="page-devices"></section>
+          <section class="page" id="page-ipam"></section>
+          <section class="page" id="page-toptalkers"></section>
+          <section class="page" id="page-ncm"></section>
           <section class="page" id="page-ping"></section>
           <section class="page" id="page-traceroute"></section>
           <section class="page" id="page-portscan"></section>

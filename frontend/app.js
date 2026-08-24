@@ -288,6 +288,11 @@ const ICON = {
     '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/>',
   chevrondown: '<path d="m6 9 6 6 6-6"/>',
   book: '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z"/>',
+  grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>',
+  terminal: '<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>',
+  git_diff: '<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 9v12M13 6h3a2 2 0 0 1 2 2v7"/>',
+  trending: '<polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/>',
+  zap: '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
 };
 
 function ico(name, size, cls) {
@@ -510,6 +515,9 @@ const NAV_ITEMS = [
   { id: "dashboard", label: "Kontrol Merkezi", icon: "monitor" },
   { id: "devices", label: "BT Varlık Envanteri", icon: "list" },
   { id: "topology", label: "Ağ Keşfi ve Topoloji", icon: "wifi" },
+  { id: "ipam", label: "IPAM & Subnet Havuzu", icon: "grid" },
+  { id: "toptalkers", label: "Top Talkers & Trafik", icon: "activity" },
+  { id: "ncm", label: "Switch Config Diff", icon: "terminal" },
   { id: "security", label: "Güvenlik Görünürlüğü", icon: "shield" },
   { id: "analyst", label: "Analist Merkezi", icon: "shield" },
   { id: "purpleteam", label: "Cyber Lab", icon: "shield" },
@@ -523,6 +531,9 @@ Object.assign(PAGE_TITLES, {
   dashboard: "Kontrol Merkezi",
   devices: "BT Varlık Envanteri",
   topology: "Ağ Keşfi ve Topoloji",
+  ipam: "IPAM & Subnet Havuz Sağlığı",
+  toptalkers: "Canlı Top Talkers & Bant Genişliği",
+  ncm: "Ağ Cihazı Konfigürasyon Yedeği & Diff",
   ping: "Ağ Sağlığı ve Teşhis",
   security: "Güvenlik Görünürlüğü",
   analyst: "Analist Merkezi",
@@ -564,6 +575,21 @@ function go(page) {
 
   try {
     switch (page) {
+      case "dashboard":
+        refreshDashboardWidgets();
+        break;
+      case "ipam":
+        renderIpamPage();
+        refreshIpam();
+        break;
+      case "toptalkers":
+        renderTopTalkersPage();
+        refreshTopTalkers();
+        break;
+      case "ncm":
+        renderNcmPage();
+        refreshNcm();
+        break;
       case "topology":
         renderTopologyPage();
         refreshTopology();
@@ -4520,6 +4546,576 @@ function renderTopologyPage() {
   drawTopology("topoSvg2");
 }
 
+/* ============================================================
+   DASHBOARD WIDGETS (TOP TALKERS & IPAM SUMMARY)
+   ============================================================ */
+async function refreshDashboardWidgets() {
+  const ttContainer = $("dashboardTopTalkersList");
+  if (ttContainer) {
+    try {
+      const data = await get("/api/traffic/top-talkers");
+      const talkers = data?.top_talkers || [];
+      if (!talkers.length) {
+        ttContainer.innerHTML = `<div style="color:var(--muted); font-size:12px; padding:12px; text-align:center">Aktif ağ trafiği veya konuşmacı bulunamadı.</div>`;
+      } else {
+        ttContainer.innerHTML = talkers.slice(0, 4).map((t, idx) => `
+          <div class="talker-row" style="margin-bottom:6px; padding:8px 10px;">
+            <div class="talker-rank">#${idx + 1}</div>
+            <div class="talker-info">
+              <div class="talker-title">
+                <span>${esc(t.hostname || t.ip)}</span>
+                <span class="talker-proto-badge">${esc(t.primary_protocol)}</span>
+              </div>
+              <div class="talker-bar-bg">
+                <div class="talker-bar-fill" style="width:${Math.max(4, t.share_pct)}%"></div>
+              </div>
+            </div>
+            <div class="talker-speed">
+              <b>${t.total_mbps} <span style="font-size:9px">Mbps</span></b>
+              <span>%${t.share_pct} pay</span>
+            </div>
+          </div>
+        `).join("");
+      }
+    } catch (e) {
+      ttContainer.innerHTML = `<div style="color:var(--muted); font-size:11px">Top Talkers yüklenemedi.</div>`;
+    }
+  }
+
+  const ipamContainer = $("dashboardIpamSummary");
+  if (ipamContainer) {
+    try {
+      const data = await get("/api/ipam");
+      const subnet = data?.subnets?.[0] || {};
+      const conflicts = data?.conflicts || [];
+      
+      let conflictHtml = "";
+      if (conflicts.length > 0) {
+        conflictHtml = `
+          <div style="background:rgba(239,68,68,0.15); border:1px solid rgba(239,68,68,0.4); border-radius:8px; padding:8px 12px; margin-bottom:10px; display:flex; align-items:center; justify-content:space-between; animation:threatAuraPulse 1.8s infinite;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span style="color:#f87171; font-size:16px">🚨</span>
+              <div>
+                <b style="color:#f87171; font-size:12px">${conflicts.length} Adet IP Çakışması!</b>
+                <span style="display:block; color:var(--txt-2); font-size:10.5px">${esc(conflicts[0].ip)} adresi çift MAC tarafından kullanılıyor</span>
+              </div>
+            </div>
+            <button class="mini-btn" style="background:#ef4444; border-color:#dc2626; color:white;" onclick="go('ipam')">İncele</button>
+          </div>
+        `;
+      }
+
+      ipamContainer.innerHTML = `
+        ${conflictHtml}
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+          <span style="font-size:12px; font-weight:600; color:var(--txt)">${esc(subnet.cidr || "192.168.1.0/24")}</span>
+          <span style="font-size:11px; color:var(--cyan); font-weight:700">%${subnet.utilization_pct || 0} Dolu</span>
+        </div>
+        <div class="talker-bar-bg" style="height:8px; margin-bottom:10px;">
+          <div class="talker-bar-fill" style="width:${subnet.utilization_pct || 0}%; background:linear-gradient(90deg, #10b981, #f59e0b, #ef4444)"></div>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; font-size:11px; text-align:center;">
+          <div style="background:var(--panel-2); border:1px solid var(--line-soft); border-radius:6px; padding:6px;">
+            <span style="color:var(--muted); font-size:9.5px; display:block">Kullanılan IP</span>
+            <b style="color:var(--cyan); font-size:13px">${subnet.used_hosts || 0}</b>
+          </div>
+          <div style="background:var(--panel-2); border:1px solid var(--line-soft); border-radius:6px; padding:6px;">
+            <span style="color:var(--muted); font-size:9.5px; display:block">Boş IP</span>
+            <b style="color:#34d399; font-size:13px">${subnet.free_hosts || 0}</b>
+          </div>
+          <div style="background:var(--panel-2); border:1px solid var(--line-soft); border-radius:6px; padding:6px;">
+            <span style="color:var(--muted); font-size:9.5px; display:block">Toplam Kapasite</span>
+            <b style="color:var(--txt); font-size:13px">${subnet.total_hosts || 254}</b>
+          </div>
+        </div>
+      `;
+    } catch (e) {
+      ipamContainer.innerHTML = `<div style="color:var(--muted); font-size:11px">IPAM özeti yüklenemedi.</div>`;
+    }
+  }
+}
+
+/* ============================================================
+   IPAM & IP CONFLICT DETECTION PAGE
+   ============================================================ */
+function renderIpamPage() {
+  const el = $("page-ipam");
+  if (!el.dataset.built) {
+    el.dataset.built = "1";
+    el.innerHTML = `
+      <div id="ipamConflictAlertArea"></div>
+
+      <div class="grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px;">
+        <div class="panel" style="padding:16px; border-left:4px solid var(--cyan)">
+          <span style="color:var(--muted); font-size:11px">Subnet Adresi & Ağ Maskesi</span>
+          <h2 style="margin:4px 0 0; font-size:18px" id="ipamSubnetCidr">-</h2>
+          <small style="color:var(--txt-2)" id="ipamGatewayIp">Gateway: -</small>
+        </div>
+        <div class="panel" style="padding:16px; border-left:4px solid #10b981">
+          <span style="color:var(--muted); font-size:11px">Kullanılan / Dolu IP</span>
+          <h2 style="margin:4px 0 0; font-size:18px; color:#34d399" id="ipamUsedIps">-</h2>
+          <small style="color:var(--txt-2)" id="ipamUtilPct">Doluluk: -</small>
+        </div>
+        <div class="panel" style="padding:16px; border-left:4px solid #818cf8">
+          <span style="color:var(--muted); font-size:11px">Kullanılabilir Boş IP Havuzu</span>
+          <h2 style="margin:4px 0 0; font-size:18px; color:#a5b4fc" id="ipamFreeIps">-</h2>
+          <small style="color:var(--txt-2)">Yeni cihazlar için hazır</small>
+        </div>
+        <div class="panel" style="padding:16px; border-left:4px solid #f59e0b">
+          <span style="color:var(--muted); font-size:11px">DHCP Dağıtım Aralığı</span>
+          <h2 style="margin:4px 0 0; font-size:16px; color:#fbbf24" id="ipamDhcpRange">-</h2>
+          <small style="color:var(--txt-2)">Dinamik IP Havuzu</small>
+        </div>
+      </div>
+
+      <!-- INTERACTIVE IP MAP GRID -->
+      <div class="panel" style="margin-top:16px">
+        <div class="panel-head">
+          <div style="display:flex;align-items:center;gap:10px">
+            <h2 style="margin:0">İnteraktif Subnet IP Havuz Haritası (IP Map Grid)</h2>
+            <div style="display:flex;gap:8px;font-size:11px;margin-left:12px">
+              <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:rgba(16,185,129,0.5)"></span> Gateway</span>
+              <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:rgba(56,189,248,0.5)"></span> Aktif / Dolu</span>
+              <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:rgba(239,68,68,0.7)"></span> Çakışma (Conflict)</span>
+              <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:rgba(255,255,255,0.06)"></span> Boş (Free)</span>
+            </div>
+          </div>
+          <div class="right"><button class="mini-btn" onclick="refreshIpam()">Yenile</button></div>
+        </div>
+        <div class="panel-body">
+          <div class="ipam-grid-map" id="ipamGridMap">
+            <div class="skeleton-box" style="height:140px; width:100%; grid-column:1/-1"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- IP ALLOCATION LIST -->
+      <div class="panel" style="margin-top:16px">
+        <div class="panel-head">
+          <h2>Tahsis Edilen IP Listesi ve Rezervasyonlar</h2>
+          <div class="right">
+            <input type="text" id="ipamSearchInput" placeholder="IP veya Hostname ara..." oninput="filterIpamAllocations(this.value)" style="width:200px" />
+          </div>
+        </div>
+        <div class="panel-body" style="padding:0">
+          <table class="table" style="width:100%">
+            <thead>
+              <tr>
+                <th>IP Adresi</th>
+                <th>Cihaz / Hostname</th>
+                <th>MAC Adresi</th>
+                <th>Cihaz Tipi</th>
+                <th>Tahsis Türü</th>
+                <th>Durum</th>
+                <th>İşlem</th>
+              </tr>
+            </thead>
+            <tbody id="ipamAllocationsTable">
+              <tr><td colspan="7" class="skeleton-box" style="height:80px"></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }
+}
+
+let _ipamAllocationsCache = [];
+async function refreshIpam() {
+  try {
+    const data = await get("/api/ipam");
+    const subnet = data?.subnets?.[0] || {};
+    const conflicts = data?.conflicts || [];
+    _ipamAllocationsCache = data?.allocations || [];
+
+    const cEl = $("ipamSubnetCidr"); if (cEl) cEl.textContent = subnet.cidr || "-";
+    const gEl = $("ipamGatewayIp"); if (gEl) gEl.textContent = "Gateway: " + (subnet.gateway || "-");
+    const uEl = $("ipamUsedIps"); if (uEl) uEl.textContent = `${subnet.used_hosts || 0} Adet IP`;
+    const utEl = $("ipamUtilPct"); if (utEl) utEl.textContent = `Doluluk: %${subnet.utilization_pct || 0}`;
+    const fEl = $("ipamFreeIps"); if (fEl) fEl.textContent = `${subnet.free_hosts || 0} Boş IP`;
+    const dEl = $("ipamDhcpRange"); if (dEl) dEl.textContent = subnet.dhcp_range || "-";
+
+    const alertArea = $("ipamConflictAlertArea");
+    if (alertArea) {
+      if (conflicts.length > 0) {
+        alertArea.innerHTML = conflicts.map(c => `
+          <div class="conflict-alert-card">
+            <span style="font-size:24px">🚨</span>
+            <div style="flex:1">
+              <h3 style="margin:0 0 4px; color:#f87171; font-size:14px">KRİTİK IP ÇAKIŞMASI: ${esc(c.ip)}</h3>
+              <p style="margin:0; font-size:12px; color:var(--txt-2)">
+                ${esc(c.message)}
+                <br/><b>İlişkili Cihazlar:</b> ${esc(c.hostnames.join(", "))} | <b>MAC Listesi:</b> <code>${esc(c.macs.join(" / "))}</code>
+              </p>
+            </div>
+            <button class="mini-btn" style="background:#ef4444; border-color:#dc2626; color:white;" onclick="quickTraceroute('${c.ip}')">Yolu İncele (Trace)</button>
+          </div>
+        `).join("");
+      } else {
+        alertArea.innerHTML = `
+          <div style="background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.3); border-radius:10px; padding:10px 16px; margin-bottom:14px; display:flex; align-items:center; gap:10px;">
+            <span style="color:#34d399">✅</span>
+            <span style="font-size:12.5px; color:#34d399"><b>Subnet Sağlığı Mükemmel:</b> Ağda herhangi bir IP çakışması veya yetkisiz ARP yanıtı tespit edilmedi.</span>
+          </div>
+        `;
+      }
+    }
+
+    const gridEl = $("ipamGridMap");
+    if (gridEl) {
+      const cidrStr = subnet.cidr || "192.168.1.0/24";
+      const baseSubnet = cidrStr.split("/")[0].split(".").slice(0, 3).join(".");
+      const conflictIps = new Set(conflicts.map(c => c.ip));
+      const usedMap = new Map();
+      _ipamAllocationsCache.forEach(a => usedMap.set(a.ip, a));
+
+      let gridHtml = "";
+      for (let i = 1; i <= 254; i++) {
+        const currentIp = `${baseSubnet}.${i}`;
+        let statusCls = "free";
+        let title = `${currentIp} - Boş IP`;
+
+        if (conflictIps.has(currentIp)) {
+          statusCls = "conflict";
+          title = `🚨 ÇAKIŞMA: ${currentIp}`;
+        } else if (currentIp === subnet.gateway || i === 1) {
+          statusCls = "gateway";
+          title = `Gateway / Router: ${currentIp}`;
+        } else if (usedMap.has(currentIp)) {
+          statusCls = "used";
+          const dev = usedMap.get(currentIp);
+          title = `${currentIp} - ${dev.hostname} (${dev.type})`;
+        }
+
+        gridHtml += `<div class="ipam-ip-node ${statusCls}" title="${esc(title)}" onclick="toast('${esc(title)}', 'info')">.${i}</div>`;
+      }
+      gridEl.innerHTML = gridHtml;
+    }
+
+    renderIpamAllocationsTable(_ipamAllocationsCache);
+  } catch (err) {
+    console.error("IPAM fetch error:", err);
+  }
+}
+
+function renderIpamAllocationsTable(list) {
+  const tbody = $("ipamAllocationsTable");
+  if (!tbody) return;
+  if (!list || !list.length) {
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:20px; color:var(--muted)">Kayıtlı IP tahsisi bulunamadı.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = list.map(a => `
+    <tr>
+      <td><b><code style="color:var(--cyan)">${esc(a.ip)}</code></b></td>
+      <td><b>${esc(a.hostname)}</b></td>
+      <td><code>${esc(a.mac || "-")}</code></td>
+      <td><span class="badge ${a.type==='server'?'blue':a.type==='router'?'cyan':'gray'}">${esc(a.type || "unknown")}</span></td>
+      <td><span class="badge ${a.allocation_type==='Static'?'purple':'blue'}">${esc(a.allocation_type || "DHCP")}</span></td>
+      <td><span class="badge ${a.status==='online'?'ok':'gray'}">${esc(a.status || "online")}</span></td>
+      <td>
+        <button class="mini-btn" onclick="quickTraceroute('${a.ip}')">Trace</button>
+        <button class="mini-btn blue" onclick="setDeviceSearch('${a.ip}')">İncele</button>
+      </td>
+    </tr>
+  `).join("");
+}
+
+function filterIpamAllocations(q) {
+  const query = (q || "").toLowerCase();
+  const filtered = _ipamAllocationsCache.filter(a =>
+    (a.ip || "").toLowerCase().includes(query) ||
+    (a.hostname || "").toLowerCase().includes(query) ||
+    (a.mac || "").toLowerCase().includes(query)
+  );
+  renderIpamAllocationsTable(filtered);
+}
+
+/* ============================================================
+   TOP TALKERS & BANDWIDTH LEADERBOARD PAGE
+   ============================================================ */
+function renderTopTalkersPage() {
+  const el = $("page-toptalkers");
+  if (!el.dataset.built) {
+    el.dataset.built = "1";
+    el.innerHTML = `
+      <div class="panel">
+        <div class="panel-head" style="flex-wrap:wrap; gap:10px;">
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:20px; color:var(--cyan)">📊</span>
+            <div>
+              <h2 style="margin:0">Canlı Ağ Tüketim Liderleri (Top Talkers)</h2>
+              <small style="color:var(--txt-2)">Ağ bant genişliğini anlık olarak en çok kullanan cihazlar ve protokol dağılımı</small>
+            </div>
+          </div>
+          <div class="right" style="display:flex;align-items:center;gap:10px">
+            <div style="font-size:12px; background:var(--panel-2); border:1px solid var(--line-soft); border-radius:8px; padding:6px 12px">
+              <span>Toplam Aktif Trafik:</span> <b style="color:var(--cyan)" id="talkersTotalBandwidth">- Mbps</b>
+            </div>
+            <button class="mini-btn blue" onclick="refreshTopTalkers()">⚡ Şimdi Güncelle</button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div id="topTalkersFullLeaderboard">
+            <div class="skeleton-box skeleton-line" style="height:55px; margin-bottom:8px"></div>
+            <div class="skeleton-box skeleton-line" style="height:55px; margin-bottom:8px"></div>
+            <div class="skeleton-box skeleton-line" style="height:55px; margin-bottom:8px"></div>
+            <div class="skeleton-box skeleton-line" style="height:55px"></div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+}
+
+async function refreshTopTalkers() {
+  try {
+    const data = await get("/api/traffic/top-talkers");
+    const totalBwEl = $("talkersTotalBandwidth");
+    if (totalBwEl) totalBwEl.textContent = `${data?.total_bandwidth_mbps || 0} Mbps`;
+
+    const container = $("topTalkersFullLeaderboard");
+    if (!container) return;
+
+    const talkers = data?.top_talkers || [];
+    if (!talkers.length) {
+      container.innerHTML = `<div style="text-align:center; padding:30px; color:var(--muted)">Aktif konuşmacı bulunamadı.</div>`;
+      return;
+    }
+
+    container.innerHTML = talkers.map((t, idx) => `
+      <div class="talker-row" style="padding:12px 16px;">
+        <div class="talker-rank" style="width:34px; height:34px; font-size:13px">#${idx + 1}</div>
+        <div class="talker-info">
+          <div class="talker-title" style="font-size:14px; margin-bottom:4px">
+            <span>${esc(t.hostname || t.ip)}</span>
+            <code style="font-size:11px; color:var(--muted); font-weight:normal">${esc(t.ip)}</code>
+            <span class="talker-proto-badge">${esc(t.primary_protocol)}</span>
+            <span style="font-size:11px; color:var(--txt-2); margin-left:auto">${esc(t.app_category)}</span>
+          </div>
+          <div class="talker-bar-bg" style="height:8px">
+            <div class="talker-bar-fill" style="width:${Math.max(3, t.share_pct)}%"></div>
+          </div>
+          <div style="display:flex; justify-content:space-between; margin-top:4px; font-size:10.5px; color:var(--muted)">
+            <span>İndirme (Rx): <b style="color:#38bdf8">${t.rx_mbps} Mbps</b> | Yükleme (Tx): <b style="color:#818cf8">${t.tx_mbps} Mbps</b></span>
+            <span>Bant Genişliği Payı: <b>%${t.share_pct}</b></span>
+          </div>
+        </div>
+        <div class="talker-speed" style="margin-left:16px">
+          <b style="font-size:16px">${t.total_mbps} <span style="font-size:11px">Mbps</span></b>
+          <div style="display:flex; gap:4px; margin-top:4px">
+            <button class="mini-btn" onclick="quickTraceroute('${t.ip}')">Trace</button>
+            <button class="mini-btn blue" onclick="setDeviceSearch('${t.ip}')">Detay</button>
+          </div>
+        </div>
+      </div>
+    `).join("");
+  } catch (err) {
+    console.error("Top talkers error:", err);
+  }
+}
+
+/* ============================================================
+   SWITCH CONFIG DIFF & NCM PAGE
+   ============================================================ */
+function renderNcmPage() {
+  const el = $("page-ncm");
+  if (!el.dataset.built) {
+    el.dataset.built = "1";
+    el.innerHTML = `
+      <div class="panel">
+        <div class="panel-head" style="flex-wrap:wrap; gap:12px;">
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:20px; color:#818cf8">📜</span>
+            <div>
+              <h2 style="margin:0">Ağ Cihazı Konfigürasyon Yedeği & Diff (NCM)</h2>
+              <small style="color:var(--txt-2)">Switch & Router running-config yedekleme, sürüm geçmişi ve GitHub tarzı satır satır karşılaştırma</small>
+            </div>
+          </div>
+          <div class="right" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
+            <select id="ncmDeviceSelect" onchange="loadNcmDeviceVersions(this.value)" style="min-width:180px;">
+              <option value="">Cihaz seçin...</option>
+            </select>
+            <button class="mini-btn blue admin-only" onclick="takeNcmBackup()" id="ncmBackupBtn">⚡ Şimdi Yedek Al</button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:center; background:var(--panel-2); border:1px solid var(--line-soft); border-radius:10px; padding:12px 16px; margin-bottom:16px;">
+            <div style="flex:1; min-width:200px">
+              <label style="display:block; font-size:11px; color:var(--muted); margin-bottom:4px">1. Sürüm (Sol / Önceki)</label>
+              <select id="ncmVer1Select" style="width:100%"><option value="">Yedek seçin...</option></select>
+            </div>
+            <div style="font-size:18px; color:var(--cyan); margin-top:14px">⇄</div>
+            <div style="flex:1; min-width:200px">
+              <label style="display:block; font-size:11px; color:var(--muted); margin-bottom:4px">2. Sürüm (Sağ / Sonraki)</label>
+              <select id="ncmVer2Select" style="width:100%"><option value="">Yedek seçin...</option></select>
+            </div>
+            <button class="mini-btn blue" style="margin-top:16px; height:36px; padding:0 18px" onclick="compareNcmDiff()">🔍 Farkları Karşılaştır</button>
+          </div>
+
+          <div id="ncmDiffViewerArea">
+            <div style="text-align:center; padding:40px 20px; color:var(--muted); border:1px dashed var(--line-soft); border-radius:10px">
+              Yukarıdaki açılır menüden bir ağ cihazı ve karşılaştırmak istediğiniz iki konfigürasyon sürümünü seçin.
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+}
+
+let _ncmConfigsCache = [];
+async function refreshNcm() {
+  try {
+    const devSelect = $("ncmDeviceSelect");
+    if (devSelect) {
+      const devices = S.devices || [];
+      const netDevs = devices.filter(d => ["switch", "router", "firewall", "server", "access_point"].includes(d.type) || d.is_gateway);
+      
+      const currentVal = devSelect.value;
+      devSelect.innerHTML = `<option value="">Cihaz seçin (${netDevs.length} Ağ Cihazı)</option>` +
+        netDevs.map(d => `<option value="${esc(d.ip)}" ${d.ip === currentVal ? "selected" : ""}>${esc(d.hostname || d.friendly_name || d.ip)} (${esc(d.ip)})</option>`).join("");
+      
+      if (!currentVal && netDevs.length > 0) {
+        devSelect.value = netDevs[0].ip;
+        loadNcmDeviceVersions(netDevs[0].ip);
+      }
+    }
+  } catch (e) {
+    console.error("NCM refresh error:", e);
+  }
+}
+
+async function loadNcmDeviceVersions(ip) {
+  if (!ip) return;
+  try {
+    const data = await get(`/api/ncm/configs?ip=${encodeURIComponent(ip)}`);
+    _ncmConfigsCache = data?.configs || [];
+    
+    const v1 = $("ncmVer1Select");
+    const v2 = $("ncmVer2Select");
+    if (v1 && v2) {
+      if (!_ncmConfigsCache.length) {
+        v1.innerHTML = `<option value="">Yedek bulunamadı (İlk yedeği alın)</option>`;
+        v2.innerHTML = `<option value="">Yedek bulunamadı</option>`;
+      } else {
+        const opts = _ncmConfigsCache.map((c, i) =>
+          `<option value="${c.id}">${esc(c.version_label)} (${esc(c.created_at_fmt)}) [${c.size_bytes} bayt]</option>`
+        ).join("");
+        v1.innerHTML = opts;
+        v2.innerHTML = opts;
+        
+        if (_ncmConfigsCache.length >= 2) {
+          v1.selectedIndex = 1;
+          v2.selectedIndex = 0;
+          compareNcmDiff();
+        } else if (_ncmConfigsCache.length === 1) {
+          v1.selectedIndex = 0;
+          v2.selectedIndex = 0;
+          compareNcmDiff();
+        }
+      }
+    }
+  } catch (err) {
+    console.error("NCM load versions error:", err);
+  }
+}
+
+async function takeNcmBackup() {
+  const ipSelect = $("ncmDeviceSelect");
+  const ip = ipSelect ? ipSelect.value : "";
+  if (!ip) {
+    toast("Lütfen önce yedek alınacak cihazı seçin.", "warn");
+    return;
+  }
+  
+  const btn = $("ncmBackupBtn");
+  if (btn) { btn.disabled = true; btn.textContent = "Yedek Alınıyor..."; }
+  
+  try {
+    const res = await post("/api/ncm/backup", { ip });
+    toast(`✅ ${ip} için konfigürasyon yedeği başarıyla alındı!`, "ok");
+    await loadNcmDeviceVersions(ip);
+  } catch (err) {
+    toast(`Yedek alma başarısız: ${err.message}`, "fail");
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "⚡ Şimdi Yedek Al"; }
+  }
+}
+
+async function compareNcmDiff() {
+  const ip = $("ncmDeviceSelect")?.value;
+  const v1 = $("ncmVer1Select")?.value;
+  const v2 = $("ncmVer2Select")?.value;
+  const container = $("ncmDiffViewerArea");
+  if (!container) return;
+
+  if (!ip || !v1 || !v2) {
+    container.innerHTML = `<div style="text-align:center; padding:20px; color:var(--muted)">Lütfen karşılaştırma için cihaz ve iki sürüm seçin.</div>`;
+    return;
+  }
+
+  container.innerHTML = `<div class="skeleton-box" style="height:160px; width:100%"></div>`;
+
+  try {
+    const diffData = await get(`/api/ncm/diff?ip=${encodeURIComponent(ip)}&v1_id=${v1}&v2_id=${v2}`);
+    const stats = diffData?.stats || { additions: 0, deletions: 0 };
+    const lines = diffData?.diff_lines || [];
+
+    if (!lines.length) {
+      container.innerHTML = `
+        <div style="text-align:center; padding:30px; background:var(--panel-2); border-radius:10px; border:1px solid var(--line-soft)">
+          <span style="font-size:24px; color:#34d399">✔</span>
+          <h3 style="margin:6px 0; color:#34d399">Konfigürasyonlar Birebir Aynı</h3>
+          <p style="color:var(--muted); font-size:12px; margin:0">Seçilen iki sürüm arasında hiçbir fark (eklenen/çıkarılan satır) bulunmuyor.</p>
+        </div>
+      `;
+      return;
+    }
+
+    container.innerHTML = `
+      <div class="diff-container">
+        <div class="diff-header-bar">
+          <div style="display:flex; align-items:center; gap:10px">
+            <span style="font-weight:700; color:var(--txt)">${esc(diffData.v1?.label)} ➔ ${esc(diffData.v2?.label)}</span>
+            <div class="diff-stats">
+              <span class="diff-badge-add">+${stats.additions} satır eklendi</span>
+              <span class="diff-badge-del">-${stats.deletions} satır çıkarıldı</span>
+            </div>
+          </div>
+          <button class="mini-btn" onclick="copyDiffToClipboard()">📋 Farkları Kopyala</button>
+        </div>
+        <div style="max-height:480px; overflow-y:auto; padding:4px 0" id="ncmDiffLinesWrap">
+          ${lines.map(l => {
+            let cls = "";
+            let prefix = " ";
+            if (l.type === "add") { cls = "diff-add"; prefix = "+"; }
+            else if (l.type === "delete") { cls = "diff-del"; prefix = "-"; }
+            else if (l.type === "chunk_header") { cls = "diff-hunk"; }
+            
+            return `
+              <div class="diff-line ${cls}">
+                <span class="diff-num">${l.old_ln || ""}</span>
+                <span class="diff-num">${l.new_ln || ""}</span>
+                <span class="diff-content">${prefix} ${esc(l.content)}</span>
+              </div>
+            `;
+          }).join("")}
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    container.innerHTML = `<div style="text-align:center; padding:20px; color:#f87171">Diff karşılaştırması alınamadı: ${esc(err.message)}</div>`;
+  }
+}
+
+function copyDiffToClipboard() {
+  const wrap = $("ncmDiffLinesWrap");
+  if (wrap) {
+    copyText(wrap.innerText);
+  }
+}
+
 function renderDevicesPage() {
   const el = $("page-devices");
   const tab = S.deviceTab || "all";
@@ -4880,6 +5476,7 @@ async function refreshAll() {
     refreshNetworkInfo(),
     refreshTopology(),
     refreshLogs(),
+    refreshDashboardWidgets(),
   ]);
   updateLastScan();
 }
