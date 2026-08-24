@@ -4372,6 +4372,111 @@ function showNode(id) {
     </div>
   `;
 
+  window.showNodeByIp = function(ip) {
+    const target = (S.topology?.nodes || []).find(x => x.ip === ip);
+    if (target) showNode(target.id);
+  };
+
+  let switchRackHtml = "";
+  const isSwitchDevice = type === "switch" || Boolean(n.ports_matrix);
+  if (isSwitchDevice) {
+    const matrix = n.ports_matrix || [];
+    const activeCount = matrix.filter(p => p.status === "up").length;
+    const totalCount = matrix.length || 28;
+    const rj45 = matrix.filter(p => !p.is_sfp);
+    const sfp = matrix.filter(p => p.is_sfp);
+    const topRow = rj45.filter((_, idx) => idx % 2 === 0);
+    const bottomRow = rj45.filter((_, idx) => idx % 2 === 1);
+
+    switchRackHtml = `
+      <div style="background:#090d16;border:1px solid #1e293b;border-radius:12px;padding:14px;margin-bottom:16px;box-shadow:inset 0 2px 10px rgba(0,0,0,0.6)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:16px">🖧</span>
+            <div>
+              <div style="font-size:11px;font-weight:800;color:var(--cyan);letter-spacing:0.5px">24-PORT GIGABIT MANAGED SWITCH PANELİ</div>
+              <div style="font-size:9.5px;color:var(--muted)">${esc(dev?.vendor || n.vendor || "Enterprise")} · ${activeCount}/${totalCount} Port Aktif</div>
+            </div>
+          </div>
+          <span class="badge ok" style="font-size:9px">${activeCount} Bağlı Cihaz</span>
+        </div>
+        
+        <!-- Switch Chassis Rack View -->
+        <div style="background:#0f172a;border:1.5px solid #334155;border-radius:8px;padding:10px;display:flex;gap:12px;overflow-x:auto">
+          <!-- RJ45 24-Port Block -->
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <!-- Top Row: Odd Ports -->
+            <div style="display:flex;gap:4px">
+              ${topRow.map(p => `
+                <div style="width:24px;height:24px;border-radius:4px;background:${p.status==='up'?'#064e3b':'#1e293b'};border:1px solid ${p.status==='up'?'#10b981':'#475569'};display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;position:relative" title="${esc(p.port_name)}: ${p.status==='up'?(esc(p.connected_name||p.connected_ip)):'Boş'}" onclick="${p.connected_ip?`showNodeByIp('${esc(p.connected_ip)}')`:''}">
+                  <div style="width:4px;height:4px;border-radius:50%;background:${p.status==='up'?'#34d399':'#64748b'};box-shadow:${p.status==='up'?'0 0 6px #10b981':'none'}"></div>
+                  <span style="font-size:8px;font-weight:700;color:${p.status==='up'?'#a7f3d0':'#94a3b8'};margin-top:1px">${p.port_number}</span>
+                </div>
+              `).join("")}
+            </div>
+            <!-- Bottom Row: Even Ports -->
+            <div style="display:flex;gap:4px">
+              ${bottomRow.map(p => `
+                <div style="width:24px;height:24px;border-radius:4px;background:${p.status==='up'?'#064e3b':'#1e293b'};border:1px solid ${p.status==='up'?'#10b981':'#475569'};display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;position:relative" title="${esc(p.port_name)}: ${p.status==='up'?(esc(p.connected_name||p.connected_ip)):'Boş'}" onclick="${p.connected_ip?`showNodeByIp('${esc(p.connected_ip)}')`:''}">
+                  <div style="width:4px;height:4px;border-radius:50%;background:${p.status==='up'?'#34d399':'#64748b'};box-shadow:${p.status==='up'?'0 0 6px #10b981':'none'}"></div>
+                  <span style="font-size:8px;font-weight:700;color:${p.status==='up'?'#a7f3d0':'#94a3b8'};margin-top:1px">${p.port_number}</span>
+                </div>
+              `).join("")}
+            </div>
+          </div>
+          
+          <!-- SFP+ Uplink Block -->
+          <div style="border-left:1px dashed #475569;padding-left:10px;display:flex;flex-direction:column;gap:6px">
+            <div style="display:flex;gap:4px">
+              ${sfp.slice(0,2).map(p => `
+                <div style="width:24px;height:24px;border-radius:4px;background:${p.status==='up'?'#1e3a8a':'#1e293b'};border:1px solid ${p.status==='up'?'#3b82f6':'#475569'};display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer" title="${esc(p.port_name)}: ${p.status==='up'?(esc(p.connected_name||p.connected_ip)):'Boş'}" onclick="${p.connected_ip?`showNodeByIp('${esc(p.connected_ip)}')`:''}">
+                  <div style="width:4px;height:4px;border-radius:50%;background:${p.status==='up'?'#60a5fa':'#64748b'};box-shadow:${p.status==='up'?'0 0 6px #3b82f6':'none'}"></div>
+                  <span style="font-size:7.5px;font-weight:700;color:${p.status==='up'?'#bfdbfe':'#94a3b8'};margin-top:1px">S${p.port_number-24}</span>
+                </div>
+              `).join("")}
+            </div>
+            <div style="display:flex;gap:4px">
+              ${sfp.slice(2,4).map(p => `
+                <div style="width:24px;height:24px;border-radius:4px;background:${p.status==='up'?'#1e3a8a':'#1e293b'};border:1px solid ${p.status==='up'?'#3b82f6':'#475569'};display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer" title="${esc(p.port_name)}: ${p.status==='up'?(esc(p.connected_name||p.connected_ip)):'Boş'}" onclick="${p.connected_ip?`showNodeByIp('${esc(p.connected_ip)}')`:''}">
+                  <div style="width:4px;height:4px;border-radius:50%;background:${p.status==='up'?'#60a5fa':'#64748b'};box-shadow:${p.status==='up'?'0 0 6px #3b82f6':'none'}"></div>
+                  <span style="font-size:7.5px;font-weight:700;color:${p.status==='up'?'#bfdbfe':'#94a3b8'};margin-top:1px">S${p.port_number-24}</span>
+                </div>
+              `).join("")}
+            </div>
+          </div>
+        </div>
+        
+        <!-- Detailed Switch Port Table -->
+        <div style="margin-top:12px;max-height:220px;overflow-y:auto;border:1px solid var(--line-soft);border-radius:8px">
+          <table style="width:100%;font-size:10.5px;border-collapse:collapse">
+            <thead>
+              <tr style="background:var(--panel-2);color:var(--muted);text-align:left">
+                <th style="padding:6px 8px">Port</th>
+                <th style="padding:6px 8px">Durum</th>
+                <th style="padding:6px 8px">Hız</th>
+                <th style="padding:6px 8px">Bağlı Cihaz / Hostname</th>
+                <th style="padding:6px 8px">IP Adresi</th>
+                <th style="padding:6px 8px">MAC Adresi</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${matrix.map(p => `
+                <tr style="border-top:1px solid var(--line-soft);${p.status==='up'?'background:rgba(16,185,129,0.05)':''};cursor:${p.connected_ip?'pointer':'default'}" onclick="${p.connected_ip?`showNodeByIp('${esc(p.connected_ip)}')`:''}">
+                  <td style="padding:5px 8px;font-weight:700;color:${p.status==='up'?'var(--cyan)':'var(--muted)'}">${esc(p.port_name)}</td>
+                  <td style="padding:5px 8px"><span class="badge ${p.status==='up'?'ok':'gray'}" style="font-size:8px">${p.status.toUpperCase()}</span></td>
+                  <td style="padding:5px 8px;color:var(--txt-2)">${esc(p.speed)}</td>
+                  <td style="padding:5px 8px;font-weight:600;color:${p.connected_name?'var(--txt)':'var(--muted)'}">${esc(p.connected_name || '-')}</td>
+                  <td style="padding:5px 8px;color:var(--blue)">${esc(p.connected_ip || '-')}</td>
+                  <td style="padding:5px 8px;font-family:monospace;color:var(--muted)">${esc(p.connected_mac || '-')}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }
+
   drawer.innerHTML = `
     <style>
       @keyframes pathFlow {
@@ -4419,138 +4524,33 @@ function showNode(id) {
     </div>
 
     <div class="drawer-body">
-    window.showNodeByIp = function(ip) {
-      const target = (S.topology?.nodes || []).find(x => x.ip === ip);
-      if (target) showNode(target.id);
-    };
+      <!-- OVERVIEW TAB -->
+      <div id="dt-pane-overview" class="drawer-tab-pane" style="display:block;">
+        ${switchRackHtml ? switchRackHtml : internetPathHtml}
+        
+        <!-- Physical Switch Location Card for endpoint devices -->
+        ${!isSwitchDevice ? `
+        <div style="background:rgba(6,182,212,0.08);border:1px solid rgba(6,182,212,0.3);border-radius:10px;padding:10px 12px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;">
+          <div>
+            <div style="font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:700">Fiziksel Switch Bağlantısı</div>
+            <div style="font-size:12px;font-weight:700;color:var(--cyan);margin-top:2px">
+              ${switchIp ? `<span style="cursor:pointer;text-decoration:underline" onclick="showNodeByIp('${esc(switchIp)}')">Switch: ${esc(switchIp)}</span>` : 'Switch: Mantıksal LAN'} · ${switchPort ? `<span style="color:#22d3ee;background:rgba(6,182,212,0.2);padding:2px 6px;border-radius:4px">Port ${esc(switchPort)}</span>` : 'Port: Dinamik'}
+            </div>
+          </div>
+          <span style="font-size:18px">🔌</span>
+        </div>` : ''}
 
-    let switchRackHtml = "";
-    const isSwitchDevice = type === "switch" || Boolean(n.ports_matrix);
-    if (isSwitchDevice) {
-      const matrix = n.ports_matrix || [];
-      const activeCount = matrix.filter(p => p.status === "up").length;
-      const totalCount = matrix.length || 28;
-      const rj45 = matrix.filter(p => !p.is_sfp);
-      const sfp = matrix.filter(p => p.is_sfp);
-      const topRow = rj45.filter((_, idx) => idx % 2 === 0);
-      const bottomRow = rj45.filter((_, idx) => idx % 2 === 1);
-
-      switchRackHtml = `
-        <div style="background:#090d16;border:1px solid #1e293b;border-radius:12px;padding:14px;margin-bottom:16px;box-shadow:inset 0 2px 10px rgba(0,0,0,0.6)">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-            <div style="display:flex;align-items:center;gap:8px">
-              <span style="font-size:16px">🖧</span>
-              <div>
-                <div style="font-size:11px;font-weight:800;color:var(--cyan);letter-spacing:0.5px">24-PORT GIGABIT MANAGED SWITCH PANELİ</div>
-                <div style="font-size:9.5px;color:var(--muted)">${esc(dev?.vendor || n.vendor || "Enterprise")} · ${activeCount}/${totalCount} Port Aktif</div>
-              </div>
-            </div>
-            <span class="badge ok" style="font-size:9px">${activeCount} Bağlı Cihaz</span>
-          </div>
-          
-          <!-- Switch Chassis Rack View -->
-          <div style="background:#0f172a;border:1.5px solid #334155;border-radius:8px;padding:10px;display:flex;gap:12px;overflow-x:auto">
-            <!-- RJ45 24-Port Block -->
-            <div style="display:flex;flex-direction:column;gap:6px">
-              <!-- Top Row: Odd Ports -->
-              <div style="display:flex;gap:4px">
-                ${topRow.map(p => `
-                  <div style="width:24px;height:24px;border-radius:4px;background:${p.status==='up'?'#064e3b':'#1e293b'};border:1px solid ${p.status==='up'?'#10b981':'#475569'};display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;position:relative" title="${esc(p.port_name)}: ${p.status==='up'?(esc(p.connected_name||p.connected_ip)):'Boş'}" onclick="${p.connected_ip?`showNodeByIp('${esc(p.connected_ip)}')`:''}">
-                    <div style="width:4px;height:4px;border-radius:50%;background:${p.status==='up'?'#34d399':'#64748b'};box-shadow:${p.status==='up'?'0 0 6px #10b981':'none'}"></div>
-                    <span style="font-size:8px;font-weight:700;color:${p.status==='up'?'#a7f3d0':'#94a3b8'};margin-top:1px">${p.port_number}</span>
-                  </div>
-                `).join("")}
-              </div>
-              <!-- Bottom Row: Even Ports -->
-              <div style="display:flex;gap:4px">
-                ${bottomRow.map(p => `
-                  <div style="width:24px;height:24px;border-radius:4px;background:${p.status==='up'?'#064e3b':'#1e293b'};border:1px solid ${p.status==='up'?'#10b981':'#475569'};display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;position:relative" title="${esc(p.port_name)}: ${p.status==='up'?(esc(p.connected_name||p.connected_ip)):'Boş'}" onclick="${p.connected_ip?`showNodeByIp('${esc(p.connected_ip)}')`:''}">
-                    <div style="width:4px;height:4px;border-radius:50%;background:${p.status==='up'?'#34d399':'#64748b'};box-shadow:${p.status==='up'?'0 0 6px #10b981':'none'}"></div>
-                    <span style="font-size:8px;font-weight:700;color:${p.status==='up'?'#a7f3d0':'#94a3b8'};margin-top:1px">${p.port_number}</span>
-                  </div>
-                `).join("")}
-              </div>
-            </div>
-            
-            <!-- SFP+ Uplink Block -->
-            <div style="border-left:1px dashed #475569;padding-left:10px;display:flex;flex-direction:column;gap:6px">
-              <div style="display:flex;gap:4px">
-                ${sfp.slice(0,2).map(p => `
-                  <div style="width:24px;height:24px;border-radius:4px;background:${p.status==='up'?'#1e3a8a':'#1e293b'};border:1px solid ${p.status==='up'?'#3b82f6':'#475569'};display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer" title="${esc(p.port_name)}: ${p.status==='up'?(esc(p.connected_name||p.connected_ip)):'Boş'}" onclick="${p.connected_ip?`showNodeByIp('${esc(p.connected_ip)}')`:''}">
-                    <div style="width:4px;height:4px;border-radius:50%;background:${p.status==='up'?'#60a5fa':'#64748b'};box-shadow:${p.status==='up'?'0 0 6px #3b82f6':'none'}"></div>
-                    <span style="font-size:7.5px;font-weight:700;color:${p.status==='up'?'#bfdbfe':'#94a3b8'};margin-top:1px">S${p.port_number-24}</span>
-                  </div>
-                `).join("")}
-              </div>
-              <div style="display:flex;gap:4px">
-                ${sfp.slice(2,4).map(p => `
-                  <div style="width:24px;height:24px;border-radius:4px;background:${p.status==='up'?'#1e3a8a':'#1e293b'};border:1px solid ${p.status==='up'?'#3b82f6':'#475569'};display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer" title="${esc(p.port_name)}: ${p.status==='up'?(esc(p.connected_name||p.connected_ip)):'Boş'}" onclick="${p.connected_ip?`showNodeByIp('${esc(p.connected_ip)}')`:''}">
-                    <div style="width:4px;height:4px;border-radius:50%;background:${p.status==='up'?'#60a5fa':'#64748b'};box-shadow:${p.status==='up'?'0 0 6px #3b82f6':'none'}"></div>
-                    <span style="font-size:7.5px;font-weight:700;color:${p.status==='up'?'#bfdbfe':'#94a3b8'};margin-top:1px">S${p.port_number-24}</span>
-                  </div>
-                `).join("")}
-              </div>
-            </div>
-          </div>
-          
-          <!-- Detailed Switch Port Table -->
-          <div style="margin-top:12px;max-height:220px;overflow-y:auto;border:1px solid var(--line-soft);border-radius:8px">
-            <table style="width:100%;font-size:10.5px;border-collapse:collapse">
-              <thead>
-                <tr style="background:var(--panel-2);color:var(--muted);text-align:left">
-                  <th style="padding:6px 8px">Port</th>
-                  <th style="padding:6px 8px">Durum</th>
-                  <th style="padding:6px 8px">Hız</th>
-                  <th style="padding:6px 8px">Bağlı Cihaz / Hostname</th>
-                  <th style="padding:6px 8px">IP Adresi</th>
-                  <th style="padding:6px 8px">MAC Adresi</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${matrix.map(p => `
-                  <tr style="border-top:1px solid var(--line-soft);${p.status==='up'?'background:rgba(16,185,129,0.05)':''};cursor:${p.connected_ip?'pointer':'default'}" onclick="${p.connected_ip?`showNodeByIp('${esc(p.connected_ip)}')`:''}">
-                    <td style="padding:5px 8px;font-weight:700;color:${p.status==='up'?'var(--cyan)':'var(--muted)'}">${esc(p.port_name)}</td>
-                    <td style="padding:5px 8px"><span class="badge ${p.status==='up'?'ok':'gray'}" style="font-size:8px">${p.status.toUpperCase()}</span></td>
-                    <td style="padding:5px 8px;color:var(--txt-2)">${esc(p.speed)}</td>
-                    <td style="padding:5px 8px;font-weight:600;color:${p.connected_name?'var(--txt)':'var(--muted)'}">${esc(p.connected_name || '-')}</td>
-                    <td style="padding:5px 8px;color:var(--blue)">${esc(p.connected_ip || '-')}</td>
-                    <td style="padding:5px 8px;font-family:monospace;color:var(--muted)">${esc(p.connected_mac || '-')}</td>
-                  </tr>
-                `).join("")}
-              </tbody>
-            </table>
-          </div>
+        <div class="topo-detail-grid" style="margin-top:0;">
+          <div><span>IP Adresi</span><b>${getVal(n.ip)}</b></div>
+          <div><span>MAC Adresi</span><b>${getVal(dev?.mac || n.mac)}</b></div>
+          <div><span>Hostname</span><b>${getVal(dev?.hostname || n.hostname)}</b></div>
+          <div><span>Üretici (Vendor)</span><b>${getVal(dev?.vendor || n.vendor)}</b></div>
+          <div><span>İşletim Sistemi</span><b>${getVal(dev?.os_fingerprint)}</b></div>
+          <div><span>Tanımlama Güveni</span><b>${confidence}%</b></div>
         </div>
-      `;
-    }
-
-    <!-- OVERVIEW TAB -->
-    <div id="dt-pane-overview" class="drawer-tab-pane" style="display:block;">
-      ${switchRackHtml ? switchRackHtml : internetPathHtml}
-      
-      <!-- Physical Switch Location Card for endpoint devices -->
-      ${!isSwitchDevice ? `
-      <div style="background:rgba(6,182,212,0.08);border:1px solid rgba(6,182,212,0.3);border-radius:10px;padding:10px 12px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;">
-        <div>
-          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:700">Fiziksel Switch Bağlantısı</div>
-          <div style="font-size:12px;font-weight:700;color:var(--cyan);margin-top:2px">
-            ${switchIp ? `<span style="cursor:pointer;text-decoration:underline" onclick="showNodeByIp('${esc(switchIp)}')">Switch: ${esc(switchIp)}</span>` : 'Switch: Mantıksal LAN'} · ${switchPort ? `<span style="color:#22d3ee;background:rgba(6,182,212,0.2);padding:2px 6px;border-radius:4px">Port ${esc(switchPort)}</span>` : 'Port: Dinamik'}
-          </div>
-        </div>
-        <span style="font-size:18px">🔌</span>
-      </div>` : ''}
-
-      <div class="topo-detail-grid" style="margin-top:0;">
-        <div><span>IP Adresi</span><b>${getVal(n.ip)}</b></div>
-        <div><span>MAC Adresi</span><b>${getVal(dev?.mac || n.mac)}</b></div>
-        <div><span>Hostname</span><b>${getVal(dev?.hostname || n.hostname)}</b></div>
-        <div><span>Üretici (Vendor)</span><b>${getVal(dev?.vendor || n.vendor)}</b></div>
-        <div><span>İşletim Sistemi</span><b>${getVal(dev?.os_fingerprint)}</b></div>
-        <div><span>Tanımlama Güveni</span><b>${confidence}%</b></div>
+        <div class="topo-detail-section" style="margin-top:16px;"><b>Durum Analizi</b><p style="color:var(--txt-2);">${esc(statusReason)}</p></div>
+        ${ports.length || services.length ? `<div class="topo-detail-section" style="margin-top:16px;"><b>Açık Portlar ve Servisler</b><p style="color:var(--txt-2);">${esc(services.map(s => s.service || s.name || s).join(", ") || "Port: " + ports.join(", "))}</p></div>` : ""}
       </div>
-      <div class="topo-detail-section" style="margin-top:16px;"><b>Durum Analizi</b><p style="color:var(--txt-2);">${esc(statusReason)}</p></div>
-      ${ports.length || services.length ? `<div class="topo-detail-section" style="margin-top:16px;"><b>Açık Portlar ve Servisler</b><p style="color:var(--txt-2);">${esc(services.map(s => s.service || s.name || s).join(", ") || "Port: " + ports.join(", "))}</p></div>` : ""}
-    </div>
 
       <!-- HARDWARE TAB -->
       <div id="dt-pane-hardware" class="drawer-tab-pane" style="display:none;">
