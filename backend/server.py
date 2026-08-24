@@ -821,14 +821,6 @@ _stop_event = threading.Event()
 _threads: list[threading.Thread] = []
 
 def _load_last_known_devices_into_cache():
-    """Uygulama her başlatıldığında _devices_cache boş listeyle başlıyordu;
-    bu da ilk tarama tamamlanana kadar (birkaç saniye ile onlarca saniye
-    arası) arayüzün cihaz listesini SIFIRDAN gösterip önceki taramada
-    bulunan cihazları unutmuş gibi görünmesine yol açıyordu. Burada, arka
-    plan taraması başlamadan önce veritabanındaki son bilinen envanteri
-    (inventory_assets) _devices_cache içine yükleyerek arayüzün açılışta
-    boş değil, en son bilinen durumu göstermesi sağlanıyor. Tarama
-    tamamlanınca zaten gerçek/güncel veriyle üzerine yazılacak."""
     try:
         conn = db_conn()
         rows = conn.execute(
@@ -3545,6 +3537,8 @@ async def ws_live(websocket: WebSocket):
     await manager.connect(websocket, subprotocol="netmon" if offered and offered[0] == "netmon" else None)
     try:
         await websocket.send_text(json.dumps({"type": "status", **_last_status}))
+        if _devices_cache.get("data"):
+            await websocket.send_text(json.dumps({"type": "devices", "devices": _devices_cache["data"], "ts": _devices_cache.get("ts", time.time())}))
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
