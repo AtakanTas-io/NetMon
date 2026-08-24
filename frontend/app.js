@@ -4122,7 +4122,6 @@ function setTopoCategory(cat) {
 }
 
 function drawTopology(targetId) {
-  if (typeof topoCloseDetails === "function") topoCloseDetails();
   const svg = $(targetId || "topoSvg2") || $("topoSvg");
   if (!svg) return;
   
@@ -4295,11 +4294,13 @@ function bindTopoDrag(svg) {
 }
 
 function topoCloseDetails() {
+  S.activeTopoNodeId = null;
   const d = $("topoDetailDrawer");
   if (d) d.classList.remove("open");
 }
 
 function showNode(id) {
+  S.activeTopoNodeId = id;
   const n = (S.topology?.nodes || []).find(x => x.id === id);
   if (!n) return;
   const dev = S.devices.find(d => d.ip === n.ip);
@@ -4331,6 +4332,7 @@ function showNode(id) {
 
   const drawer = $("topoDetailDrawer");
   if (!drawer) return;
+  drawer.onclick = (e) => e.stopPropagation();
 
   window._switchDrawerTab = function(tabId) {
     document.querySelectorAll('.drawer-tab-btn').forEach(b => b.classList.remove('active'));
@@ -4547,7 +4549,7 @@ function showNode(id) {
             <div style="color:var(--muted); font-size:11px;">${esc(typeLabel)} · ${esc(n.ip || "N/A")}</div>
           </div>
         </div>
-        <button class="mini-btn" style="padding:4px 8px; background:transparent; border-color:transparent; color:var(--txt-2); font-size:14px;" onclick="topoCloseDetails()">✕</button>
+        <button class="mini-btn danger" style="padding:6px 12px; font-size:12px; font-weight:700; border-radius:6px; cursor:pointer; display:flex; align-items:center; gap:4px;" onclick="topoCloseDetails()">✕ Kapat</button>
       </div>
       <div style="margin-top:12px; display:flex; gap:6px; flex-wrap:wrap;">
         <span class="badge ${deviceStatusClass(status)}">${esc(statusLabel)}</span>
