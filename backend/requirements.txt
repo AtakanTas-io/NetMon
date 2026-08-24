@@ -1,13 +1,16 @@
-fastapi>=0.110
-uvicorn[standard]>=0.29
-psutil>=5.9
-pywebview>=5.0
-pydantic>=2.0
-pythonnet; platform_system=="Windows"
-pyinstaller>=6.6
-speedtest-cli
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+psutil>=5.9.0
+pywebview>=5.0.0
+pydantic>=2.0.0
+paramiko>=3.4.0
+pysnmp>=4.4.12
+ldap3>=2.9.1
+cryptography>=42.0.0
+defusedxml>=0.7.1
+speedtest-cli>=2.1.3
 wmi; platform_system=="Windows"
 pywin32; platform_system=="Windows"
-pywinrm>=0.5; platform_system=="Windows"
-paramiko>=3.4
-defusedxml>=0.7
+pywinrm>=0.5.0; platform_system=="Windows"
+pythonnet; platform_system=="Windows"
+pyinstaller>=6.6.0
