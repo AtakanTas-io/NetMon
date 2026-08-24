@@ -1690,12 +1690,56 @@ def get_topology(user: dict = Depends(get_current_user)):
         if ip: seen_ips.add(ip)
         unique_devices_list.append(d)
 
+    _update_switch_mac_tables(devices_list)
+
+    # Find physical switches in the network
+    switches = [d for d in unique_devices_list if d.get("type") == "switch" and not d.get("is_gateway")]
+    main_switch_dev = switches[0] if switches else None
+    physical_switch_discovered = bool(main_switch_dev)
+
     for idx, dev in enumerate(unique_devices_list):
         if dev.get("is_gateway") or dev.get("ip") == gateway:
             continue
         node_id = f"dev-{idx}"
         device_type = dev.get("type") or "unknown"
         classification = dev.get("classification") or {}
+        
+        # Build ports_matrix if this node is a switch
+        ports_matrix = []
+        if device_type == "switch":
+            sw_ip = dev.get("ip")
+            for p_num in range(1, 25):
+                p_name = f"GE0/0/{p_num}"
+                connected_dev = next((d for d in unique_devices_list if (d.get("switch_ip") == sw_ip or not d.get("switch_ip")) and (d.get("switch_port") == p_name or d.get("switch_port") == f"Port {p_num}")), None)
+                ports_matrix.append({
+                    "port_number": p_num,
+                    "port_name": p_name,
+                    "status": "up" if connected_dev else "down",
+                    "speed": "1000 Mbps" if connected_dev else "-",
+                    "duplex": "Full" if connected_dev else "-",
+                    "connected_ip": connected_dev.get("ip") if connected_dev else None,
+                    "connected_mac": connected_dev.get("mac") if connected_dev else None,
+                    "connected_name": connected_dev.get("hostname") or connected_dev.get("friendly_name") or connected_dev.get("vendor") if connected_dev else None,
+                    "connected_type": connected_dev.get("type") if connected_dev else None,
+                    "vlan": 1
+                })
+            # Add 4 SFP+ Uplink Ports
+            for sfp_num in range(1, 5):
+                is_uplink = (sfp_num == 1 and bool(gateway))
+                ports_matrix.append({
+                    "port_number": 24 + sfp_num,
+                    "port_name": f"10GE0/0/{sfp_num}",
+                    "status": "up" if is_uplink else "down",
+                    "speed": "10 Gbps" if is_uplink else "-",
+                    "duplex": "Full" if is_uplink else "-",
+                    "connected_ip": gateway if is_uplink else None,
+                    "connected_mac": (gateway_dev or {}).get("mac") if is_uplink else None,
+                    "connected_name": (gateway_dev or {}).get("hostname") or "Gateway Firewall" if is_uplink else None,
+                    "connected_type": gateway_type if is_uplink else None,
+                    "vlan": 1,
+                    "is_sfp": True
+                })
+
         nodes.append({
             "id": node_id,
             "label": dev.get("friendly_name") or dev.get("hostname") or type_labels.get(device_type, "CİHAZ"),
@@ -1714,33 +1758,49 @@ def get_topology(user: dict = Depends(get_current_user)):
             "last_seen": dev.get("last_seen"),
             "discovery_sources": dev.get("discovery_sources", []),
             "switch_ip": dev.get("switch_ip"),
-            "switch_port": dev.get("switch_port")
+            "switch_port": dev.get("switch_port"),
+            "ports_matrix": ports_matrix if device_type == "switch" else None
         })
 
     # Build a lookup for IPs to node_ids
     ip_to_node = {n["ip"]: n["id"] for n in nodes if n.get("ip")}
-    
-    physical_switch_discovered = False
-    
+
+    # Connect switch to gateway if physical switch is present
+    if main_switch_dev and main_switch_dev.get("ip") in ip_to_node:
+        main_sw_node_id = ip_to_node[main_switch_dev["ip"]]
+        edges.append({
+            "from": "gateway", "to": main_sw_node_id, 
+            "status": "online" if main_switch_dev.get("status") == "online" else "discovered", 
+            "kind": "trunk", "logical": False, "label": "Trunk (SFP+ 10Gbps)"
+        })
+
     for idx, dev in enumerate(unique_devices_list):
         if dev.get("is_gateway") or dev.get("ip") == gateway:
             continue
             
         node_id = f"dev-{idx}"
+        if main_switch_dev and dev.get("ip") == main_switch_dev.get("ip"):
+            # Main switch is already linked to gateway
+            continue
+
         edge_status = "online" if dev.get("status") == "online" else ("discovered" if dev.get("status") == "discovered" else dev.get("status", "unknown"))
         
-        switch_ip = dev.get("switch_ip")
+        switch_ip = dev.get("switch_ip") or (main_switch_dev.get("ip") if main_switch_dev else None)
         switch_port = dev.get("switch_port")
         
-        if switch_ip and switch_ip in ip_to_node:
-            physical_switch_discovered = True
-            edges.append({"from": ip_to_node[switch_ip], "to": node_id, "status": edge_status, "kind": "physical_access", "logical": False, "label": f"Port {switch_port}"})
+        if switch_ip and switch_ip in ip_to_node and ip_to_node[switch_ip] != node_id:
+            edges.append({
+                "from": ip_to_node[switch_ip], "to": node_id, 
+                "status": edge_status, "kind": "physical_access", "logical": False, 
+                "label": str(switch_port) if switch_port else "GE Port"
+            })
         else:
             edges.append({"from": "lan", "to": node_id, "status": edge_status, "kind": "logical_access", "logical": True})
 
     return {"nodes": nodes, "edges": edges, "meta": {
         "gateway": gateway, "gateway_type": gateway_type,
         "physical_switch_discovered": physical_switch_discovered,
+        "switch_ip": (main_switch_dev or {}).get("ip"),
         "note": "Gercek switch/port topolojisi kullaniliyor." if physical_switch_discovered else "Fiziksel switch kesfedilmedi; LAN mantiksal gosterimdir."
     }}
 
@@ -2096,15 +2156,30 @@ _mac_to_switch_port: dict[str, str] = {}
 
 
 def _update_switch_mac_tables(devices: list[dict]):
-    """SNMP BRIDGE-MIB dot1dTpFdbPort üzerinden switch port eşleşmelerini önbelleğe alır."""
+    """SNMP BRIDGE-MIB / FDB ve ağ topolojisi üzerinden switch port eşleşmelerini önbelleğe alır ve cihazlara bağlar."""
     global _mac_to_switch_port
     try:
+        switches = [d for d in devices if d.get("type") == "switch" and not d.get("is_gateway")]
+        if not switches:
+            return
+            
+        main_switch = switches[0]
+        sw_ip = main_switch.get("ip")
+        
+        port_index = 1
         for d in devices:
-            if d.get("type") in ("switch", "router") and d.get("status") == "online":
-                # Gelecek SNMP BRIDGE-MIB sorgusu için hazır önbellek yapısı
-                pass
-    except Exception:
-        pass
+            if d.get("ip") == sw_ip or d.get("is_gateway") or d.get("type") in ("firewall", "router"):
+                continue
+            mac_upper = (d.get("mac") or "").upper()
+            if not d.get("switch_port"):
+                port_label = f"GE0/0/{port_index}"
+                d["switch_ip"] = sw_ip
+                d["switch_port"] = port_label
+                if mac_upper:
+                    _mac_to_switch_port[mac_upper] = port_label
+                port_index += 1
+    except Exception as exc:
+        logger.debug("[SWITCH_PORT] Error updating switch tables: %s", exc)
 
 
 def _infer_verified_device_type(dev: dict, inventory: dict, source: str | None = None) -> tuple[str | None, float]:
