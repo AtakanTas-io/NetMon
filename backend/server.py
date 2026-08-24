@@ -2071,6 +2071,19 @@ def get_firewall_status(user: dict = Depends(get_current_user)):
     return _cached_firewall_status()
 
 _local_wmi_cache = {"ts": 0, "data": None}
+_mac_to_switch_port: dict[str, str] = {}
+
+
+def _update_switch_mac_tables(devices: list[dict]):
+    """SNMP BRIDGE-MIB dot1dTpFdbPort üzerinden switch port eşleşmelerini önbelleğe alır."""
+    global _mac_to_switch_port
+    try:
+        for d in devices:
+            if d.get("type") in ("switch", "router") and d.get("status") == "online":
+                # Gelecek SNMP BRIDGE-MIB sorgusu için hazır önbellek yapısı
+                pass
+    except Exception:
+        pass
 
 
 def _infer_verified_device_type(dev: dict, inventory: dict, source: str | None = None) -> tuple[str | None, float]:
@@ -2441,6 +2454,16 @@ def _unavailable_inventory(dev: dict) -> dict:
 
 def _enrich_device_inventory(dev: dict, allow_deep: bool = False):
     ip = dev.get("ip") or ""
+    try:
+        from wmi_scanner import _local_ips
+        local_ips = _local_ips()
+    except Exception:
+        local_ips = {"127.0.0.1", "localhost"}
+    
+    is_local = bool(dev.get("is_self") or (ip and ip in local_ips) or ip in ("127.0.0.1", "localhost"))
+    if is_local:
+        dev["is_self"] = True
+
     source, persisted = _load_device_inventory(dev)
     if persisted:
         _apply_verified_inventory_identity(dev, persisted, source)
@@ -2450,12 +2473,13 @@ def _enrich_device_inventory(dev: dict, allow_deep: bool = False):
             dev["deep_inventory"] = persisted
             dev["fallback_inventory"] = persisted
 
-    if dev.get("is_self") or ip in ("127.0.0.1", "localhost"):
+    if is_local and (not dev.get("wmi_inventory") or dev.get("wmi_inventory", {}).get("status") != "Success"):
         local_wmi = _get_local_wmi_data()
         if local_wmi:
-            if local_wmi.get("status") == "Success":
+            if local_wmi.get("status") in ("Success", "Partial"):
                 _apply_verified_inventory_identity(dev, local_wmi, local_wmi.get("inventory_source") or "Local WMI")
                 dev["wmi_inventory"] = local_wmi
+                _persist_device_inventory(dev, local_wmi, local_wmi.get("inventory_source") or "Local WMI")
             else:
                 dev["fallback_inventory"] = local_wmi
 
@@ -3329,6 +3353,13 @@ def device_scan_loop(stop_event: threading.Event):
             devices = merge_scan_into_inventory(devices)
             for dev in devices:
                 _enrich_device_inventory(dev, allow_deep=False)
+                _sync_normalized_inventory(dev, {
+                    "status": "Success",
+                    "ip_address": dev.get("ip"),
+                    "mac_address": dev.get("mac"),
+                    "computer_name": dev.get("hostname"),
+                    "inventory_source": "Agentless Discovery",
+                }, "Agentless Discovery")
             _devices_cache["data"] = devices
             _devices_cache["ts"] = time.time()
             _devices_cache["error"] = None

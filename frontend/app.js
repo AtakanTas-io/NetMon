@@ -3058,7 +3058,7 @@ function renderDeviceTable() {
   });
 
   const tab = S.deviceTab || "all";
-  const statusFilter = S.deviceStatusFilter || "online";
+  const statusFilter = S.deviceStatusFilter || "all";
   const typeFilter = S.deviceTypeFilter || "all";
   const filteredList = list.filter((d) => {
     const st = deviceStatus(d);
