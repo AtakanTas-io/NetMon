@@ -3950,22 +3950,69 @@ function nodeSvg(node, p) {
   const safeId = String(node.id).replace(/\\/g, "\\\\").replace(/'/g, "\\'");
   const typeTitle = esc(topologyTypeTitle(node.type));
 
+  const isRogueDhcp = Boolean(dev?.is_rogue_dhcp || node?.is_rogue_dhcp || dev?.rogue_dhcp);
+  const isRiskyOs = Boolean(dev?.risky_os || /windows (xp|7|8|server 2008)/i.test(String(dev?.os_fingerprint || node?.os_fingerprint || "")));
+  const switchPort = node.switch_port || dev?.switch_port;
+  const openPorts = dev?.classification?.open_ports || node?.classification?.open_ports || [];
+  const openPortsCount = openPorts.length;
+  const hasThreat = isRogueDhcp || isRiskyOs;
+
+  // Badges calculation
+  let threatBadges = "";
+  if (isRogueDhcp) {
+    threatBadges += `
+      <g transform="translate(0, ${-r - 11})">
+        <rect x="-38" y="-9" width="76" height="18" rx="9" fill="#ef4444" stroke="#ffffff" stroke-width="1.2"/>
+        <text x="0" y="3.5" font-size="8.5" font-weight="800" fill="#ffffff" text-anchor="middle">🚨 ROGUE DHCP</text>
+      </g>`;
+  } else if (isRiskyOs) {
+    threatBadges += `
+      <g transform="translate(0, ${-r - 11})">
+        <rect x="-34" y="-9" width="68" height="18" rx="9" fill="#f97316" stroke="#ffffff" stroke-width="1.2"/>
+        <text x="0" y="3.5" font-size="8.5" font-weight="800" fill="#ffffff" text-anchor="middle">⚠️ RİSKLİ OS</text>
+      </g>`;
+  }
+
+  // Switch Port indicator (Top-Left)
+  let switchPortBadge = "";
+  if (switchPort) {
+    switchPortBadge = `
+      <g transform="translate(${-r + 4}, ${-r + 4})">
+        <rect x="-16" y="-7" width="32" height="14" rx="7" fill="#0891b2" stroke="rgba(255,255,255,0.9)" stroke-width="0.8"/>
+        <text x="0" y="3.5" font-size="8" font-weight="700" fill="#ffffff" text-anchor="middle">P${esc(switchPort)}</text>
+      </g>`;
+  }
+
+  // Open ports indicator (Bottom-Right)
+  let openPortsBadge = "";
+  if (openPortsCount > 0) {
+    openPortsBadge = `
+      <g transform="translate(${r - 6}, ${r - 6})">
+        <rect x="-14" y="-7" width="28" height="14" rx="7" fill="#6366f1" stroke="rgba(255,255,255,0.7)" stroke-width="0.8"/>
+        <text x="0" y="3.5" font-size="8" font-weight="700" fill="#ffffff" text-anchor="middle">🔒${openPortsCount}p</text>
+      </g>`;
+  }
+
   return `
-    <g class="net-tak-node" transform="translate(${p.x.toFixed(1)}, ${p.y.toFixed(1)})" onclick="showNode('${safeId}'); event.stopPropagation();">
-      <!-- Outer Glow Ring (Clean & Static) -->
-      <circle cx="0" cy="0" r="${r + 4}" fill="none" stroke="${node.is_self ? '#00f2ff' : color}" stroke-width="${node.is_self ? '2.5' : '1.5'}" stroke-opacity="0.8" stroke-dasharray="${node.is_gateway ? '6 3' : 'none'}"/>
+    <g class="net-tak-node ${hasThreat ? 'threat-pulse' : ''}" transform="translate(${p.x.toFixed(1)}, ${p.y.toFixed(1)})" onclick="showNode('${safeId}'); event.stopPropagation();">
+      <!-- Outer Glow Ring -->
+      <circle cx="0" cy="0" r="${r + 4}" fill="none" stroke="${isRogueDhcp ? '#ef4444' : (node.is_self ? '#00f2ff' : color)}" stroke-width="${node.is_self || isRogueDhcp ? '2.5' : '1.5'}" stroke-opacity="0.85" stroke-dasharray="${node.is_gateway ? '6 3' : 'none'}"/>
       
       <!-- Main Pod Circle -->
-      <circle cx="0" cy="0" r="${r}" fill="#0f172a" stroke="var(--line-soft)" stroke-width="1.5"/>
+      <circle class="pod-circle" cx="0" cy="0" r="${r}" fill="#0f172a" stroke="${isRogueDhcp ? '#ef4444' : (isRiskyOs ? '#f97316' : 'var(--line-soft)')}" stroke-width="1.5"/>
       
       <!-- Center Icon -->
-      <g transform="translate(-11, -11)" style="color:${color}">${ico(icon, 22, "")}</g>
+      <g transform="translate(-11, -11)" style="color:${isRogueDhcp ? '#ef4444' : color}">${ico(icon, 22, "")}</g>
       
       <!-- Status Badge Dot -->
-      <circle cx="${r - 5}" cy="${-r + 5}" r="5" fill="${color}" stroke="var(--bg)" stroke-width="2"/>
+      <circle cx="${r - 5}" cy="${-r + 5}" r="5" fill="${isRogueDhcp ? '#ef4444' : color}" stroke="var(--bg)" stroke-width="2"/>
+      
+      ${threatBadges}
+      ${switchPortBadge}
+      ${openPortsBadge}
       
       <!-- Device Name Badge below Node -->
-      <rect x="-65" y="${r + 5}" width="130" height="20" rx="10" fill="rgba(15, 23, 42, 0.92)" stroke="var(--line-soft)" stroke-width="0.8"/>
+      <rect x="-65" y="${r + 5}" width="130" height="20" rx="10" fill="rgba(15, 23, 42, 0.94)" stroke="${hasThreat ? (isRogueDhcp ? '#ef4444' : '#f97316') : 'var(--line-soft)'}" stroke-width="0.8"/>
       <text x="0" y="${r + 19}" font-size="10.5" font-weight="700" fill="var(--txt)" text-anchor="middle">${esc(label)}</text>
       
       <!-- IP and Latency below Node -->
@@ -3973,9 +4020,17 @@ function nodeSvg(node, p) {
     </g>`;
 }
 
+function setTopoCategory(cat) {
+  S.topoCategoryFilter = cat;
+  document.querySelectorAll(".topo-cat-btn").forEach(b => {
+    b.classList.toggle("blue", b.dataset.cat === cat);
+  });
+  drawTopology();
+}
+
 function drawTopology(targetId) {
   if (typeof topoCloseDetails === "function") topoCloseDetails();
-  const svg = $(targetId || "topoSvg");
+  const svg = $(targetId || "topoSvg2") || $("topoSvg");
   if (!svg) return;
   
   let rawData = S.topology || { nodes: [], edges: [] };
@@ -3988,6 +4043,30 @@ function drawTopology(targetId) {
       const dev = S.devices.find(d => d.ip === n.ip);
       const status = dev?.status || n.status || "unknown";
       return status === "online" || status === "discovered" || Boolean(n.is_self);
+    });
+  }
+
+  // Category filter
+  if (S.topoCategoryFilter && S.topoCategoryFilter !== "all") {
+    filteredNodes = filteredNodes.filter(n => {
+      if (["internet", "gateway", "router", "switch", "lan"].includes(n.id)) return true;
+      const dev = S.devices.find(d => d.ip === n.ip) || n;
+      if (S.topoCategoryFilter === "threats") {
+        const isRogueDhcp = Boolean(dev?.is_rogue_dhcp || n?.is_rogue_dhcp || dev?.rogue_dhcp);
+        const isRiskyOs = Boolean(dev?.risky_os || /windows (xp|7|8|server 2008)/i.test(String(dev?.os_fingerprint || n?.os_fingerprint || "")));
+        const hasOpenPorts = (dev?.classification?.open_ports || []).length > 0;
+        return isRogueDhcp || isRiskyOs || hasOpenPorts;
+      }
+      if (S.topoCategoryFilter === "network") {
+        return ["router", "firewall", "switch", "access_point", "network_device"].includes(dev.type);
+      }
+      if (S.topoCategoryFilter === "servers") {
+        return dev.type === "server";
+      }
+      if (S.topoCategoryFilter === "clients") {
+        return ["pc", "computer", "laptop", "phone", "mobile", "tablet"].includes(dev.type);
+      }
+      return true;
     });
   }
 
@@ -4021,6 +4100,7 @@ function drawTopology(targetId) {
     </defs>
   `;
 
+  let edgePills = "";
   const edges = data.edges.map(e => {
     const a = pos[e.from], b = pos[e.to];
     if (!a || !b) return "";
@@ -4034,7 +4114,16 @@ function drawTopology(targetId) {
           : "#5a6b88";
     const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2 + (backbone ? 0 : 10);
     const pathD = `M${a.x.toFixed(1)},${a.y.toFixed(1)} Q${mx.toFixed(1)},${my.toFixed(1)} ${b.x.toFixed(1)},${b.y.toFixed(1)}`;
-    return `<path class="edge ${e.status === 'online' ? 'flow' : ''}" stroke="${color}" stroke-width="${backbone ? '2.5' : '1.8'}" fill="none" stroke-dasharray="${e.status === 'online' ? '6 4' : 'none'}" d="${pathD}"/>`;
+    
+    if (e.label) {
+      edgePills += `
+        <g class="topo-edge-port-pill" transform="translate(${mx.toFixed(1)}, ${my.toFixed(1)})">
+          <rect x="-28" y="-9" width="56" height="18" rx="9" fill="rgba(15, 23, 42, 0.95)" stroke="#06b6d4" stroke-width="1.2"/>
+          <text x="0" y="3.5" font-size="9" font-weight="700" fill="#22d3ee" text-anchor="middle">🔌 ${esc(e.label)}</text>
+        </g>`;
+    }
+    
+    return `<path class="edge ${e.status === 'online' ? 'flow' : ''}" stroke="${color}" stroke-width="${backbone ? '2.8' : '1.8'}" fill="none" stroke-dasharray="${e.status === 'online' ? '6 4' : 'none'}" d="${pathD}"/>`;
   }).join("");
 
   const labels = layout.columns.map(c => {
@@ -4051,7 +4140,7 @@ function drawTopology(targetId) {
   svg.innerHTML = `
     ${defs}
     <rect width="100%" height="100%" fill="url(#cyberGrid)"/>
-    <g id="topoLayer" transform="translate(${TOPO.x},${TOPO.y}) scale(${TOPO.k})">${labels}${edges}${nodes}</g>
+    <g id="topoLayer" transform="translate(${TOPO.x},${TOPO.y}) scale(${TOPO.k})">${labels}${edges}${edgePills}${nodes}</g>
   `;
   applyTopoTransform();
 }
@@ -4141,6 +4230,11 @@ function showNode(id) {
   const hw = inv.hardware || {};
   const sw = inv.software || { os_name: dev?.os_fingerprint || null, installed_programs: [] };
   const sec = inv.security || { active_user: null, antivirus: "Bilinmiyor", firewall: "Bilinmiyor" };
+
+  const isRogueDhcp = Boolean(dev?.is_rogue_dhcp || n?.is_rogue_dhcp || dev?.rogue_dhcp);
+  const isRiskyOs = Boolean(dev?.risky_os || /windows (xp|7|8|server 2008)/i.test(String(dev?.os_fingerprint || n?.os_fingerprint || "")));
+  const switchIp = dev?.switch_ip || n?.switch_ip;
+  const switchPort = dev?.switch_port || n?.switch_port;
 
   const drawer = $("topoDetailDrawer");
   if (!drawer) return;
@@ -4243,7 +4337,7 @@ function showNode(id) {
       .drawer-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--line-soft); font-size: 11.5px; }
       .drawer-row span:first-child { color: var(--muted); }
       .drawer-row span:last-child { color: var(--txt); font-weight: 600; text-align: right; word-break: break-all; max-width: 65%; }
-      .drawer-footer { padding: 16px; border-top: 1px solid var(--line); background: var(--bg-2); position: sticky; bottom: 0; display: flex; gap: 8px; justify-content: flex-end; z-index: 10; }
+      .drawer-footer { padding: 12px 16px; border-top: 1px solid var(--line); background: var(--bg-2); position: sticky; bottom: 0; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; z-index: 10; }
     </style>
     
     <div class="drawer-header">
@@ -4260,6 +4354,8 @@ function showNode(id) {
       <div style="margin-top:12px; display:flex; gap:6px; flex-wrap:wrap;">
         <span class="badge ${deviceStatusClass(status)}">${esc(statusLabel)}</span>
         <span class="badge info">${esc(connectivityLabel(dev || n))}</span>
+        ${isRogueDhcp ? `<span class="badge fail">🚨 ROGUE DHCP</span>` : ''}
+        ${isRiskyOs ? `<span class="badge warn">⚠️ Riskli / EOL OS</span>` : ''}
         ${dev?.unified_inventory?.verified ? `<span class="badge ok">${esc(dev.unified_inventory.inventory_source || "Envanter")} Doğrulandı</span>` : ''}
       </div>
     </div>
@@ -4267,13 +4363,25 @@ function showNode(id) {
     <div class="drawer-tabs">
       <button class="drawer-tab-btn active" id="dt-btn-overview" onclick="_switchDrawerTab('overview')">Genel Bakış</button>
       <button class="drawer-tab-btn" id="dt-btn-hardware" onclick="_switchDrawerTab('hardware')">Donanım & Yazılım</button>
-      <button class="drawer-tab-btn" id="dt-btn-network" onclick="_switchDrawerTab('network')">Ağ & Keşif</button>
+      <button class="drawer-tab-btn" id="dt-btn-network" onclick="_switchDrawerTab('network')">Ağ & Portlar</button>
     </div>
 
     <div class="drawer-body">
       <!-- OVERVIEW TAB -->
       <div id="dt-pane-overview" class="drawer-tab-pane" style="display:block;">
         ${internetPathHtml}
+        
+        <!-- Physical Switch Location Card -->
+        <div style="background:rgba(6,182,212,0.08);border:1px solid rgba(6,182,212,0.3);border-radius:10px;padding:10px 12px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;">
+          <div>
+            <div style="font-size:10px;color:var(--muted);text-transform:uppercase;font-weight:700">Fiziksel Switch Bağlantısı</div>
+            <div style="font-size:12px;font-weight:700;color:var(--cyan);margin-top:2px">
+              ${switchIp ? `Switch: ${esc(switchIp)}` : 'Switch: Mantıksal LAN'} · ${switchPort ? `<span style="color:#22d3ee;background:rgba(6,182,212,0.2);padding:2px 6px;border-radius:4px">Port ${esc(switchPort)}</span>` : 'Port: Dinamik'}
+            </div>
+          </div>
+          <span style="font-size:18px">🔌</span>
+        </div>
+
         <div class="topo-detail-grid" style="margin-top:0;">
           <div><span>IP Adresi</span><b>${getVal(n.ip)}</b></div>
           <div><span>MAC Adresi</span><b>${getVal(dev?.mac || n.mac)}</b></div>
@@ -4308,8 +4416,9 @@ function showNode(id) {
       <!-- NETWORK TAB -->
       <div id="dt-pane-network" class="drawer-tab-pane" style="display:none;">
         <div class="topo-detail-section" style="margin-top:0; border-top:none; padding-top:0;">
-          <h4 style="margin:0 0 10px 0; color:var(--purple); font-size:12px;">Ağ Metrikleri</h4>
+          <h4 style="margin:0 0 10px 0; color:var(--purple); font-size:12px;">Ağ Metrikleri & Port Detayları</h4>
           <div class="drawer-row"><span>Ortalama Gecikme</span><span>${dev?.latency != null ? dev.latency + " ms" : (n.latency != null ? n.latency + " ms" : "N/A")}</span></div>
+          <div class="drawer-row"><span>Switch Konumu</span><span>${switchIp ? `${switchIp} (Port ${switchPort || '?'})` : 'Mantıksal LAN'}</span></div>
           <div class="drawer-row"><span>NetBIOS Adı</span><span>${getVal(dev?.netbios_name)}</span></div>
           <div class="drawer-row"><span>SNMP SysDescr</span><span>${getVal(dev?.snmp_sysdescr)}</span></div>
         </div>
@@ -4319,9 +4428,11 @@ function showNode(id) {
     </div>
 
     <div class="drawer-footer">
-      ${n.ip && S.user?.role === "admin" ? `<button class="mini-btn" onclick="openWmiScanModal('${esc(n.ip)}')">🔑 Yetkili Envanter</button>` : ""}
-      ${n.ip ? `<button class="mini-btn blue" onclick="quickPing('${esc(n.ip)}')">Ping Gönder</button>` : ""}
-      ${n.ip ? `<button class="mini-btn" style="color:#0ea5e9;border-color:#0ea5e9;" onclick="downloadRdp(\'${esc(n.ip)}\', \'${esc(n.hostname || n.ip)}\')">💻 RDP Bağlantısı</button>` : ""}
+      ${n.ip ? `<button class="mini-btn blue" onclick="quickPing('${esc(n.ip)}')">⚡ Ping</button>` : ""}
+      ${n.ip ? `<button class="mini-btn" onclick="quickTraceroute('${esc(n.ip)}')">🛣️ Trace</button>` : ""}
+      ${n.ip && S.user?.role === "admin" ? `<button class="mini-btn" onclick="quickScan('${esc(n.ip)}')">🔍 Port Tara</button>` : ""}
+      ${n.ip && S.user?.role === "admin" ? `<button class="mini-btn" onclick="openWmiScanModal('${esc(n.ip)}')">🔑 Envanter</button>` : ""}
+      ${n.ip ? `<button class="mini-btn" style="color:#0ea5e9;border-color:#0ea5e9;" onclick="downloadRdp(\'${esc(n.ip)}\', \'${esc(n.hostname || n.ip)}\')">💻 RDP</button>` : ""}
     </div>
   `;
   drawer.classList.add("open");
@@ -4335,6 +4446,18 @@ function quickPing(ip) {
     if (t) {
       t.value = ip;
       runPagePing();
+    }
+  }, 120);
+}
+
+function quickTraceroute(ip) {
+  closeModalForce();
+  go("traceroute");
+  setTimeout(() => {
+    const t = $("trTarget");
+    if (t) {
+      t.value = ip;
+      runTraceroute();
     }
   }, 120);
 }
@@ -4359,11 +4482,19 @@ function renderTopologyPage() {
     el.innerHTML = `
       <div class="panel">
         <div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;">
-          <div style="display:flex;align-items:center;gap:10px">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
             <h2 style="margin:0">Ağ Topolojisi</h2>
             <div style="display:flex;gap:4px;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:8px;padding:3px">
               <button class="mini-btn ${S.topoLayout !== 'mesh' ? 'blue' : ''}" onclick="setTopoLayout('tree')">🌐 Katmanlı Hiyerarşi</button>
               <button class="mini-btn ${S.topoLayout === 'mesh' ? 'blue' : ''}" onclick="setTopoLayout('mesh')">🕸️ Örgü (Mesh) Topoloji</button>
+            </div>
+            <!-- NOC Kategori Filtreleri -->
+            <div class="topo-filter-bar">
+              <button class="mini-btn topo-cat-btn ${!S.topoCategoryFilter || S.topoCategoryFilter === 'all' ? 'blue' : ''}" data-cat="all" onclick="setTopoCategory('all')">Tümü</button>
+              <button class="mini-btn topo-cat-btn ${S.topoCategoryFilter === 'threats' ? 'blue' : ''}" data-cat="threats" onclick="setTopoCategory('threats')">🚨 Tehdit & Riskler</button>
+              <button class="mini-btn topo-cat-btn ${S.topoCategoryFilter === 'network' ? 'blue' : ''}" data-cat="network" onclick="setTopoCategory('network')">🔀 Ağ Donanımları</button>
+              <button class="mini-btn topo-cat-btn ${S.topoCategoryFilter === 'servers' ? 'blue' : ''}" data-cat="servers" onclick="setTopoCategory('servers')">🖥️ Sunucular</button>
+              <button class="mini-btn topo-cat-btn ${S.topoCategoryFilter === 'clients' ? 'blue' : ''}" data-cat="clients" onclick="setTopoCategory('clients')">💻 İstemciler</button>
             </div>
           </div>
           <div class="right" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:flex-end;">

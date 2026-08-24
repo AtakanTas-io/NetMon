@@ -1699,14 +1699,22 @@
       }
       .net-tak-node {
         cursor: pointer;
-        transition: filter 0.2s ease;
+        transition: filter 0.2s ease, transform 0.2s ease;
       }
       .net-tak-node:hover {
-        filter: drop-shadow(0 0 14px rgba(0, 242, 255, 0.95));
+        filter: drop-shadow(0 0 16px rgba(0, 242, 255, 0.95));
       }
-      .net-tak-node:hover circle {
+      .net-tak-node:hover circle.pod-circle {
         stroke: var(--cyan) !important;
         stroke-width: 2.5px !important;
+      }
+      .net-tak-node.threat-pulse {
+        animation: threatAuraPulse 1.8s infinite;
+      }
+      @keyframes threatAuraPulse {
+        0% { filter: drop-shadow(0 0 4px rgba(239, 68, 68, 0.6)); }
+        50% { filter: drop-shadow(0 0 18px rgba(239, 68, 68, 1)); }
+        100% { filter: drop-shadow(0 0 4px rgba(239, 68, 68, 0.6)); }
       }
       .net-tak-link {
         stroke: rgba(0, 242, 255, 0.45);
@@ -1714,9 +1722,30 @@
         stroke-dasharray: 6 4;
         animation: dashFlow 2s linear infinite;
       }
+      .edge.flow {
+        animation: dashFlow 1.6s linear infinite;
+      }
       @keyframes dashFlow {
         from { stroke-dashoffset: 20; }
         to { stroke-dashoffset: 0; }
+      }
+      .topo-edge-port-pill {
+        font-family: inherit;
+        cursor: pointer;
+        transition: transform 0.15s ease;
+      }
+      .topo-edge-port-pill:hover {
+        transform: scale(1.15);
+      }
+      .topo-filter-bar {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        align-items: center;
+        background: var(--panel-2);
+        border: 1px solid var(--line-soft);
+        border-radius: 8px;
+        padding: 4px 8px;
       }
 </style>
   </head>
