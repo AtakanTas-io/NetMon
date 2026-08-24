@@ -407,7 +407,20 @@ def init_db():
             owner TEXT DEFAULT '',
             notes TEXT DEFAULT '',
             first_seen REAL NOT NULL,
-            last_seen REAL NOT NULL
+            last_seen REAL NOT NULL,
+            last_ip TEXT,
+            last_status TEXT DEFAULT 'unknown',
+            last_latency REAL,
+            last_packet_loss REAL,
+            last_arp_seen REAL,
+            last_icmp_seen REAL,
+            last_hostname_seen REAL,
+            last_vendor TEXT,
+            last_discovery_sources TEXT,
+            connectivity_status TEXT DEFAULT 'unknown',
+            identification_status TEXT DEFAULT 'unknown',
+            last_network TEXT,
+            open_ports TEXT
         )
     """)
 
@@ -524,7 +537,7 @@ def init_db():
         conn.execute("ALTER TABLE known_devices ADD COLUMN last_latency REAL")
     if "last_packet_loss" not in kd_columns:
         conn.execute("ALTER TABLE known_devices ADD COLUMN last_packet_loss REAL")
-    # Stage 4: kanıt zamanlarını ve durum ayrımını sakla. Eski veritabanı korunur.
+    # Stage 4 & Port Alarm & Subnet Tracking: kanıt zamanlarını ve durum ayrımını sakla.
     for col, sql_type in (
         ("last_arp_seen", "REAL"),
         ("last_icmp_seen", "REAL"),
@@ -533,6 +546,8 @@ def init_db():
         ("last_discovery_sources", "TEXT"),
         ("connectivity_status", "TEXT DEFAULT 'unknown'"),
         ("identification_status", "TEXT DEFAULT 'unknown'"),
+        ("last_network", "TEXT"),
+        ("open_ports", "TEXT"),
     ):
         if col not in kd_columns:
             conn.execute(f"ALTER TABLE known_devices ADD COLUMN {col} {sql_type}")
@@ -1768,15 +1783,20 @@ def enrich_devices(devices: list[dict]) -> list[dict]:
         classification = device.get("classification") or {}
         vendor = device.get("vendor") or ""
         is_new = False
+        friendly_name = device.get("friendly_name")
+        owner = device.get("owner") or ""
+        notes = device.get("notes") or ""
+        first_seen = device.get("first_seen") or now
+        classification_source = device.get("classification_source") or "auto"
 
         if mac:
             row = conn.execute(
-                "SELECT friendly_name, hostname, device_type, classification_source, notes, first_seen, last_ip, last_status, last_latency, last_packet_loss, last_arp_seen, last_icmp_seen, last_hostname_seen, last_vendor, last_discovery_sources, connectivity_status, identification_status, last_network, open_ports FROM known_devices WHERE mac=?",
+                "SELECT friendly_name, hostname, device_type, classification_source, owner, notes, first_seen, last_ip, last_status, last_latency, last_packet_loss, last_arp_seen, last_icmp_seen, last_hostname_seen, last_vendor, last_discovery_sources, connectivity_status, identification_status, last_network, open_ports FROM known_devices WHERE mac=?",
                 (mac,),
             ).fetchone()
 
             if row:
-                (friendly_name, saved_hostname, saved_type, classification_source, notes, first_seen,
+                (friendly_name, saved_hostname, saved_type, classification_source, owner, notes, first_seen,
                  previous_ip, previous_status, previous_latency, previous_packet_loss,
                  previous_arp_seen, previous_icmp_seen, previous_hostname_seen, previous_vendor,
                  previous_sources, previous_connectivity, previous_identification, previous_network, previous_open_ports) = row
@@ -1784,14 +1804,14 @@ def enrich_devices(devices: list[dict]) -> list[dict]:
                 # Check for new ports
                 current_ports = classification.get('open_ports', [])
                 if previous_open_ports:
-                    import json
                     try:
                         prev_ports_list = json.loads(previous_open_ports)
                         new_ports = [p for p in current_ports if p not in prev_ports_list]
                         if new_ports:
                             alert_msg = f"{device.get('ip')} ({hostname or mac}) cihazi uzerinde YENI PORT(LAR) tespit edildi: {', '.join(map(str, new_ports))}"
                             conn.execute("INSERT INTO alerts (ts, level, message) VALUES (?, ?, ?)", (time.time(), "warning", alert_msg))
-                    except: pass
+                    except Exception:
+                        pass
                 if not hostname:
                     hostname = saved_hostname
                 # Eski veritabanında yerel PC hostname'i başka bir MAC'e
@@ -1805,6 +1825,7 @@ def enrich_devices(devices: list[dict]) -> list[dict]:
                     device_type = saved_type
             else:
                 friendly_name = None
+                owner = ""
                 notes = ""
                 first_seen = now
                 classification_source = "auto"
