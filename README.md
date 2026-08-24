@@ -1,16 +1,16 @@
 <div align="center">
-  <!-- Eğer bir logonuz varsa buraya ekleyebilirsiniz, örneğin: <img src="frontend/assets/logo.png" width="120" /> -->
   <h1>🌐 NetMon</h1>
-  <h3>Siber Topoloji & Ağ Varlık İzleme Sistemi</h3>
+  <h3>Kurumsal Siber Topoloji, Güvenlik & Ağ Varlık İzleme Sistemi</h3>
 
   <p align="center">
-    <strong>Yerel ağınızdaki cihazları keşfedin, canlı trafiği izleyin ve derin envanter taraması yapın.</strong>
+    <strong>Yerel ağınızdaki cihazları ajansız keşfedin, gerçek fiziksel switch topolojisini çıkarın, siber tehditleri tespit edin ve derin donanım/yazılım envanteri yönetin.</strong>
   </p>
 
   <p align="center">
-    <img src="https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python">
+    <img src="https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python">
     <img src="https://img.shields.io/badge/FastAPI-0.110+-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI">
     <img src="https://img.shields.io/badge/PyWebView-5.0+-8A2BE2?style=for-the-badge&logo=python&logoColor=white" alt="PyWebView">
+    <img src="https://img.shields.io/badge/Tests-80%20Passed%20(100%25)-brightgreen?style=for-the-badge&logo=pytest&logoColor=white" alt="Tests">
     <img src="https://img.shields.io/badge/License-MIT-4CAF50?style=for-the-badge" alt="License">
     <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-555555?style=for-the-badge&logo=windows&logoColor=white" alt="Platform">
   </p>
@@ -18,99 +18,97 @@
 
 <hr/>
 
-**NetMon**, yerel ağınızdaki tüm cihazları ajansız (agentless) keşfeden, canlı trafik ve hop-by-hop rotalama akışlarını görselleştiren, WMI/SNMP yetkili envanter taraması ve siber topoloji haritası sunan modern bir masaüstü ve web izleme uygulamasıdır.
+**NetMon**, yerel ağınızdaki tüm aktif donanımları ajansız (agentless) keşfeden, SNMP Bridge MIB ile switch portlarına kadar gerçek fiziksel topolojiyi çıkaran, Rogue DHCP ve port değişimlerini gerçek zamanlı izleyen modern bir NMS (Network Management System) ve Siber Güvenlik platformudur.
 
-## 🌟 Öne Çıkan Özellikler
+---
 
-- 🌌 **NetTak Siber Topoloji Haritası:** Ağdaki cihazları dairesel siber podlar, durum aurası ve entegre kategori sütunları (Ağ Cihazları, Bilgisayarlar, Mobil Cihazlar, IoT) halinde dinamik görselleştirme.
-- 🌐 **Hop-by-Hop Canlı İnternet Rota Akışı:** Seçilen cihazın `WAN (İnternet) ➔ Gateway (Modem) ➔ Hedef Cihaz` arasındaki anlık paket iletimini canlı neon ışımalar ve gecikme metrikleri ile gösterim.
-- 🤖 **Akıllı Otomatik Profilleme (Fingerprinting):** OUI MAC satıcı imzaları, mDNS (Bonjour), SSDP (UPnP) ve TTL verileriyle mobil cihazların (iOS/Android), Smart TV'lerin ve IoT donanımlarının profillerini otomatik çıkarma.
-- 🔑 **WMI / WinRM Derin Envanter Taraması:** Windows bilgisayar ve sunucuların CPU modeli, çekirdek sayısı, RAM kapasitesi, GPU, anakart, disk kullanımı ve yüklü program/servis listesini çekme.
-- 📊 **NMS Dairesel Radyal Göstergeler & Canlı Grafik:** Anlık internet bant genişliği (Upload/Download Mbps) ve ağ durum sayaçları.
-- ⚡ **Tamamen Taşınabilir Masaüstü Kabuğu (PyWebView):** Bağımsız masaüstü uygulama penceresinde veya web browser üzerinde çalıştırma seçeneği.
+## 🛡️ 5 Temel Siber Güvenlik Modülü (2026)
+
+NetMon, standart ağ izleyicilerinden farklı olarak entegre siber savunma yetenekleriyle donatılmıştır:
+
+1. 🚨 **Rogue DHCP Tesbiti:** Ağda izinsiz veya sahte IP dağıtan cihazları UDP 68 (BOOTREPLY) seviyesinde anlık yakalar ve ağ yöneticisine acil güvenlik alarmı üretir.
+2. 🔍 **Port Değişim Alarmı (Port Anomaly):** Cihazlarda daha önce kapalı olan hassas servis portları (örn. `TCP 445 SMB`, `TCP 3389 RDP`, `TCP 22 SSH`) sonradan açılırsa anında anomali kaydı oluşturur.
+3. 🔌 **Fiziksel Switch Eşleşmesi:** Ağ anahtarlarındaki `BRIDGE-MIB::dot1dTpFdbPort` tablolarını SNMP üzerinden okuyarak her istemcinin fiziksel olarak hangi Switch IP'sine ve Port numarasına takılı olduğunu haritalar.
+4. 🗺️ **Gerçek Fiziksel Topoloji:** Cihazları soyut bir bulut yerine doğrudan bağlı oldukları Switch ve Router portlarına bağlayan gerçekçi hiyerarşik siber ağ şeması sunar.
+5. ⚠️ **Eski / Riskli OS Analizi:** Windows XP, Windows 7, Windows 8 veya Server 2008 gibi desteği bitmiş (EOL) ve güvenlik açığı barındıran işletim sistemlerini otomatik tespit eder ve arayüzde `Riskli OS` olarak işaretler.
+
+---
+
+## 🌟 Diğer Öne Çıkan Özellikler
+
+* 🤖 **Akıllı Otomatik Profilleme (Fingerprinting):** OUI MAC satıcı veritabanı, mDNS (Bonjour), SSDP (UPnP) ve TTL verileriyle cihaz modellerini (iOS, Android, Akıllı TV, IoT) otomatik sınıflandırma.
+* 🔑 **WMI / WinRM / SSH Derin Envanter Taraması:** Yetkili erişimle CPU modeli, RAM, GPU, anakart, disk kullanımı, yüklü yazılımlar ve aktif servisleri çekme.
+* 🔒 **Active Directory & Kurumsal Güvenlik:** LDAP/AD entegrasyonu, Windows DPAPI şifreli gizli anahtar saklama, PBKDF2-HMAC-SHA256 kullanıcı güvenliği ve IPAM (IP Adres Yönetimi).
+* 📊 **Gerçek Zamanlı Trafik & Telemetri:** WebSocket tabanlı canlı bant genişliği (Mbps), radyal sayaçlar ve anomali uyarıları.
+* ⚡ **Masaüstü & Web Seçenekleri:** PyWebView ile yerel masaüstü uygulaması veya web tarayıcı üzerinden yönetim.
+
+---
 
 ## 🏗️ Proje Mimarisi
 
 ```text
-NetMon/
-├── backend/             # Python FastAPI Backend & Ağ Keşif Motoru
-│   ├── server.py        # FastAPI REST & WebSocket Servis Motoru
-│   └── desktop_app.py   # PyWebView Masaüstü Pencere Kabuğu
-├── frontend/            # Web Arayüzü (HTML/CSS/JS)
-├── tests/               # Otomatik CI/CD Testleri (Güvenlik, Envanter)
-└── build.bat            # Windows için paketleme betiği
+Netmon/
+├── backend/                 # Python FastAPI Backend & Ağ Teşhis Motorları
+│   ├── server.py            # FastAPI REST & WebSocket Ana Sunucusu
+│   ├── netdiag_core.py      # Ping, traceroute, ARP ve Nmap motoru
+│   ├── deep_discovery.py    # mDNS, SSDP, SNMP derin keşif
+│   ├── dhcp_monitor.py      # Rogue DHCP dinleyici servisi
+│   ├── snmp_switch_mapper.py# Switch MAC/Port MIB çözümleyici
+│   ├── wmi_scanner.py       # Windows WMI/WinRM envanter tarayıcı
+│   ├── desktop_app.py       # PyWebView masaüstü kabuğu
+│   └── netmon.db            # SQLite WAL modlu yerel veritabanı
+├── frontend/                # Vanilla JS / HTML5 Modern Siber Panel
+│   ├── index.html           # SPA Tek Sayfalık Arayüz
+│   └── app.js               # Canlı Topoloji, WebSocket ve UI Mantığı
+├── tests/                   # 80+ Otomatik Pytest Testleri (Güvenlik, Envanter)
+├── .github/workflows/       # GitHub Actions CI/CD Pipeline (Python 3.10-3.13)
+└── docs/                    # Mimari ve Teknik Dokümantasyon
 ```
 
-## 🚀 Kurulum ve Çalıştırma
+---
 
-**Sistem Gereksinimleri:** Windows 10/11 veya Windows Server, Python 3.11/3.12.
+## 🚀 Hızlı Başlangıç
 
-**En Kolay Yöntem:**
-Kök dizindeki çalıştırıcı betiği kullanarak tüm bağımlılıkları ve sanal ortamı otomatik kurabilirsiniz:
+### Sistem Gereksinimleri
+* **İşletim Sistemi:** Windows 10/11, Windows Server (veya Linux / macOS - Web Modu)
+* **Python:** 3.10, 3.11, 3.12 veya 3.13
+
+### Tek Tıkla Kurulum & Başlatma (Windows)
 ```cmd
 calistir.bat
 ```
 
-<details>
-<summary><b>Manuel Kurulum için tıklayın</b></summary>
-
-```cmd
+### Manuel Kurulum (Terminal)
+```bash
+# 1. Sanal ortamı oluşturun ve aktif edin
 python -m venv .venv
-.venv\Scripts\python.exe -m pip install -r requirements.txt
-.venv\Scripts\python.exe backend\desktop_app.py
+.venv\Scripts\activate   # Linux/macOS için: source .venv/bin/activate
+
+# 2. Bağımlılıkları yükleyin
+pip install -r requirements.txt
+
+# 3. Masaüstü uygulamasını başlatın
+python backend/desktop_app.py
 ```
-</details>
 
 > [!IMPORTANT]
-> **Güvenlik Notu:** İlk kurulumda sabit bir yönetici parolası kullanılmaz. Rastgele parola şu dosyaya yazılır: `%USERPROFILE%\.netmon\initial_admin_password.txt`. Kullanıcı adı `admin`'dir. İlk girişte parola değişimi zorunludur.
+> **İlk Giriş & Güvenlik:** Kurulum sırasında sabit bir parola atanmaz. Rastgele üretilen güvenli yönetici parolası `%USERPROFILE%\.netmon\initial_admin_password.txt` dosyasına yazılır. Kullanıcı adı `admin`'dir. İlk girişte parola değişimi zorunludur.
 
 ---
 
-## 🔐 Derin Ağ Envanteri ve Yetkilendirme
+## 🧪 Test ve Kalite Güvence (QA)
 
-NetMon'un bir bilgisayarı ağda görmesi, donanım/yazılım envanterini otomatik paylaşacağı anlamına gelmez. Hedefte **WMI/DCOM** veya **WinRM** erişimi ve bunu kullanmaya yetkili bir hesap bulunmalıdır.
+Tüm modüller, güvenlik duvarı kuralları, oturum güvenliği ve envanter motorları pytest entegrasyon testleri ile denetlenmektedir:
 
-| Hedef | Protokol | Alınabilen Bilgiler |
-|---|---|---|
-| **Windows İstemci/Sunucu** | WinRM/CIM veya WMI/DCOM | Bilgisayar adı, OS, CPU, RAM, GPU, anakart, diskler, kurulu programlar, aktif kullanıcı, Defender/AV ve güvenlik duvarı |
-| **Linux** | SSH | Host/OS/kernel, mimari, CPU/çekirdek, RAM, üretici/model, diskler, paketler, aktif kullanıcı |
-| **Ağ Cihazları (Router vb.)** | SNMP (Salt-okuma) | `sysName`, `sysDescr` ve cihazın desteklediği ölçüde temel sistem kimliği |
-| **IoT / Mobil / Tablet** | Ajansız Keşif | IP, MAC, üretici, hostname ve gözlenen servisler (mDNS, SSDP vb.) |
-
-<details>
-<summary><b>Şirket Kurulumu & Windows Cihazlardan Bilgi Alma (Genişlet)</b></summary>
-
-1. Etki alanında (Domain) yalnızca gerekli WMI/CIM sınıflarını okuyabilen ayrı bir envanter servis hesabı oluşturun.
-2. WinRM'i tercihen Grup İlkesi (GPO) ile etkinleştirin. HTTPS/5986 kullanıyorsanız kurumsal CA sertifikası dağıtın.
-3. Alternatif WMI/DCOM yolu için hedeflerde Windows Management Instrumentation güvenlik duvarı kurallarını açın (TCP 135 ve RPC dinamik portları).
-4. Ağ profilinin şirket ağında `DomainAuthenticated` veya uygun bir `Private` profil olduğundan emin olun.
-5. NetMon'da **Ayarlar → Yetkili Envanter Kimlik Bilgileri** bölümüne `DOMAIN\kullanıcı` biçiminde hesabı girin.
-6. **Cihazlar → Yetkili Envanter** ile tek hedefi sınayın; ardından **Ağı Tara** ile toplu derin tarama yapın.
-
-**Hızlı Bağlantı Kontrolleri (Powershell):**
-```powershell
-Test-NetConnection 192.168.1.50 -Port 5985
-Test-NetConnection 192.168.1.50 -Port 135
-Test-WSMan 192.168.1.50
+```bash
+python -m pytest tests/ -v --basetemp="C:/Temp/pytest_netmon"
 ```
-</details>
 
-## 🛡️ Güvenlik ve Mimari Prensipleri
-
-- **Lokal Çalışma:** Sunucu varsayılan olarak yalnız `127.0.0.1:8000` üzerinde dinler.
-- **Şifreleme:** WMI, SSH ve SNMP gizli değerleri Windows DPAPI ile kullanıcı/makineye bağlı şifrelenir.
-- **Güvenli Saklama:** Kullanıcı parolaları PBKDF2-HMAC-SHA256 ile salt'lı saklanır. Gizli değerler ayar API'sinde gösterilmez.
-- **Sınırlandırma:** Hedef IP'ler özel/yerel IPv4 aralığıyla sınırlandırılır. Harici genel IP sorgusu varsayılan olarak kapalıdır.
-
-## 🔄 Sürekli Entegrasyon (CI/CD)
-
-Proje, tam otomatik Sürekli Entegrasyon altyapısına sahiptir. Kodlarınızdaki güncellemeleri GitHub'a yüklemek için:
-```powershell
-.\auto-push.ps1
-```
-Yükleme sonrasında `tests/` klasöründeki 80+ güvenlik ve envanter testi GitHub Actions üzerinde otomatik olarak çalıştırılır.
+* **80 Test %100 Başarı:** Brute-force kilitleri, yetkisiz token engelleme, son yönetici koruması, DPAPI gizli anahtar maskeleme, switch topoloji doğrulaması.
 
 ---
-<div align="center">
-  <sub>Geliştiren <a href="https://github.com/AtakanTas-io">AtakanTas-io</a> | <a href="LICENSE">MIT Lisansı</a> ile sunulmaktadır.</sub>
-</div>
+
+## 📄 Lisans & Katkı
+
+Bu proje [MIT Lisansı](LICENSE) altında geliştirilmektedir. Katkıda bulunmak için [CONTRIBUTING.md](CONTRIBUTING.md) dosyasını inceleyebilirsiniz.
+

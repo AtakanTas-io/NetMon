@@ -1,35 +1,79 @@
-# Python bytecode & build caches
+# ==============================================================================
+# Byte-compiled / optimized / DLL files
+# ==============================================================================
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .buildenv/
 
-# Environment & IDEs
+# ==============================================================================
+# Virtual Environments & Packaging
+# ==============================================================================
 .venv/
 env/
 venv/
 ENV/
-.vscode/
+env.bak/
+venv.bak/
+build/
+dist/
+*.egg-info/
+.installed.cfg
+*.egg
+*.spec
+
+# ==============================================================================
+# Testing, Coverage & Linters
+# ==============================================================================
+.pytest_cache/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+pytest_netmon/
+pytest_temp/
+
+# ==============================================================================
+# IDEs, Editors & Operating System Artifacts
+# ==============================================================================
 .idea/
+.vscode/
 *.swp
 *.swo
+*~
 .DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.bak
 
-# NetMon Databases & Runtime Logs
+# ==============================================================================
+# NetMon Runtime Databases & Secrets (Prevent Accidental Leaks)
+# ==============================================================================
 *.db
 *.db-journal
 *.db-wal
 *.db-shm
-*.log
 netmon.db*
 network_inventory.log
 initial_admin_password.txt
+.env
+.env.*
+!.env.example
 
-# Build & Dist Outputs
-build/
-dist/
-*.spec
+# ==============================================================================
+# Executables & Local Binaries
+# ==============================================================================
 *.exe
- 
+*.dll
+
+# Antigravity Context & Memory
 GEMINI.md

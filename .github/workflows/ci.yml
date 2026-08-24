@@ -2,29 +2,42 @@ name: Netmon CI/CD Pipeline
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "main", "master", "develop" ]
   pull_request:
-    branches: [ "main", "master" ]
+    branches: [ "main", "master", "develop" ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
+    name: Test on Python ${{ matrix.python-version }} (Windows)
     runs-on: windows-latest
-    steps:
-    - uses: actions/checkout@v3
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
 
-    - name: Set up Python 3.10
-      uses: actions/setup-python@v4
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
       with:
-        python-version: "3.10"
-        
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+
     - name: Install Dependencies
       run: |
         python -m pip install --upgrade pip
         if (Test-Path requirements.txt) { pip install -r requirements.txt }
         if (Test-Path backend/requirements.txt) { pip install -r backend/requirements.txt }
         if (Test-Path requirements-dev.txt) { pip install -r requirements-dev.txt }
-        pip install pytest pytest-asyncio aiohttp
-        
-    - name: Run Tests
+        pip install pytest pytest-asyncio httpx
+
+    - name: Run Test Suite
       run: |
-        python -m pytest tests/
+        python -m pytest tests/ -v --basetemp="C:/Temp/pytest_netmon"
+
