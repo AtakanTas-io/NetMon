@@ -389,7 +389,7 @@ class NetworkDiagnostics:
 
         if name:
             evidence.append("hostname")
-            if any(x in name for x in ("iphone", "android", "galaxy", "pixel", "redmi", "xiaomi", "huawei", "oppo", "vivo", "oneplus")):
+            if any(x in name for x in ("iphone", "android", "galaxy", "pixel", "redmi", "xiaomi", "oppo", "vivo", "oneplus", "realme")):
                 add("phone", 0.86, "hostname: mobile")
             if any(x in name for x in ("ipad", "tablet", "tab-", "galaxy-tab")):
                 add("tablet", 0.86, "hostname: tablet")
@@ -413,26 +413,32 @@ class NetworkDiagnostics:
                 add("router", 0.88, "hostname: router")
             if any(x in name for x in ("accesspoint", "access-point", "wireless-ap", "wifi-ap", "ap-", "wap-")):
                 add("access_point", 0.90, "hostname: access point")
-            if any(x in name for x in ("switch", "sw-", "core-sw", "edge-sw", "catalyst")):
-                add("switch", 0.90, "hostname: switch")
-            if any(x in name for x in ("ubiquiti", "unifi", "cisco", "juniper", "aruba", "zyxel", "netgear", "d-link", "tp-link")):
-                add("network_device", 0.56, "hostname: network device")
+            if any(x in name for x in ("switch", "sw-", "core-sw", "edge-sw", "catalyst", "quidway", "cloudengine", "s57", "s67", "s27", "s37", "s17")):
+                add("switch", 0.92, "hostname: switch")
+            if any(x in name for x in ("ubiquiti", "unifi", "cisco", "juniper", "aruba", "zyxel", "netgear", "d-link", "tp-link", "h3c", "ruijie", "brocade", "extreme")):
+                add("network_device", 0.65, "hostname: network device")
 
         if vend:
             evidence.append("oui")
-            if any(x in vend for x in ("apple", "samsung", "xiaomi", "huawei", "oppo", "vivo", "oneplus")):
-                # Vendor is strong evidence for mobile devices if no other identity exists
+            if any(x in vend for x in ("apple", "samsung", "xiaomi", "oppo", "vivo", "oneplus", "realme")):
                 add("phone", 0.40, f"vendor: {vendor}")
                 add("tablet", 0.35, f"vendor: {vendor}")
             if any(x in vend for x in ("hp", "hewlett", "canon", "epson", "brother", "xerox", "ricoh", "kyocera")):
                 add("printer", 0.35, f"vendor: {vendor}")
                 add("computer", 0.08, f"vendor: {vendor}")
-            if any(x in vend for x in ("dell", "lenovo", "acer", "asus", "intel", "microsoft", "gigabyte", "msi", "azurewave")):
+            if any(x in vend for x in ("dell", "lenovo", "acer", "asus", "intel", "microsoft", "gigabyte", "msi", "azurewave", "compal", "micro-star")):
                 add("computer", 0.35, f"vendor: {vendor}")
-            if any(x in vend for x in ("cisco", "fortinet", "fortigate", "mikrotik", "ubiquiti", "tp-link", "zyxel", "netgear", "d-link", "aruba", "juniper", "hpe", "hewlett packard enterprise", "tenda")):
-                add("network_device", 0.42, f"vendor: {vendor}")
-            if any(x in vend for x in ("fortinet", "fortigate", "palo alto", "watchguard", "sophos")):
-                add("firewall", 0.46, f"vendor: {vendor}")
+            if any(x in vend for x in (
+                "cisco", "fortinet", "fortigate", "mikrotik", "ubiquiti", "tp-link", "zyxel",
+                "netgear", "d-link", "aruba", "juniper", "hpe", "hewlett packard enterprise",
+                "tenda", "huawei", "h3c", "ruijie", "brocade", "extreme", "arista", "alcatel",
+                "allied telesis", "bray", "lite-on"
+            )):
+                add("switch", 0.52, f"vendor: {vendor}")
+                add("network_device", 0.50, f"vendor: {vendor}")
+                add("router", 0.42, f"vendor: {vendor}")
+            if any(x in vend for x in ("fortinet", "fortigate", "palo alto", "watchguard", "sophos", "checkpoint", "check point")):
+                add("firewall", 0.65, f"vendor: {vendor}")
             if any(x in vend for x in ("synology", "qnap", "netapp", "western digital", "nas")):
                 add("nas", 0.52, f"vendor: {vendor}")
             if any(x in vend for x in ("samsung", "lg", "sony", "vizio", "roku", "hisense", "tcl")):
@@ -450,16 +456,20 @@ class NetworkDiagnostics:
             except (ValueError, IndexError):
                 is_locally_administered = False
             if is_locally_administered:
-                # DÜZELTME: iOS 14+/Android 10+ varsayılan olarak WiFi gizlilik
-                # MAC'i (rastgele/locally-administered adres) kullanır — bu
-                # yüzden dahili OUI tablosu telefonların çoğunda "vendor"
-                # bulamıyordu. Bu adres türü başlı başına telefon/tablet için
-                # güçlü bir kanıttır (PC/TV/yazıcı/IoT nadiren kullanır).
                 add("phone", 0.45, "mac: gizlilik/rastgele adres (WiFi privacy MAC)")
                 add("tablet", 0.30, "mac: gizlilik/rastgele adres (WiFi privacy MAC)")
 
         if ports or svcs:
             evidence.append("services")
+            if 23 in ports or "telnet" in svc_names:
+                add("switch", 0.88, "service: telnet (switch/router)")
+                add("router", 0.75, "service: telnet")
+            if 161 in ports or "snmp" in svc_names:
+                add("switch", 0.65, "service: snmp")
+                add("network_device", 0.65, "service: snmp")
+            if 830 in ports or "netconf" in svc_names:
+                add("switch", 0.90, "service: netconf")
+                add("router", 0.85, "service: netconf")
             if 9100 in ports or 631 in ports or 515 in ports or any(x in svc_names for x in ("printer", "ipp", "jetdirect")):
                 add("printer", 0.96, "service: printer")
             if any(p in ports for p in (3306, 5432, 1433, 6379, 27017)) or "database" in svc_names:
@@ -467,17 +477,21 @@ class NetworkDiagnostics:
             if 3389 in ports or 445 in ports or 139 in ports or "microsoft-ds" in svc_names:
                 add("computer", 0.72, "service: windows")
             if 22 in ports and (80 in ports or 443 in ports):
-                add("server", 0.68, "service: ssh+web")
+                if any(x in vend for x in ("huawei", "cisco", "juniper", "mikrotik", "ubiquiti", "zyxel", "aruba", "h3c")):
+                    add("switch", 0.85, "service: ssh+web (managed switch)")
+                    add("router", 0.80, "service: ssh+web (router)")
+                else:
+                    add("server", 0.68, "service: ssh+web")
             if 53 in ports and (80 in ports or 443 in ports):
                 add("network_device", 0.68, "service: dns+web")
-            if 161 in ports or "snmp" in svc_names:
-                add("network_device", 0.60, "service: snmp")
             if 554 in ports or "rtsp" in svc_names:
                 add("camera", 0.78, "service: rtsp")
             if banners:
                 banner = " ".join(banners)
                 if any(x in banner for x in ("printer", "epson", "canon", "brother")):
                     add("printer", 0.80, "service banner: printer")
+                if any(x in banner for x in ("vrp", "huawei", "cisco", "switch", "routeros", "junos", "catalyst", "quidway")):
+                    add("switch", 0.90, "service banner: network os")
 
         if mdns:
             evidence.append("mdns")

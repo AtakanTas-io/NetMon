@@ -3007,6 +3007,32 @@ window.downloadRdp = async function(ip) {
     }
 };
 
+window.exportDevicesExcel = async function() {
+    try {
+        const token = S.token || localStorage.getItem("token") || "";
+        const res = await fetch(`/api/export/devices?token=${encodeURIComponent(token)}`, {
+            headers: token ? { "Authorization": `Bearer ${token}` } : {}
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || err.detail || "Dışa aktarma başarısız oldu.");
+        }
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        const nowStr = new Date().toISOString().slice(0,10);
+        a.download = `netmon_envanter_${nowStr}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+        toast("Envanter Excel/CSV dosyası başarıyla indirildi.", "ok");
+    } catch(err) {
+        toast("Dışa aktarma hatası: " + err.message, "err");
+    }
+};
+
 function renderDeviceTable() {
   const body = $("devBody");
   if (!body) return;
@@ -5155,7 +5181,7 @@ function renderDevicesPage() {
             </div>
           </div>
           <div class="right" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:flex-end;">
-            <button class="mini-btn" style="background:#10b981;border-color:#059669;color:white;margin-right:8px;" onclick="window.open('/api/export/devices', '_blank')">📊 Excel'e Aktar</button>
+            <button class="mini-btn" style="background:#10b981;border-color:#059669;color:white;margin-right:8px;" onclick="exportDevicesExcel()">📊 Excel'e Aktar</button>
             <input type="text" id="devFilter" placeholder="IP, Donanım, OS veya Ad ara…" style="width:200px" oninput="renderDeviceTable()" />
             <select id="devStatusFilter" onchange="S.deviceStatusFilter=this.value;renderDeviceTable()" style="width:125px">
               <option value="all" ${statusFilter==='all'?'selected':''}>Tüm durumlar</option>

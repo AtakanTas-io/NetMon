@@ -37,7 +37,7 @@ except ImportError:
     HAS_PSUTIL = False
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, Header, Request, HTTPException
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
 
 try:
@@ -556,6 +556,27 @@ def init_db():
     if "must_change_password" not in user_columns:
         conn.execute("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0")
 
+    # Yanlışlıkla phone olarak kaydedilmiş kurumsal ağ donanımlarını (Huawei, Cisco vb.) switch olarak düzelt
+    conn.execute("""
+        UPDATE known_devices
+        SET device_type = 'switch'
+        WHERE device_type IN ('phone', 'unknown')
+          AND (
+            LOWER(COALESCE(last_vendor, '')) LIKE '%huawei%'
+            OR LOWER(COALESCE(last_vendor, '')) LIKE '%cisco%'
+            OR LOWER(COALESCE(last_vendor, '')) LIKE '%juniper%'
+            OR LOWER(COALESCE(last_vendor, '')) LIKE '%h3c%'
+            OR LOWER(COALESCE(last_vendor, '')) LIKE '%aruba%'
+            OR LOWER(COALESCE(last_vendor, '')) LIKE '%zyxel%'
+            OR LOWER(COALESCE(last_vendor, '')) LIKE '%tp-link%'
+            OR LOWER(COALESCE(last_vendor, '')) LIKE '%d-link%'
+            OR LOWER(COALESCE(last_vendor, '')) LIKE '%brocade%'
+            OR LOWER(COALESCE(last_vendor, '')) LIKE '%extreme%'
+          )
+          AND LOWER(COALESCE(hostname, '')) NOT LIKE '%iphone%'
+          AND LOWER(COALESCE(hostname, '')) NOT LIKE '%phone%'
+          AND LOWER(COALESCE(hostname, '')) NOT LIKE '%mobile%'
+    """)
     conn.commit()
 
     # İlk kurulum: bilinen/sabit parola kullanma. Rastgele ilk kurulum parolası
@@ -2946,60 +2967,106 @@ def api_launch_rdp(ip: str, user: dict = Depends(get_current_user)):
     return JSONResponse(status_code=400, content={"error": "RDP sadece Windows'ta destekleniyor."})
 
 @app.get("/api/export/devices")
-def export_devices_csv(user: dict = Depends(get_current_user)):
-    try:
+def export_devices_csv(token: str | None = None, authorization: str | None = Header(None)):
+    auth_token = None
+    if isinstance(token, str) and token:
+        auth_token = token
+    elif isinstance(authorization, str) and authorization.startswith("Bearer "):
+        auth_token = authorization.replace("Bearer ", "").strip()
+
+    if auth_token:
         conn = db_conn()
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT mac, friendly_name, hostname, device_type, first_seen, last_seen, last_ip, 
-                   last_vendor, last_network, connectivity_status, identification_status 
-            FROM known_devices 
-            ORDER BY last_network, last_ip
-        """)
-        rows = cursor.fetchall()
-        
+        s = conn.execute("SELECT user_id, expires_at FROM sessions WHERE token=?", (auth_token,)).fetchone()
+        conn.close()
+        if not s or (s[1] and s[1] < time.time()):
+            raise _AuthError(401, "Geçersiz veya süresi dolmuş oturum.")
+
+    try:
+        devices = list(_devices_cache.get("data") or [])
+        if not devices:
+            conn = db_conn()
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT mac, friendly_name, hostname, device_type, first_seen, last_seen, last_ip, 
+                       last_vendor, last_network, connectivity_status, identification_status, open_ports 
+                FROM known_devices 
+                ORDER BY last_network, last_ip
+            """)
+            rows = cursor.fetchall()
+            conn.close()
+            devices = [
+                {
+                    "mac": r["mac"], "friendly_name": r["friendly_name"], "hostname": r["hostname"],
+                    "type": r["device_type"], "first_seen": r["first_seen"], "last_seen": r["last_seen"],
+                    "ip": r["last_ip"], "vendor": r["last_vendor"], "network": r["last_network"],
+                    "status": r["connectivity_status"], "open_ports": r["open_ports"]
+                }
+                for r in rows
+            ]
+
         output = io.StringIO()
-        output.write("\ufeff") # BOM for Excel
-        writer = csv.writer(output, delimiter=";")
+        writer = csv.writer(output, delimiter=";", quoting=csv.QUOTE_MINIMAL)
         
-        writer.writerow(["Wi-Fi Agi (Subnet/SSID)", "Durum", "IP Adresi", "MAC Adresi", "Hostname", "Uretici", "Cihaz Tipi", "Ozel Isim", "Ilk Gorulme", "Son Gorulme"])
+        writer.writerow([
+            "IP Adresi", "MAC Adresi", "Cihaz Adı / Hostname", "Üretici (Vendor)", 
+            "Cihaz Tipi", "Durum", "İşletim Sistemi", "İşlemci (CPU)", "Bellek (RAM)", 
+            "Diskler", "Antivirüs", "Güvenlik Duvarı", "Açık Portlar", "Ağ / Alt Ağ", "Son Görülme"
+        ])
         
         import datetime
-        for r in rows:
-            network = r["last_network"] or "Bilinmiyor"
-            status = r["connectivity_status"] or "unknown"
+        for d in devices:
+            inv = d.get("wmi_inventory") or d.get("fallback_inventory") or {}
+            hw = inv.get("hardware") or {}
+            sw = inv.get("software") or {}
+            sec = inv.get("security") or {}
+            disks = inv.get("storage") or []
+            disk_txt = " · ".join(f"{ds.get('drive_letter', 'Disk')}: {ds.get('total_gb', 0)}GB" for ds in disks) if isinstance(disks, list) and disks else "-"
             
-            if status == "online": status_text = "Cevrimici"
-            elif status == "offline": status_text = "Cevrimdisi"
-            elif status == "stale": status_text = "Duragan"
-            else: status_text = "Bilinmiyor"
+            raw_ports = (d.get("classification") or {}).get("open_ports") or d.get("open_ports") or []
+            if isinstance(raw_ports, str):
+                try: raw_ports = json.loads(raw_ports)
+                except Exception: raw_ports = []
+            ports_txt = ", ".join(map(str, raw_ports)) if raw_ports else "-"
             
-            first = datetime.datetime.fromtimestamp(r["first_seen"]).strftime('%Y-%m-%d %H:%M:%S') if r["first_seen"] else ""
-            last = datetime.datetime.fromtimestamp(r["last_seen"]).strftime('%Y-%m-%d %H:%M:%S') if r["last_seen"] else ""
+            st = d.get("status") or "unknown"
+            if st == "online": st_text = "Çevrimiçi"
+            elif st in ("offline", "stale"): st_text = "Çevrimdışı"
+            elif st == "discovered": st_text = "Yanıt Doğrulanamadı"
+            else: st_text = "Belirsiz"
+
+            last_ts = d.get("last_seen") or d.get("ts")
+            last_date = datetime.datetime.fromtimestamp(last_ts).strftime('%Y-%m-%d %H:%M:%S') if last_ts else "-"
             
             writer.writerow([
-                network,
-                status_text,
-                r["last_ip"] or "",
-                r["mac"] or "",
-                r["hostname"] or "",
-                r["last_vendor"] or "",
-                r["device_type"] or "unknown",
-                r["friendly_name"] or "",
-                first,
-                last
+                d.get("ip") or "-",
+                d.get("mac") or "-",
+                d.get("hostname") or d.get("friendly_name") or "-",
+                d.get("vendor") or "Bilinmiyor",
+                d.get("type") or "unknown",
+                st_text,
+                sw.get("os_name") or d.get("os_fingerprint") or "-",
+                hw.get("cpu_model") or "-",
+                f"{hw.get('ram_gb')} GB" if hw.get("ram_gb") else "-",
+                disk_txt,
+                sec.get("antivirus") or "Bilinmiyor",
+                sec.get("firewall") or "Bilinmiyor",
+                ports_txt,
+                d.get("network") or d.get("last_network") or "-",
+                last_date
             ])
             
-        conn.close()
-        output.seek(0)
-        
-        return StreamingResponse(
-            iter([output.getvalue()]),
+        filename = f"netmon_envanter_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        return Response(
+            content=output.getvalue().encode("utf-8-sig"),
             media_type="text/csv; charset=utf-8",
-            headers={"Content-Disposition": f"attachment; filename=netmon_envanter.csv"}
+            headers={
+                "Content-Disposition": f"attachment; filename={filename}",
+                "Content-Type": "text/csv; charset=utf-8"
+            }
         )
     except Exception as e:
+        logger.exception("[EXPORT] Excel/CSV export failed")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 @app.get("/api/ssl-certs")
