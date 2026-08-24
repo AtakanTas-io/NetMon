@@ -3144,6 +3144,131 @@ def export_devices_csv(token: str | None = None, authorization: str | None = Hea
         logger.exception("[EXPORT] Excel/CSV export failed")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
+@app.post("/api/export/devices/save")
+def export_devices_save_to_disk(user: dict = Depends(get_current_user)):
+    """Masaüstü (Desktop) veya İndirilenler (Downloads) klasörüne doğrudan dosyayı kaydeder ve Windows Gezgini'nde açar."""
+    try:
+        devices = list(_devices_cache.get("data") or [])
+        if not devices:
+            conn = db_conn()
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT mac, friendly_name, hostname, device_type, first_seen, last_seen, last_ip, 
+                       last_vendor, last_network, connectivity_status, identification_status, open_ports 
+                FROM known_devices 
+                ORDER BY last_network, last_ip
+            """)
+            rows = cursor.fetchall()
+            conn.close()
+            devices = [
+                {
+                    "mac": r["mac"], "friendly_name": r["friendly_name"], "hostname": r["hostname"],
+                    "type": r["device_type"], "first_seen": r["first_seen"], "last_seen": r["last_seen"],
+                    "ip": r["last_ip"], "vendor": r["last_vendor"], "network": r["last_network"],
+                    "status": r["connectivity_status"], "open_ports": r["open_ports"]
+                }
+                for r in rows
+            ]
+
+        output = io.StringIO()
+        writer = csv.writer(output, delimiter=";", quoting=csv.QUOTE_MINIMAL)
+        writer.writerow([
+            "IP Adresi", "MAC Adresi", "Cihaz Adı / Hostname", "Üretici (Vendor)", 
+            "Cihaz Tipi", "Durum", "İşletim Sistemi", "İşlemci (CPU)", "Bellek (RAM)", 
+            "Diskler", "Antivirüs", "Güvenlik Duvarı", "Açık Portlar", "Ağ / Alt Ağ", "Son Görülme"
+        ])
+        
+        import datetime
+        for d in devices:
+            inv = d.get("wmi_inventory") or d.get("fallback_inventory") or {}
+            hw = inv.get("hardware") or {}
+            sw = inv.get("software") or {}
+            sec = inv.get("security") or {}
+            disks = inv.get("storage") or []
+            disk_txt = " · ".join(f"{ds.get('drive_letter', 'Disk')}: {ds.get('total_gb', 0)}GB" for ds in disks) if isinstance(disks, list) and disks else "-"
+            
+            raw_ports = (d.get("classification") or {}).get("open_ports") or d.get("open_ports") or []
+            if isinstance(raw_ports, str):
+                try: raw_ports = json.loads(raw_ports)
+                except Exception: raw_ports = []
+            ports_txt = ", ".join(map(str, raw_ports)) if raw_ports else "-"
+            
+            st = d.get("status") or "unknown"
+            if st == "online": st_text = "Çevrimiçi"
+            elif st in ("offline", "stale"): st_text = "Çevrimdışı"
+            elif st == "discovered": st_text = "Yanıt Doğrulanamadı"
+            else: st_text = "Belirsiz"
+
+            last_ts = d.get("last_seen") or d.get("ts")
+            last_date = datetime.datetime.fromtimestamp(last_ts).strftime('%Y-%m-%d %H:%M:%S') if last_ts else "-"
+            
+            writer.writerow([
+                d.get("ip") or "-",
+                d.get("mac") or "-",
+                d.get("hostname") or d.get("friendly_name") or "-",
+                d.get("vendor") or "Bilinmiyor",
+                d.get("type") or "unknown",
+                st_text,
+                sw.get("os_name") or d.get("os_fingerprint") or "-",
+                hw.get("cpu_model") or "-",
+                f"{hw.get('ram_gb')} GB" if hw.get("ram_gb") else "-",
+                disk_txt,
+                sec.get("antivirus") or "Bilinmiyor",
+                sec.get("firewall") or "Bilinmiyor",
+                ports_txt,
+                d.get("network") or d.get("last_network") or "-",
+                last_date
+            ])
+            
+        csv_bytes = output.getvalue().encode("utf-8-sig")
+        
+        # Determine target folders
+        home_dir = os.path.expanduser("~")
+        downloads_dir = os.path.join(home_dir, "Downloads")
+        desktop_dir = os.path.join(home_dir, "Desktop")
+        
+        target_dir = downloads_dir if os.path.isdir(downloads_dir) else (desktop_dir if os.path.isdir(desktop_dir) else home_dir)
+        filename = f"netmon_envanter_{datetime.datetime.now().strftime('%Y-%m-%d_%H%M%S')}.csv"
+        saved_path = os.path.join(target_dir, filename)
+        
+        with open(saved_path, "wb") as f:
+            f.write(csv_bytes)
+            
+        # Automatically select the file in Windows File Explorer
+        if platform.system() == "Windows":
+            import subprocess
+            try:
+                subprocess.Popen(["explorer.exe", f"/select,{saved_path}"], **_hidden_subprocess_kwargs())
+            except Exception as exc:
+                logger.debug("[EXPORT] Explorer launch failed: %s", exc)
+                
+        return {
+            "ok": True,
+            "filename": filename,
+            "saved_path": saved_path,
+            "target_dir": target_dir,
+            "count": len(devices)
+        }
+    except Exception as e:
+        logger.exception("[EXPORT] Direct save to disk failed")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+@app.post("/api/tools/open-downloads")
+def open_downloads_folder(user: dict = Depends(get_current_user)):
+    """İndirilenler klasörünü Windows Dosya Gezgini'nde açar."""
+    if platform.system() == "Windows":
+        home_dir = os.path.expanduser("~")
+        downloads_dir = os.path.join(home_dir, "Downloads")
+        if os.path.isdir(downloads_dir):
+            import subprocess
+            try:
+                subprocess.Popen(["explorer.exe", downloads_dir], **_hidden_subprocess_kwargs())
+                return {"ok": True, "path": downloads_dir}
+            except Exception as exc:
+                return JSONResponse(status_code=500, content={"error": str(exc)})
+    return {"ok": False}
+
 @app.get("/api/ssl-certs")
 def get_ssl_certs(user: dict = Depends(get_current_user)):
     conn = db_conn()

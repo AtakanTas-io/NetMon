@@ -3010,26 +3010,67 @@ window.downloadRdp = async function(ip) {
 window.exportDevicesExcel = async function() {
     try {
         const token = S.token || localStorage.getItem("token") || "";
-        const res = await fetch(`/api/export/devices?token=${encodeURIComponent(token)}`, {
-            headers: token ? { "Authorization": `Bearer ${token}` } : {}
-        });
-        if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err.error || err.detail || "Dışa aktarma başarısız oldu.");
+        
+        // 1. Try direct disk save to Downloads / Desktop & open in Windows Explorer
+        let saveResult = null;
+        try {
+            const saveRes = await fetch("/api/export/devices/save", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    ...(token ? { "Authorization": `Bearer ${token}` } : {})
+                }
+            });
+            if (saveRes.ok) {
+                saveResult = await saveRes.json();
+            }
+        } catch(e) {
+            console.debug("Direct save fallback:", e);
         }
-        const blob = await res.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        const nowStr = new Date().toISOString().slice(0,10);
-        a.download = `netmon_envanter_${nowStr}.csv`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        window.URL.revokeObjectURL(url);
-        toast("Envanter Excel/CSV dosyası başarıyla indirildi.", "ok");
+
+        // 2. Also trigger standard browser Blob download
+        try {
+            const res = await fetch(`/api/export/devices?token=${encodeURIComponent(token)}`, {
+                headers: token ? { "Authorization": `Bearer ${token}` } : {}
+            });
+            if (res.ok) {
+                const blob = await res.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                const nowStr = new Date().toISOString().slice(0,10);
+                a.download = `netmon_envanter_${nowStr}.csv`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+            }
+        } catch(e) {}
+
+        if (saveResult && saveResult.ok) {
+            toast(`✅ Excel dosyası kaydedildi: ${saveResult.saved_path} (Dosya Gezgini'nde açıldı)`, "ok");
+        } else {
+            toast("Envanter Excel/CSV dosyası İndirilenler klasörünüze kaydedildi.", "ok");
+        }
     } catch(err) {
         toast("Dışa aktarma hatası: " + err.message, "err");
+    }
+};
+
+window.openDownloadsFolder = async function() {
+    try {
+        const token = S.token || localStorage.getItem("token") || "";
+        const res = await fetch("/api/tools/open-downloads", {
+            method: "POST",
+            headers: token ? { "Authorization": `Bearer ${token}` } : {}
+        });
+        if (res.ok) {
+            toast("📁 İndirilenler klasörü açıldı.", "ok");
+        } else {
+            toast("Klasör açılamadı.", "err");
+        }
+    } catch(e) {
+        toast("Hata: " + e.message, "err");
     }
 };
 
