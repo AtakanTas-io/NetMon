@@ -7,6 +7,23 @@ import netdiag_core
 import wmi_scanner
 
 
+def test_localized_wmi_access_denied_is_classified_correctly():
+    code, message = wmi_scanner.classify_wmi_error(
+        "SWbemLocator: Erişim engellendi. (-2147024891)"
+    )
+    assert code == "access_denied"
+    assert message == "Erişim Engellendi (Access Denied)"
+
+    diagnostics = wmi_scanner.explain_wmi_error(
+        "SWbemLocator: Erişim engellendi. (0x80070005)",
+        "wmi_dcom_authorization",
+    )
+    assert diagnostics["error_code"] == "access_denied"
+    assert diagnostics["os_error_code"] == "0x80070005"
+    assert "yetkilendirme" in diagnostics["cause"]
+    assert diagnostics["recommended_actions"]
+
+
 def test_winrm_still_runs_when_python_wmi_dependency_is_missing(monkeypatch):
     monkeypatch.setattr(wmi_scanner, "WMI_AVAILABLE", False)
     monkeypatch.setattr(wmi_scanner, "WINRM_AVAILABLE", True)

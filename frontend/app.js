@@ -30,8 +30,13 @@ const S = {
   connections: { tcp: 0, udp: 0, total: 0, supported: true },
   overview: {},
   logs: [],
+  logLevel: "all",
+  logQuery: "",
+  system: {},
+  topoLayer: "all",
   inventoryAssets: [],
   inventoryAssetDetail: null,
+  rbacRoles: [],
 };
 
 function esc(str) {
@@ -51,6 +56,20 @@ function fmtMbps(v) {
     : n < 100
       ? n.toFixed(1)
       : Math.round(n).toString();
+}
+
+function fmtBandwidthRate(bps) {
+  const b = Number(bps || 0);
+  if (b <= 0) return `0.00 <span style="font-size:12px;color:var(--muted)">Mbps</span>`;
+  if (b >= 1_000_000) {
+    const mbps = b / 1_000_000;
+    return `${mbps < 10 ? mbps.toFixed(2) : (mbps < 100 ? mbps.toFixed(1) : Math.round(mbps))} <span style="font-size:12px;color:var(--muted)">Mbps</span>`;
+  }
+  if (b >= 1_000) {
+    const kbps = b / 1_000;
+    return `${kbps < 100 ? kbps.toFixed(1) : Math.round(kbps)} <span style="font-size:12px;color:var(--muted)">kbps</span>`;
+  }
+  return `${Math.round(b)} <span style="font-size:12px;color:var(--muted)">bps</span>`;
 }
 
 function nowTime() {
@@ -442,9 +461,15 @@ async function logout() {
 
 function openProfile() {
   if (!S.user) return;
+  const isAdmin = S.user.role === "admin";
+  const permissionCount = (S.user.permissions || []).includes("*") ? "Tüm" : (S.user.permissions || []).length;
   openModal(`
     <h3>${esc(S.user.username || "Kullanıcı")}</h3>
-    <div class="sub">${S.user.role === "admin" ? "Yönetici" : "Kullanıcı"}</div>
+    <div class="sub">${esc(currentRoleLabel())}</div>
+    <div style="display:flex;gap:9px;align-items:flex-start;margin-top:12px;padding:10px 11px;border:1px solid ${isAdmin ? "rgba(139,92,246,.4)" : "var(--line)"};border-radius:9px;background:${isAdmin ? "rgba(91,33,182,.1)" : "var(--panel-2)"}">
+      <span style="color:${isAdmin ? "#a78bfa" : "var(--blue)"}">${ico(isAdmin ? "shield" : "users", 17)}</span>
+      <div><b style="display:block;font-size:10px">${isAdmin ? "Yönetici modu etkin" : `${esc(currentRoleLabel())} rolü etkin`}</b><span style="display:block;color:var(--muted);font-size:9px;margin-top:2px;line-height:1.4">Bu oturumda ${permissionCount} operasyon izni tanımlı. Backend her hassas işlemde izni ayrıca doğrular.</span></div>
+    </div>
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px;">
       <button class="mini-btn" onclick="closeModalForce()">Kapat</button>
       <button class="mini-btn" onclick="openPasswordChangeModal(false)">Parolayı Değiştir</button>
@@ -501,13 +526,43 @@ async function submitPasswordChange() {
 
 function applyRolePermissions() {
   const isAdmin = S.user && S.user.role === "admin";
+  const app = $("app");
+  if (app) {
+    app.classList.toggle("admin-mode", Boolean(isAdmin));
+    app.dataset.role = isAdmin ? "admin" : "user";
+  }
   document.querySelectorAll(".admin-only").forEach((el) => {
     el.style.display = isAdmin ? "" : "none";
+  });
+  document.querySelectorAll("[data-permission]").forEach((el) => {
+    el.style.display = hasPermission(el.dataset.permission) ? "" : "none";
   });
   const nameEl = $("userName");
   const roleEl = $("userRole");
   if (nameEl) nameEl.textContent = S.user ? S.user.username : "-";
-  if (roleEl) roleEl.textContent = isAdmin ? "Yönetici" : "Kullanıcı";
+  if (roleEl) roleEl.textContent = currentRoleLabel();
+  const adminBadge = $("adminModeBadge");
+  const adminIcon = $("adminModeIcon");
+  if (adminBadge) adminBadge.setAttribute("aria-label", isAdmin ? `${S.user?.username || ""} yönetici modunda` : "Standart kullanıcı modu");
+  if (adminIcon) adminIcon.innerHTML = ico("shield", 12);
+}
+
+const ROLE_LABELS = {
+  admin: "Sistem Yöneticisi",
+  noc_operator: "NOC Operatörü",
+  inventory_specialist: "Envanter Uzmanı",
+  security_analyst: "Güvenlik Analisti",
+  viewer: "Salt Okunur",
+  user: "Standart Kullanıcı",
+};
+
+function hasPermission(permission) {
+  const permissions = Array.isArray(S.user?.permissions) ? S.user.permissions : [];
+  return S.user?.role === "admin" || permissions.includes("*") || permissions.includes(permission);
+}
+
+function currentRoleLabel() {
+  return S.user?.role_label || ROLE_LABELS[S.user?.role] || "Kullanıcı";
 }
 
 /* ---------- Navigasyon ---------- */
@@ -516,14 +571,14 @@ const NAV_ITEMS = [
   { id: "devices", label: "BT Varlık Envanteri", icon: "list" },
   { id: "topology", label: "Ağ Keşfi ve Topoloji", icon: "wifi" },
   { id: "ipam", label: "IPAM & Subnet Havuzu", icon: "grid" },
-  { id: "toptalkers", label: "Top Talkers & Trafik", icon: "activity" },
+  { id: "toptalkers", label: "Aktif Oturumlar & Trafik", icon: "activity" },
   { id: "ncm", label: "Switch Config Diff", icon: "terminal" },
   { id: "security", label: "Güvenlik Görünürlüğü", icon: "shield" },
   { id: "analyst", label: "Analist Merkezi", icon: "shield" },
   { id: "purpleteam", label: "Cyber Lab", icon: "shield" },
   { id: "egitim", label: "NetMon Academy", icon: "book" },
-  { id: "settings", label: "Ayarlar", icon: "gear", admin: true },
-  { id: "management", label: "Yönetim", icon: "users", admin: true },
+  { id: "settings", label: "Ayarlar", icon: "gear", permission: "system.settings.manage" },
+  { id: "management", label: "Yönetim", icon: "users", permission: "users.manage" },
 ];
 
 const PAGE_TITLES = Object.fromEntries(NAV_ITEMS.map((n) => [n.id, n.label]));
@@ -532,7 +587,7 @@ Object.assign(PAGE_TITLES, {
   devices: "BT Varlık Envanteri",
   topology: "Ağ Keşfi ve Topoloji",
   ipam: "IPAM & Subnet Havuz Sağlığı",
-  toptalkers: "Canlı Top Talkers & Bant Genişliği",
+  toptalkers: "AKTİF AĞ OTURUMLARI & TOPLAM TRAFİK",
   ncm: "Ağ Cihazı Konfigürasyon Yedeği & Diff",
   ping: "Ağ Sağlığı ve Teşhis",
   security: "Güvenlik Görünürlüğü",
@@ -543,8 +598,7 @@ Object.assign(PAGE_TITLES, {
 function buildNav() {
   const nav = $("nav");
   if (!nav) return;
-  const isAdmin = S.user && S.user.role === "admin";
-  nav.innerHTML = NAV_ITEMS.filter((item) => !item.admin || isAdmin)
+  nav.innerHTML = NAV_ITEMS.filter((item) => !item.permission || hasPermission(item.permission))
     .map(
       (item) => `
         <button class="nav-item ${S.page === item.id ? "active" : ""}" data-page="${item.id}" onclick="go('${item.id}')">
@@ -558,6 +612,11 @@ function buildNav() {
 
 function go(page) {
   if (!PAGE_TITLES[page]) page = "dashboard";
+  const requestedItem = NAV_ITEMS.find(item => item.id === page);
+  if (requestedItem?.permission && !hasPermission(requestedItem.permission)) {
+    toast("Bu sayfa mevcut rolünüz için yetkili değil.", "warn");
+    page = "dashboard";
+  }
   S.page = page;
 
   document
@@ -726,18 +785,25 @@ function tickClock() {
 
 /* ---------- Loglar (Tüm Sayfalar ve Canlı Akış İçin) ---------- */
 function logRowHtml(l) {
-  const level = l.level || "info";
+  const rawLevel = String(l.level || "info").toLowerCase();
+  const level = ["critical", "error", "fail"].includes(rawLevel)
+    ? "critical"
+    : ["warning", "warn"].includes(rawLevel)
+      ? "warning"
+      : "info";
   const cls =
-    level === "error"
+    level === "critical"
       ? "red"
-      : level === "warn"
+      : level === "warning"
         ? "orange"
-        : level === "ok"
+        : rawLevel === "ok"
           ? "green"
           : "";
+  const source = l.source || l.tag || (String(l.message || "").startsWith("%") ? "SYSLOG" : "NETMON");
   return `
     <div class="log-row">
       <span class="log-time">${esc(l.time || "")}</span>
+      <span class="log-source">${esc(source)}</span>
       <span class="log-level ${cls}">${esc(level)}</span>
       <span class="log-msg">${esc(l.message || "")}</span>
     </div>
@@ -745,18 +811,37 @@ function logRowHtml(l) {
 }
 
 function renderLogs() {
+  const visibleLogs = (S.logs || []).filter(l => {
+    const raw = String(l.level || "info").toLowerCase();
+    const normalized = ["critical", "error", "fail"].includes(raw) ? "critical" : ["warning", "warn"].includes(raw) ? "warning" : "info";
+    const levelMatch = S.logLevel === "all" || normalized === S.logLevel;
+    const q = String(S.logQuery || "").trim().toLowerCase();
+    const queryMatch = !q || `${l.time || ""} ${l.source || l.tag || ""} ${l.message || ""}`.toLowerCase().includes(q);
+    return levelMatch && queryMatch;
+  });
   const list = $("logList");
   if (list) {
     list.innerHTML =
-      (S.logs || []).slice(0, 60).map(logRowHtml).join("") ||
+      visibleLogs.slice(0, 60).map(logRowHtml).join("") ||
       `<div class="hint" style="padding:14px;text-align:center">Henüz log yok.</div>`;
   }
   const pageList = $("logsPageList");
   if (pageList) {
     pageList.innerHTML =
-      (S.logs || []).map(logRowHtml).join("") ||
-      `<div class="hint" style="padding:14px;text-align:center">Henüz log yok.</div>`;
+      visibleLogs.map(logRowHtml).join("") ||
+      `<div class="hint" style="padding:14px;text-align:center">Filtreyle eşleşen kayıt yok.</div>`;
   }
+}
+
+function setLogLevel(level) {
+  S.logLevel = level;
+  document.querySelectorAll("[data-log-level]").forEach(btn => btn.classList.toggle("blue", btn.dataset.logLevel === level));
+  renderLogs();
+}
+
+function setLogQuery(value) {
+  S.logQuery = value || "";
+  renderLogs();
 }
 
 async function refreshLogs() {
@@ -770,8 +855,8 @@ async function refreshLogs() {
 }
 
 async function clearLogs() {
-  if (!(S.user && S.user.role === "admin")) {
-    toast("Logları temizlemek için yönetici yetkisi gerekli.", "warn");
+  if (!hasPermission("logs.manage")) {
+    toast("Logları temizlemek için log yönetimi izni gerekli.", "warn");
     return;
   }
   try {
@@ -791,8 +876,15 @@ function renderLogsPage() {
     el.innerHTML = `
       <div class="panel">
         <div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;">
-          <h2>Loglar</h2>
-          <div class="right" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:flex-end;"><button class="mini-btn admin-only" onclick="clearLogs()">Temizle</button></div>
+          <div><h2 style="margin:0">Canlı Log & Alarm Yönetimi</h2><span class="data-scope">Syslog uyumlu olay akışı · geçmiş kayıtları</span></div>
+          <div class="right log-toolbar">
+            <input type="search" placeholder="Mesaj, cihaz veya kaynak ara…" oninput="setLogQuery(this.value)" />
+            <button class="mini-btn blue" data-log-level="all" onclick="setLogLevel('all')">Tümü</button>
+            <button class="mini-btn" data-log-level="critical" onclick="setLogLevel('critical')">Critical</button>
+            <button class="mini-btn" data-log-level="warning" onclick="setLogLevel('warning')">Warning</button>
+            <button class="mini-btn" data-log-level="info" onclick="setLogLevel('info')">Info</button>
+            <button class="mini-btn" data-permission="logs.manage" onclick="clearLogs()">Temizle</button>
+          </div>
         </div>
         <div class="panel-body" id="logsPageList" style="max-height:calc(100vh - 230px);overflow:auto"></div>
       </div>
@@ -1041,8 +1133,8 @@ function renderPortscanPage() {
 }
 
 async function runPortScan() {
-  if (!(S.user && S.user.role === "admin")) {
-    toast("Port taraması yalnızca yönetici hesabında kullanılabilir.", "warn");
+  if (!hasPermission("diagnostics.run")) {
+    toast("Port taraması için tanılama izni gerekli.", "warn");
     return;
   }
   const target = ($("psTarget")?.value || "").trim();
@@ -2595,7 +2687,7 @@ async function loadSettings() {
   try {
     const data = await get("/api/settings");
     const s = data.settings || {};
-    const isAdmin = S.user && S.user.role === "admin";
+    const isAdmin = hasPermission("system.settings.manage");
     body.innerHTML = `
       <div class="field-label">Ping Hedefi</div>
       <input id="setPingTarget" type="text" value="${esc(s.ping_target)}" ${isAdmin ? "" : "disabled"} />
@@ -2711,52 +2803,119 @@ function renderManagementPage() {
   if (!el.dataset.built) {
     el.dataset.built = "1";
     el.innerHTML = `
-      <div class="panel">
-        <div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;">
-          <h2>Kullanıcı Yönetimi</h2>
-          <div class="right" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:flex-end;"><button class="mini-btn blue" onclick="openCreateUserModal()">${ico("plus", 14)} Yeni Kullanıcı</button></div>
+      <div class="admin-command-header">
+        <div>
+          <span class="ops-eyebrow">IDENTITY & ACCESS CONTROL</span>
+          <h2>Yönetim Merkezi</h2>
+          <p>Kullanıcı rolleri, hesap güvenliği ve yönetim hareketleri.</p>
         </div>
-        <div class="panel-body" style="padding:0">
-          <table>
-            <thead><tr><th>Kullanıcı Adı</th><th>Rol</th><th>Durum</th><th></th></tr></thead>
-            <tbody id="usersBody"></tbody>
-          </table>
+        <button class="admin-primary-action" onclick="openCreateUserModal()">${ico("plus", 15)} Kullanıcı Ekle</button>
+      </div>
+      <div class="admin-stat-grid" id="adminStats"></div>
+      <div class="admin-role-matrix" id="adminRoleMatrix"></div>
+      <div class="admin-layout">
+        <section class="panel admin-users-panel">
+          <div class="panel-head"><div><h2>Hesaplar & Roller</h2><span class="data-scope">En az yetki ilkesiyle yönetin</span></div></div>
+          <div class="panel-body"><div class="admin-user-grid" id="usersBody"><div class="hint">Yükleniyor…</div></div></div>
+        </section>
+        <aside class="panel admin-audit-panel">
+          <div class="panel-head"><div><h2>Son Yönetim Hareketleri</h2><span class="data-scope">Denetim izi</span></div><span class="badge ok">Kayıt aktif</span></div>
+          <div class="panel-body" id="adminAuditList"><div class="hint">Yükleniyor…</div></div>
+          <div class="admin-security-note">${ico("shield", 15)}<div><b>Güvenlik korumaları</b><span>Son admin koruması, oturum iptali ve zorunlu parola değişimi etkin.</span></div></div>
+        </aside>
+      </div>
+      <div class="panel admin-inventory-guide">
+        <div class="panel-head"><div><h2>Yetkili Envanter Hazırlık Rehberi</h2><span class="data-scope">BT yöneticinizle paylaşın</span></div><button class="mini-btn" onclick="go('settings')">Kimlik Ayarlarını Aç</button></div>
+        <div class="panel-body admin-prereq-grid">
+          <div><b>Windows WMI / WinRM</b><span>DOMAIN\\kullanıcı veya HEDEF\\kullanıcı · TCP 135 ya da 5985/5986 · Remote Enable / Administrators</span></div>
+          <div><b>Linux SSH</b><span>Salt-okuma yetkili hesap · TCP 22 · doğrulanmış host anahtarı</span></div>
+          <div><b>Ağ Cihazı SNMP</b><span>Salt-okuma community · UDP 161 · NetMon sunucu IP'sine izin veren ACL</span></div>
         </div>
       </div>
     `;
   }
-  loadUsers();
+  Promise.all([loadUsers(), loadAdminAudit()]);
 }
 
 async function loadUsers() {
   const body = $("usersBody");
   if (!body) return;
   try {
-    const data = await get("/api/admin/users");
+    const [data, roleData] = await Promise.all([get("/api/admin/users"), get("/api/admin/roles")]);
     const users = data.users || [];
+    const roles = roleData.roles || [];
+    S.rbacRoles = roles;
+    const matrix = $("adminRoleMatrix");
+    if (matrix) matrix.innerHTML = roles.map(role => `
+      <div class="admin-role-summary ${esc(role.id)}">
+        <b>${esc(role.label)}</b>
+        <span>${role.permissions.includes("*") ? "Tüm sistem izinleri" : `${role.permissions.length} operasyon izni`}</span>
+        <small>${role.permissions.includes("*") ? "Tam yönetim" : role.permissions.map(p => esc(p)).join(" · ") || "Salt okunur"}</small>
+      </div>`).join("");
+    const stats = $("adminStats");
+    if (stats) {
+      const active = users.filter(u => u.active).length;
+      const admins = users.filter(u => u.role === "admin" && u.active).length;
+      const pending = users.filter(u => u.must_change_password).length;
+      stats.innerHTML = `
+        <div class="admin-stat-card blue"><span>Toplam hesap</span><b>${users.length}</b><small>Tanımlı kullanıcı</small></div>
+        <div class="admin-stat-card green"><span>Aktif hesap</span><b>${active}</b><small>${users.length - active} devre dışı</small></div>
+        <div class="admin-stat-card purple"><span>Aktif yönetici</span><b>${admins}</b><small>Yüksek yetkili rol</small></div>
+        <div class="admin-stat-card orange"><span>Parola işlemi</span><b>${pending}</b><small>Değişiklik bekliyor</small></div>`;
+    }
     body.innerHTML = users
       .map(
         (u) => `
-      <tr>
-        <td>${esc(u.username)}</td>
-        <td>${u.role === "admin" ? "Yönetici" : "Kullanıcı"}</td>
-        <td><span class="badge ${u.active ? "ok" : "gray"}">${u.active ? "Aktif" : "Pasif"}</span>${u.must_change_password ? ' <span class="badge warn">Parola değişmeli</span>' : ''}</td>
-        <td style="text-align:right;white-space:nowrap">
-          <button class="mini-btn" onclick="changeUserRole(${u.id}, '${u.role === "admin" ? "user" : "admin"}')">${u.role === "admin" ? "Kullanıcı Yap" : "Yönetici Yap"}</button>
-          <button class="mini-btn" onclick="openResetUserPasswordModal(${u.id}, '${esc(u.username)}')">Parola Sıfırla</button>
-          <button class="mini-btn" onclick="toggleUserActive(${u.id}, ${u.active ? "false" : "true"})">${u.active ? "Devre Dışı Bırak" : "Etkinleştir"}</button>
-          <button class="mini-btn" onclick="deleteUser(${u.id})">${ico("trash", 14)}</button>
-        </td>
-      </tr>
+      <article class="admin-user-card ${u.active ? "" : "disabled"}">
+        <div class="admin-user-main">
+          <div class="admin-avatar">${esc(String(u.username || "?").slice(0, 2).toUpperCase())}</div>
+          <div class="admin-user-identity"><b>${esc(u.username)}</b><span>${esc(u.role_label || ROLE_LABELS[u.role] || u.role)}</span></div>
+          <span class="admin-role-badge ${u.role}">${esc(u.role === "admin" ? "ADMIN" : u.role.replaceAll("_", " ").toUpperCase())}</span>
+        </div>
+        <div class="admin-user-state"><span><i class="${u.active ? "online" : ""}"></i>${u.active ? "Aktif" : "Devre dışı"}</span>${u.must_change_password ? '<span class="c-orange">Parola değişmeli</span>' : '<span class="c-green">Parola güncel</span>'}</div>
+        <div class="admin-user-actions">
+          <select aria-label="${esc(u.username)} rolü" onchange="changeUserRole(${u.id}, this.value)">${roles.map(role => `<option value="${esc(role.id)}" ${role.id === u.role ? "selected" : ""}>${esc(role.label)}</option>`).join("")}</select>
+          <button onclick="openResetUserPasswordModal(${u.id}, '${esc(u.username)}')">Parola sıfırla</button>
+          <button onclick="toggleUserActive(${u.id}, ${u.active ? "false" : "true"})">${u.active ? "Devre dışı" : "Etkinleştir"}</button>
+          <button class="danger" title="Kullanıcıyı sil" onclick="deleteUser(${u.id})">${ico("trash", 13)}</button>
+        </div>
+      </article>
     `,
       )
       .join("");
   } catch (e) {
-    body.innerHTML = `<tr><td colspan="4" class="hint">Kullanıcılar alınamadı: ${esc(e.message)}</td></tr>`;
+    body.innerHTML = `<div class="hint">Kullanıcılar alınamadı: ${esc(e.message)}</div>`;
   }
 }
 
+async function loadAdminAudit() {
+  const body = $("adminAuditList");
+  if (!body) return;
+  try {
+    const data = await get("/api/admin/audit-log?limit=12");
+    const entries = data.entries || [];
+    body.innerHTML = entries.length ? entries.map(entry => `
+      <div class="admin-audit-row">
+        <i class="${entry.success ? "ok" : "fail"}"></i>
+        <div><b>${esc(entry.action || "işlem")}</b><span>${esc(entry.username || "sistem")} · ${entry.ts ? new Date(entry.ts * 1000).toLocaleString("tr-TR") : "-"}</span>${entry.detail ? `<small>${esc(entry.detail)}</small>` : ""}</div>
+      </div>`).join("") : '<div class="hint">Henüz yönetim hareketi yok.</div>';
+  } catch (e) {
+    body.innerHTML = `<div class="hint c-red">Denetim izi alınamadı: ${esc(e.message)}</div>`;
+  }
+}
+
+function refreshManagementData() {
+  return Promise.all([loadUsers(), loadAdminAudit()]);
+}
+
 function openCreateUserModal() {
+  const roles = S.rbacRoles.length ? S.rbacRoles : [
+    { id: "viewer", label: "Salt Okunur" },
+    { id: "noc_operator", label: "NOC Operatörü" },
+    { id: "inventory_specialist", label: "Envanter Uzmanı" },
+    { id: "security_analyst", label: "Güvenlik Analisti" },
+    { id: "admin", label: "Sistem Yöneticisi" },
+  ];
   openModal(`
     <h3>Yeni Kullanıcı</h3>
     <div class="field-label" style="margin-top:10px">Kullanıcı Adı</div>
@@ -2765,7 +2924,7 @@ function openCreateUserModal() {
     <input id="newUserPass" type="password" minlength="12" autocomplete="new-password" />
     <div class="hint" style="margin-top:5px">En az 12 karakter. Kullanıcı ilk girişte bu parolayı değiştirmek zorundadır.</div>
     <div class="field-label" style="margin-top:10px">Rol</div>
-    <select id="newUserRole"><option value="user">Kullanıcı</option><option value="admin">Yönetici</option></select>
+    <select id="newUserRole">${roles.map(role => `<option value="${esc(role.id)}" ${role.id === "viewer" ? "selected" : ""}>${esc(role.label)}</option>`).join("")}</select>
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px"><button class="mini-btn" onclick="closeModalForce()">İptal</button><button class="mini-btn blue" onclick="createUser()">Oluştur</button></div>
   `);
 }
@@ -2773,7 +2932,7 @@ function openCreateUserModal() {
 async function createUser() {
   const username = $("newUserName")?.value.trim();
   const password = $("newUserPass")?.value;
-  const role = $("newUserRole")?.value || "user";
+  const role = $("newUserRole")?.value || "viewer";
   if (!username || !password) {
     toast("Kullanıcı adı ve şifre gerekli.", "warn");
     return;
@@ -2786,7 +2945,7 @@ async function createUser() {
     await post("/api/admin/users", { username, password, role });
     closeModalForce();
     toast("Kullanıcı oluşturuldu.", "success");
-    loadUsers();
+    refreshManagementData();
   } catch (e) {
     toast(e.message || "Kullanıcı oluşturulamadı.", "error");
   }
@@ -2795,7 +2954,7 @@ async function createUser() {
 async function toggleUserActive(id, active) {
   try {
     await post(`/api/admin/users/${id}`, { active });
-    loadUsers();
+    refreshManagementData();
   } catch (e) {
     toast(e.message || "İşlem başarısız.", "error");
   }
@@ -2805,9 +2964,10 @@ async function changeUserRole(id, role) {
   try {
     await post(`/api/admin/users/${id}`, { role });
     toast("Kullanıcı rolü güncellendi.", "success");
-    loadUsers();
+    refreshManagementData();
   } catch (e) {
     toast(e.message || "Rol güncellenemedi.", "error");
+    loadUsers();
   }
 }
 
@@ -2832,7 +2992,7 @@ async function resetUserPassword(id) {
     await post(`/api/admin/users/${id}`, { new_password: password });
     closeModalForce();
     toast("Parola sıfırlandı; kullanıcının açık oturumları kapatıldı.", "success");
-    loadUsers();
+    refreshManagementData();
   } catch (e) {
     toast(e.message || "Parola sıfırlanamadı.", "error");
   }
@@ -2843,7 +3003,7 @@ async function deleteUser(id) {
   try {
     await del(`/api/admin/users/${id}`);
     toast("Kullanıcı silindi.", "success");
-    loadUsers();
+    refreshManagementData();
   } catch (e) {
     toast(e.message || "Kullanıcı silinemedi.", "error");
   }
@@ -2976,6 +3136,12 @@ function handleGlobalSearch(query) {
     renderDeviceTable();
   }
 }
+
+function setDeviceSearch(ip) {
+  if (!ip) return;
+  inspectDevice(ip);
+}
+window.setDeviceSearch = setDeviceSearch;
 
 function setDeviceViewMode(mode) {
   S.deviceViewMode = mode;
@@ -3201,8 +3367,8 @@ function renderDeviceTable() {
 
           <div style="display:flex;justify-content:flex-end;gap:6px;margin-top:auto;padding-top:8px;border-top:1px solid var(--line-soft)">
             <button class="mini-btn blue" onclick="showDeviceDetails('${esc(d.mac || "")}', '${esc(d.ip || "")}')">Detay</button>
-          <button class="mini-btn" style="color:#0ea5e9;border-color:#0ea5e9;" onclick="downloadRdp('${esc(d.ip || "")}', '${esc(d.hostname || d.ip)}')">💻 RDP</button>
-            <button class="mini-btn" onclick="openWmiScanModal('${esc(d.ip || "")}')">🔑 Yetkili Envanter</button>
+            ${rdpActionButtonHtml(d)}
+            ${inventoryActionButtonHtml(d)}
             <button class="mini-btn" onclick="quickPing('${esc(d.ip || "")}')">Ping</button>
           </div>
         </div>
@@ -3220,7 +3386,7 @@ function renderDeviceTable() {
     body.innerHTML = filteredList.length ? filteredList.map(d => {
       const iface = d.network_interfaces?.[0] || d.interface || {};
       return `<tr><td><span class="badge ${deviceStatusClass(deviceStatus(d))}">${esc(deviceStatusLabel(deviceStatus(d)))}</span></td><td><b>${esc(deviceDisplayName(d))}</b></td><td class="mono">${esc(d.ip || "-")}</td><td class="mono">${esc(d.mac || "-")}</td><td>${esc(d.vendor || "-")}</td><td>${esc(d.inventory_source || "Discovery")}</td><td><button class="mini-btn blue" onclick="showDeviceDetails('${esc(d.mac || "")}', '${esc(d.ip || "")}')">Detay</button>
-          <button class="mini-btn" style="color:#0ea5e9;border-color:#0ea5e9;" onclick="downloadRdp('${esc(d.ip || "")}', '${esc(d.hostname || d.ip)}')">💻 RDP</button></td></tr>`;
+          ${rdpActionButtonHtml(d)}</td></tr>`;
     }).join("") : `<tr><td colspan="7" class="hint">Ağ envanteri bulunamadı.</td></tr>`;
     return;
   }
@@ -3229,13 +3395,13 @@ function renderDeviceTable() {
       const inv = d.wmi_inventory?.status === "Success" ? d.wmi_inventory : (d.fallback_inventory || {});
       const sec = inv.security || {};
       return `<tr><td><span class="badge ${deviceStatusClass(deviceStatus(d))}">${esc(deviceStatusLabel(deviceStatus(d)))}</span></td><td><b>${esc(deviceDisplayName(d))}</b></td><td>${esc((inv.software || {}).os_name || d.os_fingerprint || "-")}</td><td>${esc(sec.firewall || "Bilinmiyor")}</td><td>${esc(sec.antivirus || "Bilinmiyor")}</td><td>${d.unified_inventory?.verified ? "Doğrulandı" : "Ağ profili"}</td><td>${esc(d.unified_inventory?.completeness ?? "-")}%</td><td><button class="mini-btn blue" onclick="showDeviceDetails('${esc(d.mac || "")}', '${esc(d.ip || "")}')">Detay</button>
-          <button class="mini-btn" style="color:#0ea5e9;border-color:#0ea5e9;" onclick="downloadRdp('${esc(d.ip || "")}', '${esc(d.hostname || d.ip)}')">💻 RDP</button></td></tr>`;
+          ${rdpActionButtonHtml(d)}</td></tr>`;
     }).join("") : `<tr><td colspan="8" class="hint">Güvenlik verisi bulunamadı.</td></tr>`;
     return;
   }
   if (tab === "history") {
     body.innerHTML = filteredList.length ? filteredList.map(d => `<tr><td><span class="badge ${deviceStatusClass(deviceStatus(d))}">${esc(deviceStatusLabel(deviceStatus(d)))}</span></td><td><b>${esc(deviceDisplayName(d))}</b></td><td class="mono">${esc(d.ip || "-")}</td><td class="mono">${esc(d.mac || "-")}</td><td>${esc(formatSeen(d.last_seen || d.lastSeen || d.ts))}</td><td>${esc(d.inventory_source || "Discovery")}</td><td>${d.unified_inventory?.verified ? "Doğrulandı" : "Ağ profili"}</td><td><button class="mini-btn blue" onclick="showDeviceDetails('${esc(d.mac || "")}', '${esc(d.ip || "")}')">Detay</button>
-          <button class="mini-btn" style="color:#0ea5e9;border-color:#0ea5e9;" onclick="downloadRdp('${esc(d.ip || "")}', '${esc(d.hostname || d.ip)}')">💻 RDP</button></td></tr>`).join("") : `<tr><td colspan="8" class="hint">Geçmiş verisi bulunamadı.</td></tr>`;
+          ${rdpActionButtonHtml(d)}</td></tr>`).join("") : `<tr><td colspan="8" class="hint">Geçmiş verisi bulunamadı.</td></tr>`;
     return;
   }
 
@@ -3267,8 +3433,8 @@ function renderDeviceTable() {
           <td style="font-size:11px">${esc(diskSummary)}</td>
           <td style="text-align:right;white-space:nowrap">
             <button class="mini-btn blue" onclick="showDeviceDetails('${esc(d.mac || "")}', '${esc(d.ip || "")}')">Detay</button>
-          <button class="mini-btn" style="color:#0ea5e9;border-color:#0ea5e9;" onclick="downloadRdp('${esc(d.ip || "")}', '${esc(d.hostname || d.ip)}')">💻 RDP</button>
-            <button class="mini-btn" onclick="openWmiScanModal('${esc(d.ip || "")}')">🔑 Yetkili Envanter</button>
+            ${rdpActionButtonHtml(d)}
+            ${inventoryActionButtonHtml(d)}
           </td>
         </tr>`;
         }).join("")
@@ -3298,8 +3464,8 @@ function renderDeviceTable() {
           <td><b>${progCount} Program/Servis</b></td>
           <td style="text-align:right;white-space:nowrap">
             <button class="mini-btn blue" onclick="showDeviceDetails('${esc(d.mac || "")}', '${esc(d.ip || "")}')">Detay</button>
-          <button class="mini-btn" style="color:#0ea5e9;border-color:#0ea5e9;" onclick="downloadRdp('${esc(d.ip || "")}', '${esc(d.hostname || d.ip)}')">💻 RDP</button>
-            <button class="mini-btn" onclick="openWmiScanModal('${esc(d.ip || "")}')">🔑 Yetkili Envanter</button>
+            ${rdpActionButtonHtml(d)}
+            ${inventoryActionButtonHtml(d)}
           </td>
         </tr>`;
         }).join("")
@@ -3344,9 +3510,9 @@ function renderDeviceTable() {
         <td style="font-size:11px;color:var(--muted)">${formatSeen(d.last_seen)}</td>
         <td style="text-align:right;white-space:nowrap">
           <button class="mini-btn blue" onclick="showDeviceDetails('${esc(d.mac || "")}', '${esc(d.ip || "")}')">Detay</button>
-          <button class="mini-btn" style="color:#0ea5e9;border-color:#0ea5e9;" onclick="downloadRdp('${esc(d.ip || "")}', '${esc(d.hostname || d.ip)}')">💻 RDP</button>
-          <button class="mini-btn" onclick="openWmiScanModal('${esc(d.ip || "")}')">🔑 Yetkili Envanter</button>
-          ${S.user && S.user.role === "admin" && d.mac ? `<button class="mini-btn" onclick="openDeviceEditModal('${esc(d.mac)}')">Adlandır</button>` : ""}
+          ${rdpActionButtonHtml(d)}
+          ${inventoryActionButtonHtml(d)}
+          ${hasPermission("devices.manage") && d.mac ? `<button class="mini-btn" onclick="openDeviceEditModal('${esc(d.mac)}')">Adlandır</button>` : ""}
           <button class="mini-btn" onclick="quickPing('${esc(d.ip || "")}')">Ping</button>
         </td>
       </tr>`;
@@ -3364,15 +3530,39 @@ function renderDeviceTable() {
   }
 }
 
-function openWmiScanModal(targetIp) {
+function inventoryProtocolForDevice(device = {}) {
+  const type = String(device.type || "").toLowerCase();
+  const osName = String(device.os_fingerprint || device.wmi_inventory?.software?.os_name || "").toLowerCase();
+  const ports = new Set(device.classification?.open_ports || []);
+  if (["router", "switch", "access_point", "firewall", "printer", "network_device"].includes(type)) return "snmp";
+  if (osName.includes("linux") || osName.includes("ubuntu") || osName.includes("debian") || type === "linux") return "ssh";
+  if (osName.includes("windows") || ["computer", "pc", "laptop", "server"].includes(type) || [...ports].some(p => [135, 445, 3389, 5985, 5986].includes(Number(p)))) return "windows";
+  return "auto";
+}
+
+function inventoryActionButtonHtml(device = {}) {
+  if (!hasPermission("inventory.scan")) return "";
+  const protocol = inventoryProtocolForDevice(device);
+  const labels = { windows: "🔑 Windows Envanter", ssh: "🔑 SSH Envanter", snmp: "🔑 SNMP Envanter", auto: "🔑 Protokol Seç" };
+  return `<button class="mini-btn" onclick="openWmiScanModal('${esc(device.ip || "")}', '${protocol}')">${labels[protocol]}</button>`;
+}
+
+function rdpActionButtonHtml(device = {}) {
+  if (inventoryProtocolForDevice(device) !== "windows") return "";
+  return `<button class="mini-btn" style="color:#0ea5e9;border-color:#0ea5e9;" onclick="downloadRdp('${esc(device.ip || "")}', '${esc(device.hostname || device.ip || "Cihaz")}')">💻 RDP</button>`;
+}
+
+function openWmiScanModal(targetIp, suggestedProtocol = "auto") {
   const ip = targetIp || "";
+  const allowedProtocols = new Set(["auto", "windows", "ssh", "snmp"]);
+  const selectedProtocol = allowedProtocols.has(suggestedProtocol) ? suggestedProtocol : "auto";
   openModal(`
     <h3>🔑 Yetkili Cihaz Envanteri</h3>
     <div class="sub">Windows için WMI/WinRM, Linux için SSH, ağ cihazları için SNMP kullanır.</div>
     <div class="field-label" style="margin-top:12px">Hedef Cihaz IP Adresi</div>
     <input id="wmiTargetIp" value="${esc(ip)}" placeholder="Örn. 192.168.1.50" />
     <div class="field-label" style="margin-top:10px">Protokol</div>
-    <select id="inventoryProtocol"><option value="auto">Otomatik Algıla</option><option value="windows">Windows WMI / WinRM</option><option value="ssh">Linux SSH</option><option value="snmp">SNMP Ağ Cihazı</option></select>
+    <select id="inventoryProtocol"><option value="auto" ${selectedProtocol === "auto" ? "selected" : ""}>Otomatik Algıla</option><option value="windows" ${selectedProtocol === "windows" ? "selected" : ""}>Windows WMI / WinRM</option><option value="ssh" ${selectedProtocol === "ssh" ? "selected" : ""}>Linux SSH</option><option value="snmp" ${selectedProtocol === "snmp" ? "selected" : ""}>SNMP Ağ Cihazı</option></select>
     <div class="field-label" style="margin-top:10px">Yetkili Kullanıcı Adı</div>
     <input id="wmiUser" name="netmon-inventory-user" placeholder="DOMAIN\\kullanıcı veya SSH kullanıcısı" autocomplete="off" spellcheck="false" data-lpignore="true" data-1p-ignore />
     <div class="field-label" style="margin-top:10px">Parola</div>
@@ -3380,12 +3570,59 @@ function openWmiScanModal(targetIp) {
     <div class="field-label" style="margin-top:10px">SNMP Community</div>
     <input id="inventorySnmp" name="netmon-inventory-snmp-secret" type="password" placeholder="Yalnızca SNMP için" autocomplete="new-password" data-lpignore="true" data-1p-ignore />
     <div class="hint" style="margin-top:10px;font-size:11px">Boş bırakılan alanlarda Ayarlar panelindeki DPAPI ile korunan kimlik bilgileri kullanılır.</div>
+    <div id="inventoryPreflightResult" style="margin-top:10px"></div>
     <div id="inventoryScanError" class="hint c-red" style="margin-top:8px"></div>
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px">
       <button class="mini-btn" onclick="closeModalForce()">İptal</button>
+      <button id="inventoryPreflightButton" class="mini-btn" onclick="executeInventoryPreflight()">Yetkiyi Test Et</button>
       <button id="inventoryScanButton" class="mini-btn blue" onclick="executeWmiScanFromModal()">Taramayı Başlat</button>
     </div>
   `);
+}
+
+function inventoryPreflightHtml(data = {}) {
+  const checks = data.checks || [];
+  const statusIcon = status => status === "pass" ? "✓" : status === "warn" ? "!" : "×";
+  return `
+    <div class="preflight-card ${data.ready ? "ready" : "blocked"}">
+      <div class="preflight-head">
+        <div><span>YETKİ HAZIRLIK TESTİ</span><b>${esc(data.summary || "Test tamamlandı")}</b></div>
+        <span class="badge ${data.ready ? "ok" : "fail"}">${data.ready ? "HAZIR" : "ENGEL VAR"}</span>
+      </div>
+      <div class="preflight-checks">${checks.map(check => `
+        <div class="preflight-check ${esc(check.status || "fail")}">
+          <i>${statusIcon(check.status)}</i>
+          <div><b>${esc(check.label || "Kontrol")}</b><span>${esc(check.detail || "-")}</span>${check.error_code ? `<code>${esc(check.error_code)}</code>` : ""}</div>
+        </div>`).join("")}</div>
+      ${data.ready ? `<div class="preflight-ready-note">${ico("check", 14)} Bu hedefte gerçek envanter taraması başlatılabilir.</div>` : inventoryDiagnosticHtml({ error_code: data.diagnostics?.error_code, diagnostics: data.diagnostics, error_message: checks.at(-1)?.detail })}
+    </div>`;
+}
+
+async function executeInventoryPreflight() {
+  const ip = $("wmiTargetIp")?.value.trim();
+  const username = $("wmiUser")?.value.trim() || "";
+  const password = $("wmiPass")?.value || "";
+  const protocol = $("inventoryProtocol")?.value || "auto";
+  const snmpCommunity = $("inventorySnmp")?.value || "";
+  if (!ip) {
+    toast("Lütfen hedef IP adresi girin.", "warn");
+    return;
+  }
+  const button = $("inventoryPreflightButton");
+  const target = $("inventoryPreflightResult");
+  if (button) { button.disabled = true; button.textContent = "Test ediliyor…"; }
+  if (target) target.innerHTML = '<div class="hint">Bağlantı ve yetkilendirme aşamaları kontrol ediliyor…</div>';
+  try {
+    const data = await post("/api/devices/inventory/preflight", {
+      ip, protocol, username, password, snmp_community: snmpCommunity,
+    });
+    if (target) target.innerHTML = inventoryPreflightHtml(data);
+    toast(data.ready ? "Hedef yetkili envanter taramasına hazır." : "Hazırlık testinde bir engel bulundu.", data.ready ? "success" : "warn");
+  } catch (e) {
+    if (target) target.innerHTML = inventoryDiagnosticHtml({ error_code: "preflight_request_failed", error_message: e.message, diagnostics: { cause: "Hazırlık testi tamamlanamadı.", recommended_actions: ["Hedef IP, oturum yetkisi ve NetMon servis durumunu kontrol edin."] } });
+  } finally {
+    if (button && document.body.contains(button)) { button.disabled = false; button.textContent = "Yetkiyi Test Et"; }
+  }
 }
 
 async function executeWmiScanFromModal() {
@@ -3415,6 +3652,36 @@ async function executeWmiScanFromModal() {
   }
 }
 
+function inventoryDiagnosticHtml(result = {}) {
+  const d = result.diagnostics || {};
+  const failure = d.failure || {};
+  const winrmFailure = d.winrm_failure || {};
+  const code = result.error_code || d.error_code || failure.error_code || "inventory_failed";
+  const cause = d.cause || failure.cause || result.error_message || result.error || "Neden belirlenemedi.";
+  const actions = d.recommended_actions || failure.recommended_actions || [];
+  const ports = Array.isArray(d.management_ports) && d.management_ports.length ? d.management_ports.join(", ") : "Açık yönetim portu gözlenmedi";
+  const transports = Array.isArray(d.transport_attempts) && d.transport_attempts.length ? d.transport_attempts.join(" → ") : String(d.effective_protocol || "-").toUpperCase();
+  const sourceLabel = ({ request: "Bu taramada girilen kimlik", stored_dpapi: "Ayarlar panelindeki DPAPI kaydı", none: "Kimlik bilgisi yok" })[d.credential_source] || "Belirtilmedi";
+  const raw = failure.native_error || d.raw_error || result.error_message || result.error || "";
+  const winrmRaw = winrmFailure.native_error || "";
+  return `
+    <div class="inventory-diagnostic-card">
+      <div class="inventory-diagnostic-head">
+        <div><span>ENVANTER TEŞHİSİ</span><b>${esc(code)}</b></div>
+        <span class="badge fail">Başarısız</span>
+      </div>
+      <div class="inventory-cause"><b>Net neden</b><span>${esc(cause)}</span></div>
+      <div class="inventory-evidence-grid">
+        <div><span>Hedef / Protokol</span><b>${esc(d.target || "-")} · ${esc(String(d.effective_protocol || "-").toUpperCase())}</b></div>
+        <div><span>Denenen taşıma</span><b>${esc(transports)}</b></div>
+        <div><span>Açık yönetim portları</span><b>${esc(ports)}</b></div>
+        <div><span>Kimlik kaynağı</span><b>${esc(sourceLabel)}${d.account ? ` · ${esc(d.account)}` : ""}</b></div>
+      </div>
+      ${actions.length ? `<div class="inventory-actions"><b>BT yöneticisinin kontrol etmesi gerekenler</b><ol>${actions.map(item => `<li>${esc(item)}</li>`).join("")}</ol></div>` : ""}
+      ${raw || winrmRaw ? `<details class="inventory-raw"><summary>Ham teknik hata ve Windows kanıtı</summary>${winrmRaw ? `<div><b>WinRM:</b> ${esc(winrmRaw)}</div>` : ""}${raw ? `<div><b>Son aşama:</b> ${esc(raw)}</div>` : ""}${failure.os_error_code ? `<div><b>Windows hata kodu:</b> ${esc(failure.os_error_code)}</div>` : ""}</details>` : ""}
+    </div>`;
+}
+
 async function startDeepWmiScan(ip, username = "", password = "", protocol = "auto", snmpCommunity = "") {
   if (!ip) return;
   toast(`[${ip}] Yetkili envanter taraması başlatıldı…`, "info");
@@ -3437,21 +3704,50 @@ async function startDeepWmiScan(ip, username = "", password = "", protocol = "au
     } else {
       const message = scanResult.error_message || scanResult.error || "Yönetim protokolü veya yetki bulunamadı.";
       const errorBox = $("inventoryScanError");
-      if (errorBox) errorBox.textContent = `Envanter alınamadı: ${message}`;
+      if (errorBox) errorBox.innerHTML = inventoryDiagnosticHtml(scanResult);
       await refreshDevices();
       toast(`[${ip}] Envanter alınamadı: ${message}`, "error");
     }
   } catch (e) {
     const message = e.message || String(e);
     const errorBox = $("inventoryScanError");
-    if (errorBox) errorBox.textContent = `Yetkili tarama başarısız: ${message}`;
+    if (errorBox) errorBox.innerHTML = inventoryDiagnosticHtml({ error_code: "request_failed", error_message: message, diagnostics: { cause: "NetMon API isteği tamamlanamadı.", recommended_actions: ["NetMon servisinin çalıştığını, oturum yetkisini ve ağ bağlantısını kontrol edin."] } });
     toast(`Yetkili tarama başarısız: ${message}`, "error");
   }
 }
 
+function inspectDevice(ip, mac) {
+  if (!ip && !mac) return;
+  showDeviceDetails(mac, ip);
+}
+window.inspectDevice = inspectDevice;
+
 function showDeviceDetails(mac, ip) {
-  const d = S.devices.find(x => (mac && x.mac === mac) || (ip && x.ip === ip));
-  if (!d) return;
+  let d = (S.devices || []).find(x => (mac && x.mac === mac) || (ip && x.ip === ip));
+  if (!d) {
+    const ipamItem = (_ipamAllocationsCache || []).find(x => (ip && x.ip === ip) || (mac && x.mac === mac));
+    d = {
+      ip: ip || ipamItem?.ip || "-",
+      mac: mac || ipamItem?.mac || "-",
+      hostname: ipamItem?.hostname || (ip ? `Gözlenen uç (${ip})` : "Bilinmeyen Cihaz"),
+      friendly_name: ipamItem?.hostname || "",
+      type: ipamItem?.type || "unknown",
+      status: ipamItem?.status || "unknown",
+      vendor: "",
+      discovery_sources: ipamItem?.discovery_sources || ["active_socket"],
+      last_seen: ipamItem?.last_seen || null,
+      first_seen: null,
+      latency: null,
+      packet_loss: null,
+      wmi_inventory: {
+        status: "Idle",
+        hardware: {},
+        software: {},
+        security: {},
+        storage: []
+      }
+    };
+  }
   const type = TYPE_LABEL[d.type] || d.type || "Bilinmeyen";
   const confidence = deviceConfidence(d);
   const reasons = d.classification?.reason || d.classification?.method || [];
@@ -3514,13 +3810,15 @@ function showDeviceDetails(mac, ip) {
       : `<span class="badge warn">Ayrıntılı envanter doğrulanamadı</span>`;
     const limitations = (inv.limitations || []).map(item => `<div>• ${esc(item)}</div>`).join("");
     const inventoryError = d.inventory_error?.message
-      ? `<div class="device-learning warning" style="margin-bottom:10px"><b>Son envanter hatası</b><div>${esc(d.inventory_error.message)}</div></div>`
+      ? (d.inventory_error.diagnostics
+          ? inventoryDiagnosticHtml({ error_code: d.inventory_error.code, error_message: d.inventory_error.message, diagnostics: d.inventory_error.diagnostics })
+          : `<div class="device-learning warning" style="margin-bottom:10px"><b>Son envanter hatası</b><div>${esc(d.inventory_error.message)}</div></div>`)
       : "";
 
     return `
       <div style="margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">
         <div>${statusBadgeHtml}</div>
-        <button class="mini-btn blue" onclick="openWmiScanModal('${esc(d.ip)}')">🔑 Yetkili Cihaz Envanteri Al</button>
+        <button class="mini-btn blue" onclick="openWmiScanModal('${esc(d.ip)}', '${inventoryProtocolForDevice(d)}')">🔑 ${inventoryProtocolForDevice(d) === "snmp" ? "SNMP" : inventoryProtocolForDevice(d) === "ssh" ? "SSH" : inventoryProtocolForDevice(d) === "windows" ? "Windows" : "Yetkili"} Envanteri Al</button>
       </div>
       ${inventoryError}
       ${limitations ? `<div class="hint" style="margin-bottom:10px">${limitations}</div>` : ""}
@@ -3587,7 +3885,7 @@ function showDeviceDetails(mac, ip) {
     ${evidenceHtml}
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
       ${d.ip ? `<button class="mini-btn" onclick="quickPing('${esc(d.ip)}')">Ping</button>` : ""}
-      ${S.user?.role === "admin" && d.mac ? `<button class="mini-btn" onclick="openDeviceEditModal('${esc(d.mac)}')">Düzenle</button>` : ""}
+      ${hasPermission("devices.manage") && d.mac ? `<button class="mini-btn" onclick="openDeviceEditModal('${esc(d.mac)}')">Düzenle</button>` : ""}
       <button class="mini-btn blue" onclick="closeModalForce()">Kapat</button>
     </div>
   `);
@@ -3595,7 +3893,7 @@ function showDeviceDetails(mac, ip) {
 
 function openDeviceEditModal(mac) {
   const d = S.devices.find(x => x.mac === mac);
-  if (!d || S.user?.role !== "admin") return;
+  if (!d || !hasPermission("devices.manage")) return;
   const options = ["unknown","computer","laptop","phone","tablet","printer","server","router","switch","access_point","network_device","iot","firewall"];
   openModal(`
     <h3>Cihazı Tanımla</h3>
@@ -3671,13 +3969,22 @@ function renderStats() {
             : ["Yüksek", "c-red"];
   const [latTxt, latCls] = latQuality(lat.average);
 
+  const devSubParts = [
+    `<span class="c-green">${dev.online || 0} Çevrimiçi</span>`,
+    `<span class="c-red">${dev.offline || 0} Çevrimdışı</span>`
+  ];
+  if (dev.discovered) devSubParts.push(`<span class="c-orange">${dev.discovered} Keşif</span>`);
+  if (dev.unknown) devSubParts.push(`<span class="c-muted">(${dev.unknown} Tanımsız)</span>`);
+
   const cards = [
     {
       ico: "monitor",
       cls: "i-blue",
       label: "Cihazlar",
       value: S.scanning && !dev.total ? "…" : dev.total,
-      sub: `<span class="c-green">${dev.online} Çevrimiçi</span> <span class="c-orange">${dev.discovered || 0} Keşfedildi</span> <span class="c-red">${dev.offline || 0} Çevrimdışı</span> <span class="c-blue">${dev.unknown || 0} Bilinmeyen</span>`,
+      sub: devSubParts.join(" · "),
+      action: "go('devices')",
+      hint: "Cihaz Listesini Gör",
     },
     {
       ico: "globe",
@@ -3687,6 +3994,8 @@ function renderStats() {
         ? `<span class="c-muted">Ölçüm bekleniyor</span>`
         : `<span class="${inet.connected ? "c-green" : "c-red"}">${inet.connected ? "Bağlı" : "Yok"}</span>`,
       sub: esc(inet.target || "-"),
+      action: "go('ping')",
+      hint: "Ağ Teşhisini Aç",
     },
     {
       ico: "activity",
@@ -3698,41 +4007,45 @@ function renderStats() {
           : lat.average +
             ' <span style="font-size:12px;color:var(--muted)">ms</span>',
       sub: `<span class="${latCls}">${latTxt}</span> · ${o.packet_loss == null ? "Kayıp —" : "Kayıp %" + o.packet_loss} · Sağlık ${o.health?.score ?? "-"}/100`,
+      action: "go('ping')",
+      hint: "Ping & Gecikme Teşhisi",
     },
     {
       ico: "up",
       cls: "i-green",
       label: "Upload",
-      value:
-        fmtMbps(S.traffic.up) +
-        ' <span style="font-size:12px;color:var(--muted)">Mbps</span>',
+      value: fmtBandwidthRate(S.traffic.up),
       spark: sparkSvg(S.sparkUp, "#3ddc84"),
+      action: "go('toptalkers')",
+      hint: "Aktif Oturumlar & Trafik",
     },
     {
       ico: "down",
       cls: "i-blue",
       label: "Download",
-      value:
-        fmtMbps(S.traffic.down) +
-        ' <span style="font-size:12px;color:var(--muted)">Mbps</span>',
+      value: fmtBandwidthRate(S.traffic.down),
       spark: sparkSvg(S.sparkDown, "#3b9bff"),
+      action: "go('toptalkers')",
+      hint: "Aktif Oturumlar & Trafik",
     },
     {
       ico: "link",
       cls: "i-purple",
       label: "Aktif Bağlantılar",
-      value: con.supported === false ? "-" : con.total || 0,
+      value: con.supported === false ? "-" : (con.total || 0),
       sub:
         con.supported === false
           ? "yönetici izni gerekli"
-          : `TCP: ${con.tcp || 0} <span>UDP: ${con.udp || 0}</span>`,
+          : `TCP: ${con.tcp || 0} (Aktif) · UDP: ${con.udp || 0}${con.listen ? ` <span class="c-muted">(${con.listen} Dinleme)</span>` : ""}`,
+      action: "go('toptalkers')",
+      hint: "Bağlantı ve Süreç Detayları",
     },
   ];
 
   $("statRow").innerHTML = cards
     .map(
       (c) => `
-    <div class="stat">
+    <div class="stat" style="cursor:pointer" onclick="${c.action}" title="Tıkla: ${c.hint || 'Detayları Gör'}">
       <div class="stat-ico ${c.cls}">${ico(c.ico, 19)}</div>
       <div class="stat-body">
         <div class="stat-label">${c.label}</div>
@@ -3748,6 +4061,7 @@ function renderStats() {
 
 function renderInventoryCommandCenter() {
   const list = Array.isArray(S.devices) ? S.devices : [];
+  const hasDeviceObservations = list.length > 0 && Number(S.devicesTs || 0) > 0;
   const total = list.length;
   const online = list.filter((d) => deviceStatus(d) === "online").length;
   const unknown = list.filter((d) => (d.type || "unknown") === "unknown").length;
@@ -3929,6 +4243,12 @@ function toggleTopoActiveOnly(checked) {
   const page = $("page-topology");
   if (page) page.dataset.built = "";
   renderTopologyPage();
+}
+
+function setTopoLayer(layer) {
+  S.topoLayer = ["all", "l2", "l3"].includes(layer) ? layer : "all";
+  document.querySelectorAll("[data-topo-layer]").forEach(btn => btn.classList.toggle("active", btn.dataset.topoLayer === S.topoLayer));
+  drawTopology();
 }
 
 function computeMeshTopologyLayout(data) {
@@ -4162,8 +4482,23 @@ function drawTopology(targetId) {
     });
   }
 
+  if (S.topoLayer === "l2") {
+    filteredNodes = filteredNodes.filter(n =>
+      n.id === "gateway" || n.id === "lan" ||
+      (!["internet", "router", "firewall"].includes(n.type) || n.type === "switch")
+    );
+  } else if (S.topoLayer === "l3") {
+    filteredNodes = filteredNodes.filter(n =>
+      n.id === "internet" || n.id === "gateway" ||
+      ["router", "firewall", "server", "network_device"].includes(n.type)
+    );
+  }
+
   const activeIds = new Set(filteredNodes.map(n => n.id));
-  const filteredEdges = (rawData.edges || []).filter(e => activeIds.has(e.from) && activeIds.has(e.to));
+  const filteredEdges = (rawData.edges || []).filter(e =>
+    activeIds.has(e.from) && activeIds.has(e.to) &&
+    (S.topoLayer === "all" || (e.layer || (e.kind === "uplink" ? "l3" : "l2")) === S.topoLayer)
+  );
   const data = { nodes: filteredNodes, edges: filteredEdges };
 
   const isMesh = S.topoLayout === "mesh";
@@ -4193,15 +4528,16 @@ function drawTopology(targetId) {
   `;
 
   let edgePills = "";
-  const edges = data.edges.map(e => {
+  const edges = data.edges.map((e, edgeIndex) => {
     const a = pos[e.from], b = pos[e.to];
     if (!a || !b) return "";
     const backbone = ["router","gateway","switch","lan","internet"].includes(e.from) && ["router","gateway","switch","lan","internet"].includes(e.to);
-    const color = e.status === "online"
+    const edgeState = e.congested || e.mismatch || e.status === "warning" ? "warning" : e.status;
+    const color = edgeState === "online"
       ? (backbone ? "url(#edgeGradOnline)" : "#10b981")
-      : e.status === "discovered"
+      : edgeState === "discovered" || edgeState === "warning"
         ? "#f5a623"
-        : e.status === "offline"
+        : edgeState === "offline" || edgeState === "down"
           ? "#f2585b"
           : "#5a6b88";
     const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2 + (backbone ? 0 : 10);
@@ -4215,7 +4551,18 @@ function drawTopology(targetId) {
         </g>`;
     }
     
-    return `<path class="edge ${e.status === 'online' ? 'flow' : ''}" stroke="${color}" stroke-width="${backbone ? '2.8' : '1.8'}" fill="none" stroke-dasharray="${e.status === 'online' ? '6 4' : 'none'}" d="${pathD}"/>`;
+    const fromName = topologyDeviceName(data.nodes.find(n => n.id === e.from) || { id: e.from });
+    const toName = topologyDeviceName(data.nodes.find(n => n.id === e.to) || { id: e.to });
+    const ports = e.source_port || e.target_port
+      ? `${e.source_port || "Port doğrulanmadı"} → ${e.target_port || "Port doğrulanmadı"}`
+      : "Port eşleşmesi keşfedilmedi";
+    const tooltip = encodeURIComponent(JSON.stringify({
+      title: `${fromName} → ${toName}`,
+      ports,
+      status: edgeState === "online" ? "Aktif" : edgeState === "warning" ? "Yoğun trafik / uyuşmazlık" : edgeState === "offline" || edgeState === "down" ? "Down" : "Doğrulanmadı",
+      kind: e.logical ? "Mantıksal bağlantı" : "Fiziksel bağlantı"
+    }));
+    return `<g class="topo-edge-group"><path class="edge ${edgeState === 'online' ? 'flow' : ''}" stroke="${color}" stroke-width="${backbone ? '2.8' : '1.8'}" fill="none" stroke-dasharray="${edgeState === 'online' ? '6 4' : 'none'}" d="${pathD}"/><path class="topo-edge-hit" data-edge-tip="${tooltip}" data-edge-index="${edgeIndex}" d="${pathD}"/></g>`;
   }).join("");
 
   const labels = layout.columns.map(c => {
@@ -4234,7 +4581,33 @@ function drawTopology(targetId) {
     <rect width="100%" height="100%" fill="url(#cyberGrid)"/>
     <g id="topoLayer" transform="translate(${TOPO.x},${TOPO.y}) scale(${TOPO.k})">${labels}${edges}${edgePills}${nodes}</g>
   `;
+  bindTopologyEdgeTooltips(svg);
   applyTopoTransform();
+}
+
+function bindTopologyEdgeTooltips(svg) {
+  const wrap = svg?.closest(".topo-wrap");
+  if (!wrap) return;
+  let tooltip = wrap.querySelector(".topo-edge-tooltip");
+  if (!tooltip) {
+    tooltip = document.createElement("div");
+    tooltip.className = "topo-edge-tooltip";
+    wrap.appendChild(tooltip);
+  }
+  svg.querySelectorAll(".topo-edge-hit").forEach(path => {
+    path.addEventListener("mouseenter", () => {
+      let info = {};
+      try { info = JSON.parse(decodeURIComponent(path.dataset.edgeTip || "")); } catch (_) {}
+      tooltip.innerHTML = `<b>${esc(info.title || "Bağlantı")}</b><div>${esc(info.ports || "Port bilgisi yok")}</div><div style="color:var(--muted)">${esc(info.status || "")} · ${esc(info.kind || "")}</div>`;
+      tooltip.style.display = "block";
+    });
+    path.addEventListener("mousemove", e => {
+      const box = wrap.getBoundingClientRect();
+      tooltip.style.left = `${Math.min(Math.max(8, box.width - 320), Math.max(8, e.clientX - box.left + 12))}px`;
+      tooltip.style.top = `${Math.max(8, e.clientY - box.top - 58)}px`;
+    });
+    path.addEventListener("mouseleave", () => { tooltip.style.display = "none"; });
+  });
 }
 
 function topoFit(reset = true) {
@@ -4295,8 +4668,119 @@ function bindTopoDrag(svg) {
 
 function topoCloseDetails() {
   S.activeTopoNodeId = null;
-  const d = $("topoDetailDrawer");
-  if (d) d.classList.remove("open");
+  renderNocOverviewDrawer();
+}
+
+function renderNocOverviewDrawer() {
+  const drawer = $("topoDetailDrawer");
+  if (!drawer) return;
+  drawer.onclick = (e) => e.stopPropagation();
+
+  const o = S.overview || {};
+  const gw = o.gateway || {};
+  const inet = o.internet || {};
+  const lat = o.latency || {};
+  const devStats = o.devices || { total: 0, online: 0, offline: 0 };
+  const list = Array.isArray(S.devices) ? S.devices : [];
+  const hasDeviceObservations = list.length > 0 && Number(S.devicesTs || 0) > 0;
+
+  const swCount = list.filter(d => ['switch', 'router', 'access_point', 'firewall'].includes(d.type)).length;
+  const srvCount = list.filter(d => d.type === 'server').length;
+  const clientCount = list.filter(d => ['pc', 'computer', 'laptop', 'phone', 'mobile', 'tablet'].includes(d.type)).length;
+  const iotCount = list.filter(d => ['printer', 'iot', 'http', 'camera', 'unknown'].includes(d.type)).length;
+  const rogueCount = list.filter(d => d.is_rogue_dhcp || d.rogue_dhcp).length;
+  const riskyCount = list.filter(d => d.risky_os || /windows (xp|7|8|server 2008)/i.test(String(d.os_fingerprint || ""))).length;
+
+  drawer.innerHTML = `
+    <style>
+      .noc-card-stat { background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: 8px; padding: 8px 10px; }
+      .noc-card-stat span { display: block; font-size: 10px; color: var(--muted); }
+      .noc-card-stat b { display: block; font-size: 13px; color: var(--txt); margin-top: 2px; }
+    </style>
+    <div class="drawer-header" style="padding:14px 16px; background:var(--bg-2); border-bottom:1px solid var(--line);">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:18px">📡</span>
+          <div>
+            <h3 style="margin:0; font-size:13px; font-weight:800; color:var(--cyan); letter-spacing:0.5px">NOC AĞ OPERASYON MERKEZİ</h3>
+            <span style="font-size:10px; color:var(--muted)">Canlı Ağ Durumu & Telemetri</span>
+          </div>
+        </div>
+        <span class="badge ${hasDeviceObservations ? 'ok' : 'gray'}" style="font-size:9px">${hasDeviceObservations ? '🟢 Canlı Gözlem Var' : '⚪ Tarama Bekleniyor'}</span>
+      </div>
+    </div>
+
+    <div class="drawer-body" style="padding:14px 16px; overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:12px;">
+      <!-- Gateway & WAN Health -->
+      <div style="background:var(--panel-2); border:1px solid var(--line-soft); border-radius:10px; padding:10px 12px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <span style="font-size:11px; font-weight:700; color:var(--txt)">🌐 Omurga & Gateway Sağlığı</span>
+          <span class="badge ${inet.connected == null ? 'gray' : inet.connected ? 'ok' : 'fail'}" style="font-size:8.5px">${inet.connected == null ? 'Ölçüm Bekleniyor' : inet.connected ? 'İnternet Aktif' : 'İnternet Yok'}</span>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; font-size:11px;">
+          <div class="noc-card-stat">
+            <span>Gateway IP</span>
+            <b style="color:var(--blue)">${esc(gw.ip || "Doğrulanamadı")}</b>
+          </div>
+          <div class="noc-card-stat">
+            <span>Ortalama Gecikme</span>
+            <b style="color:#34d399">${lat.average != null ? lat.average + " ms" : "Ölçülmedi"}</b>
+          </div>
+        </div>
+      </div>
+
+      <!-- Network Inventory Breakdown -->
+      <div style="background:var(--panel-2); border:1px solid var(--line-soft); border-radius:10px; padding:10px 12px;">
+        <span style="font-size:11px; font-weight:700; color:var(--txt); display:block; margin-bottom:8px">🖧 Katman Dağılımı (${devStats.total || list.length} Düğüm)</span>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+          <div class="noc-card-stat" style="cursor:pointer" onclick="setTopoCategory('network')">
+            <span>🔀 Ağ Donanımları</span>
+            <b style="color:var(--cyan)">${swCount} Adet</b>
+          </div>
+          <div class="noc-card-stat" style="cursor:pointer" onclick="setTopoCategory('servers')">
+            <span>🖥️ Sunucular</span>
+            <b style="color:#818cf8">${srvCount} Adet</b>
+          </div>
+          <div class="noc-card-stat" style="cursor:pointer" onclick="setTopoCategory('clients')">
+            <span>💻 İstemciler</span>
+            <b style="color:#34d399">${clientCount} Adet</b>
+          </div>
+          <div class="noc-card-stat" style="cursor:pointer" onclick="setTopoCategory('all')">
+            <span>🖨️ IoT / Diğer</span>
+            <b style="color:var(--txt)">${iotCount} Adet</b>
+          </div>
+        </div>
+      </div>
+
+      <!-- Security & Threat Indicators -->
+      <div style="background:rgba(239,68,68,0.06); border:1px solid rgba(239,68,68,0.25); border-radius:10px; padding:10px 12px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+          <span style="font-size:11px; font-weight:700; color:#f87171">🛡️ Tehdit & Risk Göstergeleri</span>
+          <button class="mini-btn" style="padding:2px 6px; font-size:9px" onclick="setTopoCategory('threats')">İncele</button>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:4px; font-size:11px;">
+          <div style="display:flex; justify-content:space-between;">
+            <span style="color:var(--muted)">Rogue DHCP:</span>
+            <b style="color:${rogueCount > 0 ? '#ef4444' : hasDeviceObservations ? '#34d399' : 'var(--muted)'}">${rogueCount > 0 ? `🚨 ${rogueCount} TESPİT` : hasDeviceObservations ? 'Gözlenmedi (0)' : 'Ölçülmedi'}</b>
+          </div>
+          <div style="display:flex; justify-content:space-between;">
+            <span style="color:var(--muted)">Riskli / EOL OS:</span>
+            <b style="color:${riskyCount > 0 ? '#f97316' : hasDeviceObservations ? '#34d399' : 'var(--muted)'}">${riskyCount > 0 ? `⚠️ ${riskyCount} Cihaz` : hasDeviceObservations ? 'Gözlenmedi (0)' : 'Ölçülmedi'}</b>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick Shortcuts -->
+      <div style="margin-top:auto; padding-top:6px; display:flex; flex-direction:column; gap:6px;">
+        <button class="mini-btn blue" style="width:100%; justify-content:center; padding:8px" onclick="scanNetwork()">⚡ Canlı Ağ Taraması Başlat</button>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+          <button class="mini-btn" style="justify-content:center" onclick="go('ipam')">🌐 IPAM Havuzu</button>
+          <button class="mini-btn" style="justify-content:center" onclick="go('toptalkers')">📊 Aktif Oturumlar</button>
+        </div>
+      </div>
+    </div>
+  `;
+  drawer.classList.add("open");
 }
 
 function showNode(id) {
@@ -4520,6 +5004,9 @@ function showNode(id) {
     `;
   }
 
+  const webPort = ports.find(p => [80, 443, 8080, 8443, 8000, 9000, 5000, 3000].includes(Number(p)));
+  const isHttps = [443, 8443].includes(Number(webPort));
+
   drawer.innerHTML = `
     <style>
       @keyframes pathFlow {
@@ -4549,7 +5036,7 @@ function showNode(id) {
             <div style="color:var(--muted); font-size:11px;">${esc(typeLabel)} · ${esc(n.ip || "N/A")}</div>
           </div>
         </div>
-        <button class="mini-btn danger" style="padding:6px 12px; font-size:12px; font-weight:700; border-radius:6px; cursor:pointer; display:flex; align-items:center; gap:4px;" onclick="topoCloseDetails()">✕ Kapat</button>
+        <button class="mini-btn" style="padding:6px 12px; font-size:11px; font-weight:700; border-radius:6px; cursor:pointer; display:flex; align-items:center; gap:4px;" onclick="topoCloseDetails()">✕ NOC Özet</button>
       </div>
       <div style="margin-top:12px; display:flex; gap:6px; flex-wrap:wrap;">
         <span class="badge ${deviceStatusClass(status)}">${esc(statusLabel)}</span>
@@ -4629,11 +5116,13 @@ function showNode(id) {
     </div>
 
     <div class="drawer-footer">
+      ${webPort && n.ip ? `<a href="${isHttps ? 'https' : 'http'}://${esc(n.ip)}${webPort === 80 || webPort === 443 ? '' : ':' + webPort}" target="_blank" class="mini-btn" style="color:#10b981;border-color:#10b981;text-decoration:none;display:inline-flex;align-items:center;gap:4px">🌐 Web UI (${webPort})</a>` : ''}
+      ${(isSwitchDevice || type === 'switch' || type === 'router') ? `<button class="mini-btn" style="color:#818cf8;border-color:#818cf8" onclick="go('ncm')">📜 Switch Diff</button>` : ''}
       ${n.ip ? `<button class="mini-btn blue" onclick="quickPing('${esc(n.ip)}')">⚡ Ping</button>` : ""}
       ${n.ip ? `<button class="mini-btn" onclick="quickTraceroute('${esc(n.ip)}')">🛣️ Trace</button>` : ""}
-      ${n.ip && S.user?.role === "admin" ? `<button class="mini-btn" onclick="quickScan('${esc(n.ip)}')">🔍 Port Tara</button>` : ""}
-      ${n.ip && S.user?.role === "admin" ? `<button class="mini-btn" onclick="openWmiScanModal('${esc(n.ip)}')">🔑 Envanter</button>` : ""}
-      ${n.ip ? `<button class="mini-btn" style="color:#0ea5e9;border-color:#0ea5e9;" onclick="downloadRdp(\'${esc(n.ip)}\', \'${esc(n.hostname || n.ip)}\')">💻 RDP</button>` : ""}
+      ${n.ip && hasPermission("diagnostics.run") ? `<button class="mini-btn" onclick="quickScan('${esc(n.ip)}')">🔍 Port Tara</button>` : ""}
+      ${n.ip ? inventoryActionButtonHtml(n) : ""}
+      ${n.ip ? rdpActionButtonHtml(n) : ""}
     </div>
   `;
   drawer.classList.add("open");
@@ -4664,7 +5153,7 @@ function quickTraceroute(ip) {
 }
 
 function quickScan(ip) {
-  if (S.user?.role !== "admin") return;
+  if (!hasPermission("diagnostics.run")) return;
   closeModalForce();
   go("portscan");
   setTimeout(() => {
@@ -4685,6 +5174,11 @@ function renderTopologyPage() {
         <div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;">
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
             <h2 style="margin:0">Ağ Topolojisi</h2>
+            <div class="topo-layer-switch" aria-label="Topoloji katmanı">
+              <button class="${S.topoLayer === 'all' ? 'active' : ''}" data-topo-layer="all" onclick="setTopoLayer('all')">Tüm Katmanlar</button>
+              <button class="${S.topoLayer === 'l2' ? 'active' : ''}" data-topo-layer="l2" onclick="setTopoLayer('l2')">L2 · Switching / VLAN</button>
+              <button class="${S.topoLayer === 'l3' ? 'active' : ''}" data-topo-layer="l3" onclick="setTopoLayer('l3')">L3 · Routing</button>
+            </div>
             <div style="display:flex;gap:4px;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:8px;padding:3px">
               <button class="mini-btn ${S.topoLayout !== 'mesh' ? 'blue' : ''}" onclick="setTopoLayout('tree')">🌐 Katmanlı Hiyerarşi</button>
               <button class="mini-btn ${S.topoLayout === 'mesh' ? 'blue' : ''}" onclick="setTopoLayout('mesh')">🕸️ Örgü (Mesh) Topoloji</button>
@@ -4699,6 +5193,7 @@ function renderTopologyPage() {
             </div>
           </div>
           <div class="right" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:flex-end;">
+            <button class="mini-btn ${!S.activeTopoNodeId ? 'blue' : ''}" onclick="renderNocOverviewDrawer()">📡 NOC Paneli</button>
             <label style="font-size:11px;color:var(--txt-2);display:flex;align-items:center;gap:5px;cursor:pointer;background:var(--panel-2);border:1px solid var(--line-soft);padding:4px 8px;border-radius:6px">
               <input type="checkbox" id="topoActiveOnly" ${S.topoActiveOnly ? "checked" : ""} onchange="toggleTopoActiveOnly(this.checked)" />
               Sadece Aktif Cihazlar
@@ -4707,11 +5202,17 @@ function renderTopologyPage() {
             <button class="mini-btn" onclick="topoZoom(1/1.2)">−</button>
             <button class="mini-btn" onclick="topoReset()">Ortala</button>
             <button class="mini-btn" onclick="topoFit(true)">Sığdır</button>
-            ${S.user?.role === "admin" ? `<button class="mini-btn blue" onclick="scanNetwork()">Ağı Tara</button>` : ""}
+            ${hasPermission("inventory.scan") ? `<button class="mini-btn blue" onclick="scanNetwork()">Ağı Tara</button>` : ""}
           </div>
         </div>
         <div class="topo-wrap" style="height:calc(100vh - 250px); min-height:460px" id="topoWrap2">
           <svg class="topo-svg" id="topoSvg2"></svg>
+          <div class="topo-status-legend" aria-label="Bağlantı durumları">
+            <span><i style="background:#10b981"></i>Aktif</span>
+            <span><i style="background:#ef4444"></i>Down</span>
+            <span><i style="background:#f59e0b"></i>Yoğun / Uyuşmazlık</span>
+            <span><i style="background:#64748b"></i>Doğrulanmadı</span>
+          </div>
           <aside class="topo-detail-drawer" id="topoDetailDrawer"></aside>
         </div>
       </div>
@@ -4719,6 +5220,9 @@ function renderTopologyPage() {
     bindTopoDrag($("topoSvg2"));
   }
   drawTopology("topoSvg2");
+  if (!S.activeTopoNodeId) {
+    renderNocOverviewDrawer();
+  }
 }
 
 /* ============================================================
@@ -4733,27 +5237,30 @@ async function refreshDashboardWidgets() {
       if (!talkers.length) {
         ttContainer.innerHTML = `<div style="color:var(--muted); font-size:12px; padding:12px; text-align:center">Aktif ağ trafiği veya konuşmacı bulunamadı.</div>`;
       } else {
-        ttContainer.innerHTML = talkers.slice(0, 4).map((t, idx) => `
+        ttContainer.innerHTML = talkers.slice(0, 4).map((t, idx) => {
+          const activityDisplay = `${Number(t.active_conns || 0)} aktif bağlantı`;
+          return `
           <div class="talker-row" style="margin-bottom:6px; padding:8px 10px;">
             <div class="talker-rank">#${idx + 1}</div>
             <div class="talker-info">
               <div class="talker-title">
-                <span>${esc(t.hostname || t.ip)}</span>
+                <span title="${esc(t.ip)}">${esc(t.hostname || t.ip)}</span>
                 <span class="talker-proto-badge">${esc(t.primary_protocol)}</span>
+                ${(t.local_processes || (t.local_process_name || t.process_name ? [t.local_process_name || t.process_name] : [])).length ? `<span class="talker-proto-badge" title="Bu uzak bağlantıyı yerel bilgisayarda açan uygulama" style="background:rgba(56,189,248,0.12); color:#38bdf8; border:1px solid rgba(56,189,248,0.3)">Yerel uygulama: ${esc((t.local_processes || [t.local_process_name || t.process_name]).join(", "))}</span>` : ""}
               </div>
               <div class="talker-bar-bg">
-                <div class="talker-bar-fill" style="width:${Math.max(4, t.share_pct)}%"></div>
+                <div class="talker-bar-fill" style="width:${Math.min(100, Math.max(4, Number(t.active_conns || 0) * 8))}%"></div>
               </div>
             </div>
             <div class="talker-speed">
-              <b>${t.total_mbps} <span style="font-size:9px">Mbps</span></b>
-              <span>%${t.share_pct} pay</span>
+              <b>${activityDisplay}</b>
+              <span>gerçek soket</span>
             </div>
           </div>
-        `).join("");
+        `;}).join("");
       }
     } catch (e) {
-      ttContainer.innerHTML = `<div style="color:var(--muted); font-size:11px">Top Talkers yüklenemedi.</div>`;
+      ttContainer.innerHTML = `<div style="color:var(--muted); font-size:11px">Aktif oturum özeti yüklenemedi.</div>`;
     }
   }
 
@@ -4783,7 +5290,7 @@ async function refreshDashboardWidgets() {
       ipamContainer.innerHTML = `
         ${conflictHtml}
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
-          <span style="font-size:12px; font-weight:600; color:var(--txt)">${esc(subnet.cidr || "192.168.1.0/24")}</span>
+          <span style="font-size:12px; font-weight:600; color:var(--txt)">${esc(subnet.cidr || "Yerel subnet ölçülmedi")}</span>
           <span style="font-size:11px; color:var(--cyan); font-weight:700">%${subnet.utilization_pct || 0} Dolu</span>
         </div>
         <div class="talker-bar-bg" style="height:8px; margin-bottom:10px;">
@@ -4795,12 +5302,12 @@ async function refreshDashboardWidgets() {
             <b style="color:var(--cyan); font-size:13px">${subnet.used_hosts || 0}</b>
           </div>
           <div style="background:var(--panel-2); border:1px solid var(--line-soft); border-radius:6px; padding:6px;">
-            <span style="color:var(--muted); font-size:9.5px; display:block">Boş IP</span>
+            <span style="color:var(--muted); font-size:9.5px; display:block">Gözlenmeyen IP</span>
             <b style="color:#34d399; font-size:13px">${subnet.free_hosts || 0}</b>
           </div>
           <div style="background:var(--panel-2); border:1px solid var(--line-soft); border-radius:6px; padding:6px;">
             <span style="color:var(--muted); font-size:9.5px; display:block">Toplam Kapasite</span>
-            <b style="color:var(--txt); font-size:13px">${subnet.total_hosts || 254}</b>
+            <b style="color:var(--txt); font-size:13px">${subnet.total_hosts ?? "-"}</b>
           </div>
         </div>
       `;
@@ -4832,12 +5339,12 @@ function renderIpamPage() {
           <small style="color:var(--txt-2)" id="ipamUtilPct">Doluluk: -</small>
         </div>
         <div class="panel" style="padding:16px; border-left:4px solid #818cf8">
-          <span style="color:var(--muted); font-size:11px">Kullanılabilir Boş IP Havuzu</span>
+          <span style="color:var(--muted); font-size:11px">Son Keşifte Gözlenmeyen IP'ler</span>
           <h2 style="margin:4px 0 0; font-size:18px; color:#a5b4fc" id="ipamFreeIps">-</h2>
-          <small style="color:var(--txt-2)">Yeni cihazlar için hazır</small>
+          <small style="color:var(--txt-2)">Boş olduğu DHCP/ARP ile kesinleşmiş değildir</small>
         </div>
         <div class="panel" style="padding:16px; border-left:4px solid #f59e0b">
-          <span style="color:var(--muted); font-size:11px">DHCP Dağıtım Aralığı</span>
+          <span style="color:var(--muted); font-size:11px">DHCP Dağıtım Aralığı (Doğrulanmış)</span>
           <h2 style="margin:4px 0 0; font-size:16px; color:#fbbf24" id="ipamDhcpRange">-</h2>
           <small style="color:var(--txt-2)">Dinamik IP Havuzu</small>
         </div>
@@ -4896,6 +5403,48 @@ function renderIpamPage() {
 }
 
 let _ipamAllocationsCache = [];
+
+function ipv4ToUint32(ip) {
+  const octets = String(ip || "").split(".").map(Number);
+  if (octets.length !== 4 || octets.some(o => !Number.isInteger(o) || o < 0 || o > 255)) return null;
+  return ((((octets[0] * 256 + octets[1]) * 256 + octets[2]) * 256 + octets[3]) >>> 0);
+}
+
+function uint32ToIpv4(value) {
+  const n = Number(value) >>> 0;
+  return `${(n >>> 24) & 255}.${(n >>> 16) & 255}.${(n >>> 8) & 255}.${n & 255}`;
+}
+
+function ipv4HostsFromCidr(cidr, maxHosts = 4094) {
+  const [rawIp, rawPrefix] = String(cidr || "").split("/");
+  const ipNumber = ipv4ToUint32(rawIp);
+  const prefixLength = Number(rawPrefix);
+  if (ipNumber === null || !Number.isInteger(prefixLength) || prefixLength < 0 || prefixLength > 32) {
+    return { hosts: [], prefixLength, error: "Geçersiz IPv4 CIDR bilgisi." };
+  }
+
+  const addressCount = 2 ** (32 - prefixLength);
+  const usableCount = prefixLength <= 30 ? Math.max(0, addressCount - 2) : addressCount;
+  if (usableCount > maxHosts) {
+    return {
+      hosts: [],
+      prefixLength,
+      usableCount,
+      error: `${usableCount.toLocaleString("tr-TR")} adres tek görünüm için çok büyük. En fazla ${maxHosts.toLocaleString("tr-TR")} adres gösterilebilir.`,
+    };
+  }
+
+  const mask = prefixLength === 0 ? 0 : (0xffffffff << (32 - prefixLength)) >>> 0;
+  const networkNumber = (ipNumber & mask) >>> 0;
+  const firstHost = prefixLength <= 30 ? networkNumber + 1 : networkNumber;
+  const lastHost = prefixLength <= 30
+    ? networkNumber + addressCount - 2
+    : networkNumber + addressCount - 1;
+  const hosts = [];
+  for (let current = firstHost; current <= lastHost; current += 1) hosts.push(uint32ToIpv4(current));
+  return { hosts, prefixLength, usableCount };
+}
+
 async function refreshIpam() {
   try {
     const data = await get("/api/ipam");
@@ -4907,8 +5456,8 @@ async function refreshIpam() {
     const gEl = $("ipamGatewayIp"); if (gEl) gEl.textContent = "Gateway: " + (subnet.gateway || "-");
     const uEl = $("ipamUsedIps"); if (uEl) uEl.textContent = `${subnet.used_hosts || 0} Adet IP`;
     const utEl = $("ipamUtilPct"); if (utEl) utEl.textContent = `Doluluk: %${subnet.utilization_pct || 0}`;
-    const fEl = $("ipamFreeIps"); if (fEl) fEl.textContent = `${subnet.free_hosts || 0} Boş IP`;
-    const dEl = $("ipamDhcpRange"); if (dEl) dEl.textContent = subnet.dhcp_range || "-";
+    const fEl = $("ipamFreeIps"); if (fEl) fEl.textContent = `${subnet.free_hosts || 0} Gözlenmeyen IP`;
+    const dEl = $("ipamDhcpRange"); if (dEl) dEl.textContent = subnet.dhcp_range || "DHCP sunucusundan doğrulanmadı";
 
     const alertArea = $("ipamConflictAlertArea");
     if (alertArea) {
@@ -4930,7 +5479,7 @@ async function refreshIpam() {
         alertArea.innerHTML = `
           <div style="background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.3); border-radius:10px; padding:10px 16px; margin-bottom:14px; display:flex; align-items:center; gap:10px;">
             <span style="color:#34d399">✅</span>
-            <span style="font-size:12.5px; color:#34d399"><b>Subnet Sağlığı Mükemmel:</b> Ağda herhangi bir IP çakışması veya yetkisiz ARP yanıtı tespit edilmedi.</span>
+            <span style="font-size:12.5px; color:#34d399"><b>Mevcut gözlem temiz:</b> Son keşif verilerinde aynı IP'yi kullanan birden fazla MAC görülmedi.</span>
           </div>
         `;
       }
@@ -4938,22 +5487,41 @@ async function refreshIpam() {
 
     const gridEl = $("ipamGridMap");
     if (gridEl) {
-      const cidrStr = subnet.cidr || "192.168.1.0/24";
-      const baseSubnet = cidrStr.split("/")[0].split(".").slice(0, 3).join(".");
+      const cidrStr = subnet.cidr || "";
+      if (!cidrStr) {
+        gridEl.innerHTML = `<div style="grid-column:1/-1;padding:20px;text-align:center;color:var(--muted)">Yerel subnet henüz ölçülmedi. Önce canlı ağ taraması başlatın.</div>`;
+        renderIpamAllocationsTable(_ipamAllocationsCache);
+        return;
+      }
+      const cidrHosts = ipv4HostsFromCidr(cidrStr);
+      const prefixLength = cidrHosts.prefixLength;
+      if (cidrHosts.error) {
+        gridEl.classList.remove("multi-subnet");
+        gridEl.innerHTML = `<div style="grid-column:1/-1;padding:20px;text-align:center;color:var(--muted)">${esc(cidrStr)}: ${esc(cidrHosts.error)} Gözlenen adresler aşağıdaki tabloda listeleniyor.</div>`;
+        renderIpamAllocationsTable(_ipamAllocationsCache);
+        return;
+      }
+      gridEl.classList.toggle("multi-subnet", prefixLength < 24);
       const conflictIps = new Set(conflicts.map(c => c.ip));
       const usedMap = new Map();
       _ipamAllocationsCache.forEach(a => usedMap.set(a.ip, a));
 
       let gridHtml = "";
-      for (let i = 1; i <= 254; i++) {
-        const currentIp = `${baseSubnet}.${i}`;
+      let currentBlock = "";
+      for (const currentIp of cidrHosts.hosts) {
+        const octets = currentIp.split(".");
+        const block = `${octets.slice(0, 3).join(".")}.0/24`;
+        if (prefixLength < 24 && block !== currentBlock) {
+          currentBlock = block;
+          gridHtml += `<div class="ipam-subnet-divider">${esc(block)}</div>`;
+        }
         let statusCls = "free";
-        let title = `${currentIp} - Boş IP`;
+        let title = `${currentIp} - Son keşifte gözlenmedi (boş olduğu doğrulanmadı)`;
 
         if (conflictIps.has(currentIp)) {
           statusCls = "conflict";
           title = `🚨 ÇAKIŞMA: ${currentIp}`;
-        } else if (currentIp === subnet.gateway || i === 1) {
+        } else if (currentIp === subnet.gateway) {
           statusCls = "gateway";
           title = `Gateway / Router: ${currentIp}`;
         } else if (usedMap.has(currentIp)) {
@@ -4962,7 +5530,8 @@ async function refreshIpam() {
           title = `${currentIp} - ${dev.hostname} (${dev.type})`;
         }
 
-        gridHtml += `<div class="ipam-ip-node ${statusCls}" title="${esc(title)}" onclick="toast('${esc(title)}', 'info')">.${i}</div>`;
+        const nodeLabel = prefixLength === 24 ? `.${octets[3]}` : octets.slice(2).join(".");
+        gridHtml += `<div class="ipam-ip-node ${statusCls}" title="${esc(title)}" onclick="handleIpamNodeClick('${esc(currentIp)}', '${statusCls}')">${esc(nodeLabel)}</div>`;
       }
       gridEl.innerHTML = gridHtml;
     }
@@ -4972,6 +5541,78 @@ async function refreshIpam() {
     console.error("IPAM fetch error:", err);
   }
 }
+
+function handleIpamNodeClick(ip, status) {
+  if (status === "free") {
+    showFreeIpModal(ip);
+  } else {
+    inspectDevice(ip);
+  }
+}
+
+function showFreeIpModal(ip) {
+  openModal(`
+    <div style="padding:12px">
+      <div style="display:flex; align-items:center; gap:12px; margin-bottom:14px;">
+        <div style="width:44px; height:44px; border-radius:12px; background:rgba(16,185,129,0.15); border:1px solid rgba(16,185,129,0.3); display:grid; place-items:center; font-size:22px;">
+          🌐
+        </div>
+        <div>
+          <h3 style="margin:0; font-size:16px; color:var(--txt)">${esc(ip)}</h3>
+          <span style="font-size:11px; color:#34d399; font-weight:700">● Son Keşifte Gözlenmeyen IP</span>
+        </div>
+      </div>
+
+      <div style="background:var(--panel-2); border:1px solid var(--line-soft); border-radius:8px; padding:12px; font-size:11.5px; color:var(--txt-2); margin-bottom:16px;">
+        Bu IP adresi son keşifte gözlenmedi. ICMP yanıt vermemesi adresin kesin olarak boş olduğu anlamına gelmez; DHCP kira tablosunu ve ARP kayıtlarını doğrulamadan statik atama yapmayın.
+        <div id="freeIpPingResult" style="margin-top:10px; display:none; padding:10px; border-radius:6px; background:var(--bg); border:1px solid var(--line);"></div>
+      </div>
+
+      <div style="display:flex; flex-direction:column; gap:8px;">
+        <button class="mini-btn blue" id="btnPingFreeIp" style="padding:9px; justify-content:center" onclick="testFreeIpPing('${esc(ip)}')">⚡ Anlık Ping Testi Yap (Gizli Cihaz Kontrolü)</button>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+          <button class="mini-btn" style="justify-content:center" onclick="closeModalForce(); quickScan('${esc(ip)}')">🔍 Port Tara</button>
+          <button class="mini-btn" style="justify-content:center" onclick="closeModalForce(); quickTraceroute('${esc(ip)}')">🛣️ Traceroute</button>
+        </div>
+      </div>
+      <div style="margin-top:14px; text-align:right">
+        <button class="mini-btn" onclick="closeModalForce()">Kapat</button>
+      </div>
+    </div>
+  `);
+}
+
+window.testFreeIpPing = async function(ip) {
+  const resBox = $("freeIpPingResult");
+  const btn = $("btnPingFreeIp");
+  if (btn) btn.disabled = true;
+  if (resBox) {
+    resBox.style.display = "block";
+    resBox.innerHTML = `<span style="color:var(--cyan)">Pingleme yapılıyor (4 paket)...</span>`;
+  }
+  try {
+    const data = await post("/api/tools/ping", { target: ip, count: 4 });
+    const isUp = data?.success && (data?.alive || data?.received > 0);
+    if (resBox) {
+      if (isUp) {
+        resBox.innerHTML = `
+          <b style="color:#ef4444">⚠️ DİKKAT: Cihaz Yanıt Verdi!</b>
+          <div style="color:var(--txt-2); margin-top:2px">Ortalama Gecikme: ${data.avg_rtt ?? data.rtt ?? "-"} ms · Paket Kaybı: %${data.packet_loss ?? "-"}</div>
+          <small style="color:var(--muted)">Ağda kaydedilmemiş / statik bir cihaz bu IP'yi aktif olarak kullanıyor.</small>
+        `;
+      } else {
+        resBox.innerHTML = `
+          <b style="color:#f59e0b">⚠️ ICMP Yanıtı Alınamadı</b>
+          <div style="color:var(--txt-2); margin-top:2px">Bu sonuç IP'nin boş olduğunu kanıtlamaz. DHCP kira tablosu ve ARP kayıtları ayrıca doğrulanmalıdır.</div>
+        `;
+      }
+    }
+  } catch (e) {
+    if (resBox) resBox.innerHTML = `<span style="color:#ef4444">Hata: ${esc(e.message)}</span>`;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+};
 
 function renderIpamAllocationsTable(list) {
   const tbody = $("ipamAllocationsTable");
@@ -4986,11 +5627,11 @@ function renderIpamAllocationsTable(list) {
       <td><b>${esc(a.hostname)}</b></td>
       <td><code>${esc(a.mac || "-")}</code></td>
       <td><span class="badge ${a.type==='server'?'blue':a.type==='router'?'cyan':'gray'}">${esc(a.type || "unknown")}</span></td>
-      <td><span class="badge ${a.allocation_type==='Static'?'purple':'blue'}">${esc(a.allocation_type || "DHCP")}</span></td>
-      <td><span class="badge ${a.status==='online'?'ok':'gray'}">${esc(a.status || "online")}</span></td>
+      <td><span class="badge ${a.allocation_type==='Infrastructure'?'purple':'blue'}">${esc(a.allocation_type || "Observed")}</span></td>
+      <td><span class="badge ${a.status==='online'?'ok':'gray'}">${esc(a.status || "unknown")}</span></td>
       <td>
-        <button class="mini-btn" onclick="quickTraceroute('${a.ip}')">Trace</button>
-        <button class="mini-btn blue" onclick="setDeviceSearch('${a.ip}')">İncele</button>
+        <button class="mini-btn" onclick="quickTraceroute('${esc(a.ip)}')">Trace</button>
+        <button class="mini-btn blue" onclick="inspectDevice('${esc(a.ip)}', '${esc(a.mac || "")}')">İncele</button>
       </td>
     </tr>
   `).join("");
@@ -5019,18 +5660,25 @@ function renderTopTalkersPage() {
           <div style="display:flex;align-items:center;gap:10px">
             <span style="font-size:20px; color:var(--cyan)">📊</span>
             <div>
-              <h2 style="margin:0">Canlı Ağ Tüketim Liderleri (Top Talkers)</h2>
-              <small style="color:var(--txt-2)">Ağ bant genişliğini anlık olarak en çok kullanan cihazlar ve protokol dağılımı</small>
+              <h2 style="margin:0">Aktif Ağ Oturumları</h2>
+              <small style="color:var(--txt-2)">İşletim sisteminin gerçek soket tablosu: yerel uygulama/PID → uzak IP/port. Uç nokta başına bant genişliği tahmini yapılmaz.</small>
             </div>
           </div>
           <div class="right" style="display:flex;align-items:center;gap:10px">
-            <div style="font-size:12px; background:var(--panel-2); border:1px solid var(--line-soft); border-radius:8px; padding:6px 12px">
+            <div style="font-size:12px; background:var(--panel-2); border:1px solid var(--line-soft); border-radius:8px; padding:6px 12px; display:flex; align-items:center; gap:6px;">
               <span>Toplam Aktif Trafik:</span> <b style="color:var(--cyan)" id="talkersTotalBandwidth">- Mbps</b>
+              <span id="talkersRxTxBreakdown" style="color:var(--txt-2); font-size:11px; margin-left:4px"></span>
             </div>
-            <button class="mini-btn blue" onclick="refreshTopTalkers()">⚡ Şimdi Güncelle</button>
+            <button class="mini-btn blue" id="talkersRefreshBtn" onclick="refreshTopTalkers(true)">⚡ Şimdi Güncelle</button>
           </div>
         </div>
         <div class="panel-body">
+          <div id="trafficPrivilegeBanner" style="display:none; margin-bottom:12px; padding:10px 12px; border-radius:8px; font-size:11.5px"></div>
+          <div style="display:grid; grid-template-columns:repeat(3,minmax(150px,1fr)); gap:8px; margin-bottom:12px">
+            <div style="background:var(--panel-2);border:1px solid var(--line-soft);border-radius:8px;padding:9px 12px"><small style="color:var(--muted)">AKTİF OTURUM</small><div id="trafficSessionCount" style="font-size:18px;font-weight:700;color:var(--cyan)">-</div></div>
+            <div style="background:var(--panel-2);border:1px solid var(--line-soft);border-radius:8px;padding:9px 12px"><small style="color:var(--muted)">BENZERSİZ UZAK IP</small><div id="trafficRemoteCount" style="font-size:18px;font-weight:700">-</div></div>
+            <div style="background:var(--panel-2);border:1px solid var(--line-soft);border-radius:8px;padding:9px 12px"><small style="color:var(--muted)">GÖRÜLEBİLEN UYGULAMA</small><div id="trafficProcessCount" style="font-size:18px;font-weight:700">-</div></div>
+          </div>
           <div id="topTalkersFullLeaderboard">
             <div class="skeleton-box skeleton-line" style="height:55px; margin-bottom:8px"></div>
             <div class="skeleton-box skeleton-line" style="height:55px; margin-bottom:8px"></div>
@@ -5043,50 +5691,86 @@ function renderTopTalkersPage() {
   }
 }
 
-async function refreshTopTalkers() {
+async function refreshTopTalkers(manual = false) {
+  const btn = $("talkersRefreshBtn");
+  if (manual && btn) {
+    btn.disabled = true;
+    btn.textContent = "Güncelleniyor...";
+  }
+
   try {
     const data = await get("/api/traffic/top-talkers");
     const totalBwEl = $("talkersTotalBandwidth");
-    if (totalBwEl) totalBwEl.textContent = `${data?.total_bandwidth_mbps || 0} Mbps`;
+    if (totalBwEl) totalBwEl.textContent = data?.total_bandwidth_display || `${data?.total_bandwidth_mbps || 0} Mbps`;
+
+    const rxTxEl = $("talkersRxTxBreakdown");
+    if (rxTxEl && data) {
+      rxTxEl.textContent = `(↓ ${data.rx_display || (data.rx_mbps + ' Mbps')} | ↑ ${data.tx_display || (data.tx_mbps + ' Mbps')})`;
+    }
 
     const container = $("topTalkersFullLeaderboard");
     if (!container) return;
 
-    const talkers = data?.top_talkers || [];
-    if (!talkers.length) {
-      container.innerHTML = `<div style="text-align:center; padding:30px; color:var(--muted)">Aktif konuşmacı bulunamadı.</div>`;
+    const sessions = data?.sessions || [];
+    const setMetric = (id, value) => { const el = $(id); if (el) el.textContent = String(value ?? 0); };
+    setMetric("trafficSessionCount", data?.session_count);
+    setMetric("trafficRemoteCount", data?.distinct_remote_count);
+    setMetric("trafficProcessCount", data?.distinct_process_count);
+
+    const visibility = data?.runtime_visibility || {};
+    const privilegeBanner = $("trafficPrivilegeBanner");
+    if (privilegeBanner) {
+      const elevated = visibility.is_elevated === true;
+      privilegeBanner.style.display = "block";
+      privilegeBanner.style.background = elevated ? "rgba(16,185,129,.09)" : "rgba(245,158,11,.10)";
+      privilegeBanner.style.border = `1px solid ${elevated ? "rgba(16,185,129,.30)" : "rgba(245,158,11,.35)"}`;
+      privilegeBanner.style.color = elevated ? "#34d399" : "#fbbf24";
+      privilegeBanner.innerHTML = `<b>${elevated ? "Tam işlem görünürlüğü" : "Kısıtlı işlem görünürlüğü"}</b> · Windows kimliği: <code>${esc(visibility.identity || "-")}</code> · ${esc(visibility.note || "")}`;
+    }
+
+    if (!sessions.length) {
+      container.innerHTML = `<div style="text-align:center; padding:30px; color:var(--muted)">Uzak uca bağlı aktif TCP oturumu bulunamadı.</div>`;
       return;
     }
 
-    container.innerHTML = talkers.map((t, idx) => `
-      <div class="talker-row" style="padding:12px 16px;">
-        <div class="talker-rank" style="width:34px; height:34px; font-size:13px">#${idx + 1}</div>
-        <div class="talker-info">
-          <div class="talker-title" style="font-size:14px; margin-bottom:4px">
-            <span>${esc(t.hostname || t.ip)}</span>
-            <code style="font-size:11px; color:var(--muted); font-weight:normal">${esc(t.ip)}</code>
-            <span class="talker-proto-badge">${esc(t.primary_protocol)}</span>
-            <span style="font-size:11px; color:var(--txt-2); margin-left:auto">${esc(t.app_category)}</span>
-          </div>
-          <div class="talker-bar-bg" style="height:8px">
-            <div class="talker-bar-fill" style="width:${Math.max(3, t.share_pct)}%"></div>
-          </div>
-          <div style="display:flex; justify-content:space-between; margin-top:4px; font-size:10.5px; color:var(--muted)">
-            <span>İndirme (Rx): <b style="color:#38bdf8">${t.rx_mbps} Mbps</b> | Yükleme (Tx): <b style="color:#818cf8">${t.tx_mbps} Mbps</b></span>
-            <span>Bant Genişliği Payı: <b>%${t.share_pct}</b></span>
-          </div>
-        </div>
-        <div class="talker-speed" style="margin-left:16px">
-          <b style="font-size:16px">${t.total_mbps} <span style="font-size:11px">Mbps</span></b>
-          <div style="display:flex; gap:4px; margin-top:4px">
-            <button class="mini-btn" onclick="quickTraceroute('${t.ip}')">Trace</button>
-            <button class="mini-btn blue" onclick="setDeviceSearch('${t.ip}')">Detay</button>
-          </div>
-        </div>
+    const endpointText = (ip, port) => `${String(ip || "").includes(":") ? `[${ip}]` : ip}:${port || 0}`;
+    const stateLabel = { ESTABLISHED: "Kurulu", SYN_SENT: "Bağlanıyor", CLOSE_WAIT: "Kapanmayı bekliyor" };
+    container.innerHTML = `
+      <div style="overflow:auto; max-height:590px; border:1px solid var(--line-soft); border-radius:9px">
+        <table style="min-width:1040px">
+          <thead><tr>
+            <th>Yerel uygulama / PID</th><th>Yerel uç</th><th style="text-align:center">Yön</th><th>Uzak uç</th><th>Servis / Port</th><th>TCP durumu</th><th>Kapsam</th><th>İşlem</th>
+          </tr></thead>
+          <tbody>${sessions.map(s => {
+            const remote = endpointText(s.remote_ip, s.remote_port);
+            const local = endpointText(s.local_ip, s.local_port);
+            const established = s.state === "ESTABLISHED";
+            return `<tr>
+              <td><b>${esc(s.process_name || "Sistem / erişim kısıtlı")}</b><br><small style="color:var(--muted)">PID: ${s.pid || "-"}</small></td>
+              <td><code>${esc(local)}</code></td>
+              <td style="text-align:center;color:var(--cyan);font-size:16px">→</td>
+              <td><code style="color:var(--txt)">${esc(remote)}</code></td>
+              <td><span class="talker-proto-badge">${esc(s.primary_protocol || `TCP ${s.remote_port || ""}`)}</span><br><small style="color:var(--muted)">${esc(s.app_category || "")}</small></td>
+              <td><span class="badge" style="background:${established ? "rgba(16,185,129,.10)" : "rgba(245,158,11,.10)"};color:${established ? "#34d399" : "#fbbf24"};border-color:${established ? "rgba(16,185,129,.3)" : "rgba(245,158,11,.3)"}">${esc(stateLabel[s.state] || s.state || "-")}</span></td>
+              <td>${s.scope === "local" ? "Yerel/Özel ağ" : s.scope === "internet" ? "İnternet" : "Bilinmiyor"}</td>
+              <td><div style="display:flex;gap:4px"><button class="mini-btn" onclick="quickTraceroute('${esc(s.remote_ip)}')">Trace</button><button class="mini-btn" onclick="copyToClipboard('${esc(remote)}', this)">Kopyala</button></div></td>
+            </tr>`;
+          }).join("")}</tbody>
+        </table>
       </div>
-    `).join("");
+      <div style="margin-top:8px;color:var(--muted);font-size:10.5px">İlk 100 aktif oturum gösterilir. Toplam trafik ağ kartı sayaçlarından ölçülür; tek tek oturumlara dağıtılmaz.</div>`;
+
+    if (manual) {
+      updateLastScan();
+      toast("Aktif ağ oturumları güncellendi.", "info");
+    }
   } catch (err) {
     console.error("Top talkers error:", err);
+  } finally {
+    if (manual && btn) {
+      btn.disabled = false;
+      btn.textContent = "⚡ Şimdi Güncelle";
+    }
   }
 }
 
@@ -5111,10 +5795,23 @@ function renderNcmPage() {
             <select id="ncmDeviceSelect" onchange="loadNcmDeviceVersions(this.value)" style="min-width:180px;">
               <option value="">Cihaz seçin...</option>
             </select>
-            <button class="mini-btn blue admin-only" onclick="takeNcmBackup()" id="ncmBackupBtn">⚡ Şimdi Yedek Al</button>
+            <button class="mini-btn blue" data-permission="ncm.manage" onclick="takeNcmBackup()" id="ncmBackupBtn">⚡ Şimdi Yedek Al</button>
           </div>
         </div>
         <div class="panel-body">
+          <div data-permission="ncm.manage" style="background:var(--panel-2); border:1px solid var(--line-soft); border-radius:10px; padding:12px 16px; margin-bottom:16px;">
+            <div style="display:grid;grid-template-columns:minmax(180px,.35fr) minmax(260px,1fr);gap:10px;align-items:start">
+              <div>
+                <label style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px">Sürüm etiketi (isteğe bağlı)</label>
+                <input id="ncmVersionLabel" placeholder="Örn. Değişiklik öncesi" style="width:100%" />
+                <small style="display:block;color:var(--muted);margin-top:8px">Konfigürasyon alanı boşsa Ayarlar'daki SSH hesabı ve sistemde doğrulanmış host anahtarı kullanılır.</small>
+              </div>
+              <div>
+                <label style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px">Gerçek konfigürasyonu elle yapıştır (isteğe bağlı)</label>
+                <textarea id="ncmManualConfig" rows="4" placeholder="show running-config çıktısını buraya yapıştırabilirsiniz" style="width:100%;resize:vertical"></textarea>
+              </div>
+            </div>
+          </div>
           <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:center; background:var(--panel-2); border:1px solid var(--line-soft); border-radius:10px; padding:12px 16px; margin-bottom:16px;">
             <div style="flex:1; min-width:200px">
               <label style="display:block; font-size:11px; color:var(--muted); margin-bottom:4px">1. Sürüm (Sol / Önceki)</label>
@@ -5208,8 +5905,15 @@ async function takeNcmBackup() {
   if (btn) { btn.disabled = true; btn.textContent = "Yedek Alınıyor..."; }
   
   try {
-    const res = await post("/api/ncm/backup", { ip });
-    toast(`✅ ${ip} için konfigürasyon yedeği başarıyla alındı!`, "ok");
+    const manualConfig = $("ncmManualConfig")?.value || "";
+    const versionLabel = $("ncmVersionLabel")?.value || "";
+    const res = await post("/api/ncm/backup", {
+      ip,
+      manual_config: manualConfig.trim() || null,
+      version_label: versionLabel.trim() || null,
+    });
+    toast(`✅ ${ip} için ${res.source === "ssh" ? "SSH'den alınan" : "elle doğrulanan"} konfigürasyon kaydedildi.`, "ok");
+    if ($("ncmManualConfig")) $("ncmManualConfig").value = "";
     await loadNcmDeviceVersions(ip);
   } catch (err) {
     toast(`Yedek alma başarısız: ${err.message}`, "fail");
@@ -5358,9 +6062,9 @@ function renderDevicesPage() {
               <option value="unknown">Bilinmeyen</option>
             </select>
             <span class="scan-note" id="devNote"></span>
-            ${S.user?.role === "admin" ? `<button class="mini-btn blue" id="devScanBtn" onclick="scanNetwork()">Ağı Tara</button>` : ""}
-            ${S.user?.role === "admin" ? `<button class="mini-btn" onclick="openWmiScanModal()">🔑 Yetkili Envanter</button>` : ""}
-            ${S.user?.role === "admin" ? `<button class="mini-btn" id="deepScanBtn" onclick="runDeepScan()">Port Tarama</button>` : ""}
+            ${hasPermission("inventory.scan") ? `<button class="mini-btn blue" id="devScanBtn" onclick="scanNetwork()">Ağı Tara</button>` : ""}
+            ${hasPermission("inventory.scan") ? `<button class="mini-btn" onclick="openWmiScanModal()">🔑 Yetkili Envanter</button>` : ""}
+            ${hasPermission("diagnostics.run") ? `<button class="mini-btn" id="deepScanBtn" onclick="runDeepScan()">Port Tarama</button>` : ""}
           </div>
         </div>
         <div id="networkInfoStrip" class="device-learning" style="margin:10px 12px 0"></div>
@@ -5412,7 +6116,7 @@ async function runDeepScan() {
 }
 
 async function scanNetwork() {
-  if (S.user?.role !== "admin" || S.scanning) return;
+  if (!hasPermission("inventory.scan") || S.scanning) return;
   S.scanning = true;
   renderDeviceTable();
   try {
@@ -5482,6 +6186,7 @@ async function refreshDevices() {
     }
     const data = await get("/api/devices");
     S.devices = data.devices || data;
+    S.devicesTs = Number(data.ts || 0);
     S.deviceScanError = data.error || null;
     renderDeviceTable();
     renderStats();
@@ -5505,6 +6210,8 @@ async function refreshTopology() {
 }
 
 function renderSystemStatus(sys) {
+  S.system = { ...(S.system || {}), ...(sys || {}) };
+  sys = S.system;
   const quickRow = $("quickRow");
   if (quickRow && sys) {
     const percent = (value) => value == null ? "-" : `${value}%`;
@@ -5516,18 +6223,132 @@ function renderSystemStatus(sys) {
       <div class="quick"><span style="color:var(--green); font-weight:bold;">${netSpeed}</span><span>AĞ</span></div>
     `;
   }
+  const healthGrid = $("healthMetricGrid");
+  if (healthGrid && sys) {
+    const pct = value => value == null ? "Ölçülmedi" : `%${Number(value).toFixed(1)}`;
+    const uptime = value => {
+      if (value == null) return "Ölçülmedi";
+      const total = Math.max(0, Number(value));
+      const days = Math.floor(total / 86400);
+      const hours = Math.floor((total % 86400) / 3600);
+      const mins = Math.floor((total % 3600) / 60);
+      return `${days}g ${hours}sa ${mins}dk`;
+    };
+    const metric = (label, value, note, color = "var(--txt)") => `<div class="health-metric"><span>${label}</span><b style="color:${color}">${esc(value)}</b><small>${note}</small></div>`;
+    healthGrid.innerHTML = [
+      metric("CPU kullanımı", pct(sys.cpu), "Gerçek zamanlı", Number(sys.cpu) >= 85 ? "var(--red)" : "var(--blue)"),
+      metric("RAM kullanımı", pct(sys.ram), "Gerçek zamanlı", Number(sys.ram) >= 90 ? "var(--red)" : "var(--purple)"),
+      metric("Uptime", uptime(sys.uptime_seconds), "Kesintisiz çalışma", "var(--green)"),
+      metric("Sıcaklık", sys.temperature_c == null ? "Sensör yok" : `${Number(sys.temperature_c).toFixed(1)} °C`, "Donanım sensörü", Number(sys.temperature_c) >= 75 ? "var(--red)" : "var(--orange)"),
+      metric("Güç kaynağı", sys.power_status || "Telemetri yok", "OS güç sensörü", sys.power_status ? "var(--green)" : "var(--muted)"),
+    ].join("");
+  }
+  const trafficStrip = $("trafficMetricStrip");
+  if (trafficStrip) {
+    const overview = S.overview || {};
+    const latency = overview.latency?.average;
+    const loss = overview.packet_loss;
+    const item = (label, value, color) => `<div style="border-left-color:${color}"><span>${label}</span><b>${value}</b></div>`;
+    trafficStrip.innerHTML = [
+      item("Inbound", `${Number(sys.net_rx_mbps || S.traffic.down / 1e6 || 0).toFixed(2)} Mbps`, "#3b9bff"),
+      item("Outbound", `${Number(sys.net_tx_mbps || S.traffic.up / 1e6 || 0).toFixed(2)} Mbps`, "#10b981"),
+      item("Gecikme", latency == null ? "Ölçülmedi" : `${latency} ms`, "#8b5cf6"),
+      item("Paket kaybı", loss == null ? "Ölçülmedi" : `%${loss}`, Number(loss) > 2 ? "#ef4444" : "#f59e0b"),
+    ].join("");
+  }
 }
 
 async function refreshOverview() {
   try {
     const data = await get("/api/overview");
     S.overview = data.overview || data;
+    S.system = { ...(S.system || {}), ...(S.overview.system || {}) };
     renderStats();
     renderInventoryCommandCenter();
     renderNetworkHealth();
-    if (S.overview.system) renderSystemStatus(S.overview.system);
+    renderSystemStatus(S.system);
   } catch (e) {}
 }
+
+async function refreshConnections() {
+  try {
+    const data = await get("/api/overview");
+    const c = data.connections || {};
+    S.connections = {
+      tcp: Number(c.tcp || 0),
+      listen: Number(c.listen || 0),
+      udp: Number(c.udp || 0),
+      total: Number(c.total || 0),
+      supported: c.supported !== false,
+    };
+    renderStats();
+  } catch (e) {}
+}
+
+// /api/traffic'ten çekip sparkUp/sparkDown'ı dolduruyor ve grafiği çiziyor.
+async function refreshTraffic() {
+  try {
+    const rows = await get("/api/traffic?minutes=5");
+    const list = Array.isArray(rows) ? rows : rows.traffic || [];
+    if (list.length) {
+      S.sparkUp = list.map((r) => {
+        const mbps = ((Number(r.wifi_sent) || 0) + (Number(r.eth_sent) || 0)) / 1_000_000;
+        return Number(mbps.toFixed(2));
+      });
+      S.sparkDown = list.map((r) => {
+        const mbps = ((Number(r.wifi_recv) || 0) + (Number(r.eth_recv) || 0)) / 1_000_000;
+        return Number(mbps.toFixed(2));
+      });
+      const last = list[list.length - 1];
+      S.traffic.up = (Number(last.wifi_sent) || 0) + (Number(last.eth_sent) || 0);
+      S.traffic.down = (Number(last.wifi_recv) || 0) + (Number(last.eth_recv) || 0);
+    }
+    if (typeof renderStats === "function") renderStats();
+    if (typeof drawTrafficChart === "function") drawTrafficChart();
+  } catch (e) {}
+}
+
+function updateLastScan() {
+  const el = $("lastUpdate");
+  if (el) el.textContent = nowTime();
+}
+
+async function refreshAll(force = false) {
+  if (!S.auto && !force) return;
+  const pageTasks = [];
+  if (S.page === "toptalkers" && typeof refreshTopTalkers === "function") pageTasks.push(refreshTopTalkers());
+  if (S.page === "ipam" && typeof refreshIpam === "function") pageTasks.push(refreshIpam());
+  if (S.page === "ncm" && typeof refreshNcm === "function") pageTasks.push(refreshNcm());
+
+  await Promise.allSettled([
+    refreshOverview(),
+    refreshTraffic(),
+    refreshConnections(),
+    refreshDevices(),
+    refreshNetworkInfo(),
+    refreshTopology(),
+    refreshLogs(),
+    refreshDashboardWidgets(),
+    ...pageTasks
+  ]);
+  updateLastScan();
+}
+
+async function manualRefreshDashboard() {
+  const btn = $("refreshBtn");
+  if (btn) {
+    btn.style.transition = "transform 0.6s ease";
+    btn.style.transform = "rotate(360deg)";
+    setTimeout(() => {
+      btn.style.transition = "none";
+      btn.style.transform = "rotate(0deg)";
+    }, 600);
+  }
+  await refreshAll(true);
+  updateLastScan();
+  toast("Ağ verileri yenileme isteği tamamlandı.", "info");
+}
+window.manualRefreshDashboard = manualRefreshDashboard;
 
 /* ---------- Aşama 5: Ağ Sağlığı paneli ---------- */
 function renderNetworkHealth() {
@@ -5604,63 +6425,6 @@ async function runTroubleshootWizard() {
   }
 }
 
-async function refreshConnections() {
-  try {
-    const data = await get("/api/overview");
-    const c = data.connections || {};
-    S.connections = {
-      tcp: Number(c.tcp || 0),
-      udp: Number(c.udp || 0),
-      total: Number(c.total || 0),
-      supported: c.supported !== false,
-    };
-    renderStats();
-  } catch (e) {}
-}
-
-// DÜZELTME: refreshAll() bu fonksiyonu çağırıyordu ama hiç tanımlı değildi
-// (sessizce Promise.allSettled içinde yutuluyordu). "Ağ Trafiği (Son 5 Dakika)"
-// grafiği bu yüzden sayfa açılışında hep boş kalıyordu; WebSocket üzerinden
-// canlı örnek gelene kadar hiçbir veri yoktu. Artık geçmiş örnekleri
-// /api/traffic'ten çekip sparkUp/sparkDown'ı dolduruyor ve grafiği çiziyor.
-async function refreshTraffic() {
-  try {
-    const rows = await get("/api/traffic?minutes=5");
-    const list = Array.isArray(rows) ? rows : rows.traffic || [];
-    if (list.length) {
-      S.sparkUp = list.map((r) => {
-        const mbps = ((Number(r.wifi_sent) || 0) + (Number(r.eth_sent) || 0)) / 125000;
-        return Number(mbps.toFixed(2));
-      });
-      S.sparkDown = list.map((r) => {
-        const mbps = ((Number(r.wifi_recv) || 0) + (Number(r.eth_recv) || 0)) / 125000;
-        return Number(mbps.toFixed(2));
-      });
-    }
-    if (typeof drawTrafficChart === "function") drawTrafficChart();
-  } catch (e) {}
-}
-
-async function refreshAll() {
-  if (!S.auto) return;
-  await Promise.allSettled([
-    refreshOverview(),
-    refreshTraffic(),
-    refreshConnections(),
-    refreshDevices(),
-    refreshNetworkInfo(),
-    refreshTopology(),
-    refreshLogs(),
-    refreshDashboardWidgets(),
-  ]);
-  updateLastScan();
-}
-
-function updateLastScan() {
-  const el = $("lastUpdate");
-  if (el) el.textContent = nowTime();
-}
-
 /* ============================================================
    GİRİŞ İŞLEMLERİ (LOGIN SUBMIT)
    ============================================================ */
@@ -5672,6 +6436,7 @@ async function handleLoginSubmit(e) {
   const rememberInput = $("rememberMe") || $("loginRemember");
   const errBox = $("loginErr");
   const btn = $("loginBtn");
+  if (btn && btn.disabled) return false;
 
   if (!usernameInput || !passwordInput) return false;
 
@@ -5856,19 +6621,27 @@ async function handleNetworkMessage(message) {
   }
 
   if (type === "traffic" || type === "traffic_update") {
-    const traffic = message.traffic || message.data || {};
-    S.traffic.up = Number(traffic.upload ?? traffic.up ?? 0);
-    S.traffic.down = Number(traffic.download ?? traffic.down ?? 0);
-    // DÜZELTME: sparkUp/sparkDown dizilerine hiç veri eklenmiyordu, bu yüzden
-    // hem stat kartlarındaki mini-sparkline'lar hem "Ağ Trafiği (Son 5 Dakika)"
-    // grafiği hep boştu. Son 60 örneği (yaklaşık 5 dk, 5 sn aralıkla) tutuyoruz.
+    const traffic = message.traffic || message.data || message || {};
+    const sentBps = Number(traffic.sent ?? traffic.upload ?? traffic.up ?? 0);
+    const recvBps = Number(traffic.recv ?? traffic.download ?? traffic.down ?? 0);
+    S.traffic.up = sentBps;
+    S.traffic.down = recvBps;
+
     const MAX_POINTS = 60;
-    S.sparkUp.push(S.traffic.up);
-    S.sparkDown.push(S.traffic.down);
+    const mbpsUp = Number((sentBps / 1_000_000).toFixed(2));
+    const mbpsDown = Number((recvBps / 1_000_000).toFixed(2));
+    S.sparkUp.push(mbpsUp);
+    S.sparkDown.push(mbpsDown);
     if (S.sparkUp.length > MAX_POINTS) S.sparkUp.shift();
     if (S.sparkDown.length > MAX_POINTS) S.sparkDown.shift();
     if (typeof renderStats === "function") renderStats();
     if (typeof drawTrafficChart === "function") drawTrafficChart();
+    if (S.page === "toptalkers" && typeof refreshTopTalkers === "function") {
+      refreshTopTalkers();
+    }
+    if (S.page === "dashboard" && typeof refreshDashboardWidgets === "function") {
+      refreshDashboardWidgets();
+    }
     return;
   }
 

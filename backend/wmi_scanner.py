@@ -40,6 +40,60 @@ if not logger.handlers:
 _com_state = threading.local()
 
 
+def classify_wmi_error(error: object) -> tuple[str, str]:
+    """Normalize localized COM/WMI failures into stable diagnostic codes."""
+    message = str(error)
+    lowered = message.casefold()
+    if any(marker in lowered for marker in (
+        "access is denied", "erişim engellendi", "0x80070005", "-2147024891",
+    )):
+        return "access_denied", "Erişim Engellendi (Access Denied)"
+    if "rpc" in lowered or "0x800706ba" in lowered or "-2147023174" in lowered:
+        return "rpc_unavailable", "Sunucu Kullanılamıyor veya Kapalı (RPC Error)"
+    return "wmi_error", f"Hata: {message}"
+
+
+def explain_wmi_error(error: object, stage: str = "wmi_dcom") -> dict:
+    """Return actionable, secret-free evidence for a Windows inventory failure."""
+    code, summary = classify_wmi_error(error)
+    native = str(error).strip() or error.__class__.__name__
+    os_error = None
+    for marker in ("0x80070005", "0x800706ba", "0x8009030e", "0x80338126"):
+        if marker.casefold() in native.casefold():
+            os_error = marker
+            break
+    if code == "access_denied":
+        cause = "Hedef Windows cihazı kimliği aldı ancak WMI/DCOM yetkilendirme aşamasında reddetti."
+        actions = [
+            "Hesabın hedef cihazın yerel Administrators grubunda veya yetkili bir domain grubunda olduğunu doğrulayın.",
+            "Yerel hesap kullanılıyorsa kullanıcı adını HEDEF\\kullanıcı biçiminde deneyin; domain hesabında DOMAIN\\kullanıcı kullanın.",
+            "Uzak UAC token filtering, DCOM erişim izinleri ve root\\cimv2 WMI namespace Remote Enable iznini kontrol edin.",
+            "Hedefte Windows Management Instrumentation ve Remote Procedure Call servislerinin çalıştığını doğrulayın.",
+        ]
+    elif code == "rpc_unavailable":
+        cause = "Kimlik doğrulama başlamadan önce RPC/DCOM bağlantısı kurulamadı."
+        actions = [
+            "TCP 135 ile dinamik RPC portlarını NetMon sunucusundan hedefe açın.",
+            "Windows Güvenlik Duvarı'nda Windows Management Instrumentation (WMI-In) kural grubunu etkinleştirin.",
+            "Hedefin açık, IP adresinin doğru ve RPC servisinin çalışır olduğunu doğrulayın.",
+        ]
+    else:
+        cause = "Windows yönetim sağlayıcısı beklenmeyen bir hata döndürdü."
+        actions = [
+            "Ham hata ayrıntısını Windows olay günlükleri ve WMI-Activity/Operational kaydıyla eşleştirin.",
+            "WinRM kullanılıyorsa listener, TrustedHosts/domain güveni ve HTTPS sertifikasını kontrol edin.",
+        ]
+    return {
+        "stage": stage,
+        "error_code": code,
+        "summary": summary,
+        "cause": cause,
+        "native_error": native[:1200],
+        "os_error_code": os_error,
+        "recommended_actions": actions,
+    }
+
+
 def _ensure_com_initialized():
     """COM'u thread başına bir kez başlat; thread sonlandığında Windows temizler.
 
@@ -76,6 +130,88 @@ class WmiNetworkScanner:
     WMI/DCOM ve WinRM/CIM destekli paralel Windows envanter tarayıcısı.
     """
     MANAGEMENT_PORTS = (135, 445, 5985, 5986)
+
+    def test_access(self, ip: str) -> dict:
+        """Test Windows management authorization without collecting inventory."""
+        ports = self._probe_management_ports(ip)
+        base = {
+            "ip_address": ip,
+            "status": "Failed",
+            "management_ports": sorted(ports),
+            "diagnostics": {
+                "target": ip,
+                "management_ports": sorted(ports),
+                "transport_attempts": [],
+                "wmi_dependency_available": WMI_AVAILABLE,
+                "winrm_dependency_available": WINRM_AVAILABLE,
+            },
+        }
+        if ip not in _local_ips() and not ports:
+            base.update({
+                "error_code": "management_ports_closed",
+                "error_message": "Windows yönetim portlarına erişilemiyor.",
+            })
+            return base
+
+        if ip not in _local_ips() and (5985 in ports or 5986 in ports) and WINRM_AVAILABLE:
+            port = 5986 if 5986 in ports else 5985
+            scheme = "https" if port == 5986 else "http"
+            base["diagnostics"]["transport_attempts"].append(f"WinRM {scheme.upper()}")
+            try:
+                session = winrm.Session(
+                    f"{scheme}://{ip}:{port}/wsman",
+                    auth=(self.username, self.password),
+                    transport="ntlm",
+                    server_cert_validation="validate" if self.verify_tls else "ignore",
+                    operation_timeout_sec=max(5, self.timeout - 2),
+                    read_timeout_sec=self.timeout,
+                )
+                response = session.run_ps("$env:COMPUTERNAME")
+                if int(response.status_code or 0) == 0:
+                    return {
+                        **base,
+                        "status": "Success",
+                        "inventory_source": "WinRM access test",
+                        "computer_name": response.std_out.decode("utf-8", "ignore").strip() or None,
+                        "diagnostics": {**base["diagnostics"], "selected_transport": "WinRM"},
+                    }
+                stderr = response.std_err.decode("utf-8", "ignore").strip()
+                raise RuntimeError(stderr or f"WinRM status code: {response.status_code}")
+            except Exception as exc:
+                base["diagnostics"]["winrm_failure"] = explain_wmi_error(exc, "winrm_auth_or_session")
+
+        if not WMI_AVAILABLE:
+            base.update({
+                "error_code": "wmi_dependency_missing",
+                "error_message": "WinRM testi başarısız ve WMI bağımlılığı kurulu değil.",
+            })
+            return base
+
+        base["diagnostics"]["transport_attempts"].append("Local WMI" if ip in _local_ips() else "WMI/DCOM")
+        try:
+            _ensure_com_initialized()
+            if ip in _local_ips():
+                connection = wmi.WMI()
+            elif self.username and self.password:
+                connection = wmi.WMI(ip, user=self.username, password=self.password)
+            else:
+                connection = wmi.WMI(ip)
+            systems = connection.Win32_OperatingSystem(["Caption"])
+            return {
+                **base,
+                "status": "Success",
+                "inventory_source": "WMI/DCOM access test",
+                "os_caption": getattr(systems[0], "Caption", None) if systems else None,
+                "diagnostics": {**base["diagnostics"], "selected_transport": "WMI/DCOM"},
+            }
+        except Exception as exc:
+            failure = explain_wmi_error(exc, "wmi_dcom_authorization")
+            base.update({
+                "error_code": failure["error_code"],
+                "error_message": failure["summary"],
+            })
+            base["diagnostics"]["failure"] = failure
+            return base
 
     def __init__(self, username=None, password=None, timeout=20, verify_tls=True):
         self.username = username
@@ -244,6 +380,13 @@ try {
 
         open_ports = self._probe_management_ports(ip)
         device_data["management_ports"] = sorted(open_ports)
+        device_data["diagnostics"] = {
+            "target": ip,
+            "management_ports": sorted(open_ports),
+            "transport_attempts": [],
+            "wmi_dependency_available": WMI_AVAILABLE,
+            "winrm_dependency_available": WINRM_AVAILABLE,
+        }
         if ip not in _local_ips() and not open_ports:
             device_data["error_code"] = "management_ports_closed"
             device_data["error_message"] = (
@@ -255,11 +398,14 @@ try {
 
         if ip not in _local_ips() and (5985 in open_ports or 5986 in open_ports):
             try:
+                device_data["diagnostics"]["transport_attempts"].append("WinRM HTTPS" if 5986 in open_ports else "WinRM HTTP")
                 winrm_data = self._scan_via_winrm(ip, open_ports)
                 if winrm_data:
+                    winrm_data.setdefault("diagnostics", device_data["diagnostics"])["selected_transport"] = "WinRM"
                     logger.info(f"[{ip}] WinRM taraması başarılı: {winrm_data.get('computer_name', ip)}")
                     return winrm_data
             except Exception as exc:
+                device_data["diagnostics"]["winrm_failure"] = explain_wmi_error(exc, "winrm_auth_or_session")
                 logger.warning(f"[{ip}] WinRM başarısız, WMI/DCOM deneniyor: {exc}")
 
         # WinRM, Python WMI paketinden bağımsızdır. Bu kontrol WinRM denemesinden
@@ -276,6 +422,7 @@ try {
         connection = registry_connection = sec_conn = None
         cs = os_info = cpu = baseboard = disk = av_products = None
         try:
+            device_data["diagnostics"]["transport_attempts"].append("Local WMI" if ip in _local_ips() else "WMI/DCOM")
             # WMI Bağlantısı (5sn Timeout destekli via wmi.WMI connect timeout)
             # Standart 'wmi' modülünde timeout ayarı WbemScripting üzerinden yapılır fakat pywin32 DCOM timeout globaldir.
             # Kodun kilitlenmesini ThreadPoolExecutor yönetir.
@@ -397,21 +544,14 @@ try {
                     "antivirus": av_name
                 }
             })
+            device_data["diagnostics"]["selected_transport"] = "Local WMI" if ip in _local_ips() else "WMI/DCOM"
             logger.info(f"[{ip}] Tarama başarılı: {cs.Name}")
 
         except Exception as e:
-            err_str = str(e)
-            err_lower = err_str.lower()
-            if "access is denied" in err_lower or "0x80070005" in err_lower:
-                msg = "Erişim Engellendi (Access Denied)"
-                device_data["error_code"] = "access_denied"
-            elif "rpc" in err_lower or "0x800706ba" in err_lower:
-                msg = "Sunucu Kullanılamıyor veya Kapalı (RPC Error)"
-                device_data["error_code"] = "rpc_unavailable"
-            else:
-                msg = f"Hata: {err_str}"
-                device_data["error_code"] = "wmi_error"
+            error_code, msg = classify_wmi_error(e)
+            device_data["error_code"] = error_code
             device_data["error_message"] = msg
+            device_data["diagnostics"]["failure"] = explain_wmi_error(e, "wmi_dcom_authorization")
             logger.error(f"[{ip}] Tarama hatası: {msg}")
 
         finally:

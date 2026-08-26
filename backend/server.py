@@ -23,6 +23,7 @@ import re
 import ipaddress
 import concurrent.futures
 import base64
+import ctypes
 from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -43,10 +44,12 @@ from pydantic import BaseModel
 try:
     from . import netdiag_core as diag
     from . import deep_discovery
+    from .netdiag_core import NetworkDiagnostics, NetworkDiscoveryError
     from .wmi_scanner import WmiNetworkScanner
 except ImportError:
     import netdiag_core as diag
     import deep_discovery
+    from netdiag_core import NetworkDiagnostics, NetworkDiscoveryError
     from wmi_scanner import WmiNetworkScanner
 
 try:
@@ -103,7 +106,6 @@ def _verify_password(password: str, salt: str, expected_hash: str) -> bool:
     _, computed = _hash_password(password, salt)
     return hmac.compare_digest(computed, expected_hash)
 
-from netdiag_core import NetworkDiagnostics, NetworkDiscoveryError
 import logging
 
 logger = logging.getLogger("netmon.server")
@@ -298,9 +300,13 @@ def init_db():
         CREATE TABLE IF NOT EXISTS alerts (
             ts REAL PRIMARY KEY,
             level TEXT,
-            message TEXT
+            message TEXT,
+            source TEXT
         )
     """)
+    alert_columns = {row[1] for row in conn.execute("PRAGMA table_info(alerts)").fetchall()}
+    if "source" not in alert_columns:
+        conn.execute("ALTER TABLE alerts ADD COLUMN source TEXT")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
@@ -670,7 +676,7 @@ def _check_traffic_anomaly(now: float, total_bps: float, conn: sqlite3.Connectio
     if len(_traffic_window) < ANOMALY_MIN_SAMPLES:
         return
 
-    baseline_samples = [v for _, v in _traffic_window[:-1]]
+    baseline_samples = [v for _, v in list(_traffic_window)[:-1]]
     avg = sum(baseline_samples) / len(baseline_samples) if baseline_samples else 0.0
 
     if (
@@ -817,6 +823,7 @@ def _system_stats_payload():
             "cpu": None, "ram": None, "disk": None,
             "net_rx_mbps": None, "net_tx_mbps": None, "net_total_mbps": None,
             "net_percent": None, "network_data_source": None, "supported": False,
+            "uptime_seconds": None, "temperature_c": None, "power_status": None,
         }
     now = time.time()
     net_io = psutil.net_io_counters()
@@ -826,6 +833,23 @@ def _system_stats_payload():
         rx_mbps = max(0.0, (net_io.bytes_recv - _system_prev_net.bytes_recv) * 8 / dt / 1_000_000)
         tx_mbps = max(0.0, (net_io.bytes_sent - _system_prev_net.bytes_sent) * 8 / dt / 1_000_000)
     _system_prev_net, _system_prev_ts = net_io, now
+    temperature_c = None
+    try:
+        sensors = psutil.sensors_temperatures() if hasattr(psutil, "sensors_temperatures") else {}
+        readings = [float(entry.current) for entries in (sensors or {}).values() for entry in entries
+                    if getattr(entry, "current", None) is not None]
+        temperature_c = round(max(readings), 1) if readings else None
+    except Exception:
+        temperature_c = None
+
+    power_status = None
+    try:
+        battery = psutil.sensors_battery() if hasattr(psutil, "sensors_battery") else None
+        if battery is not None:
+            power_status = "AC / Şebeke" if battery.power_plugged else "Batarya"
+    except Exception:
+        power_status = None
+
     return {
         "cpu": round(psutil.cpu_percent(), 1),
         "ram": round(psutil.virtual_memory().percent, 1),
@@ -835,6 +859,9 @@ def _system_stats_payload():
         "net_total_mbps": round(rx_mbps + tx_mbps, 2),
         "net_percent": None,
         "network_data_source": "psutil.net_io_counters",
+        "uptime_seconds": max(0, round(now - psutil.boot_time())),
+        "temperature_c": temperature_c,
+        "power_status": power_status,
         "supported": True,
     }
 
@@ -849,6 +876,61 @@ def system_stats_loop(stop_event: threading.Event):
         except Exception:
             pass
         stop_event.wait(1)
+
+
+def _parse_syslog_datagram(payload: bytes) -> tuple[str, str]:
+    """RFC 3164/5424 PRI değerini ürünün üç önem seviyesine indirger."""
+    text = payload[:8192].decode("utf-8", errors="replace").replace("\x00", "").strip()
+    match = re.match(r"^<(\d{1,3})>(.*)$", text, flags=re.DOTALL)
+    severity = 6
+    if match:
+        severity = int(match.group(1)) & 7
+        text = match.group(2).strip()
+    level = "critical" if severity <= 3 else "warning" if severity == 4 else "info"
+    return level, text or "Boş Syslog mesajı"
+
+
+def syslog_receiver_loop(stop_event: threading.Event):
+    """UDP Syslog alıcısı. Varsayılan 5514; NETMON_SYSLOG_PORT=0 ile kapatılır."""
+    try:
+        port = int(os.environ.get("NETMON_SYSLOG_PORT", "5514"))
+    except ValueError:
+        logger.warning("NETMON_SYSLOG_PORT geçersiz; Syslog alıcısı kapatıldı.")
+        return
+    if port <= 0:
+        return
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.settimeout(1.0)
+    try:
+        sock.bind((os.environ.get("NETMON_SYSLOG_HOST", "0.0.0.0"), port))
+        logger.info("[SYSLOG] UDP/%d dinleniyor", port)
+        conn = db_conn()
+        try:
+            while not stop_event.is_set():
+                try:
+                    payload, remote = sock.recvfrom(8192)
+                except socket.timeout:
+                    continue
+                except OSError:
+                    break
+                level, message = _parse_syslog_datagram(payload)
+                source = remote[0]
+                ts = time.time()
+                conn.execute("INSERT OR REPLACE INTO alerts (ts, level, message, source) VALUES (?, ?, ?, ?)",
+                             (ts, level, message, source))
+                conn.commit()
+                manager.broadcast_threadsafe({
+                    "type": "log", "log": {
+                        "time": datetime.fromtimestamp(ts).strftime("%H:%M:%S"),
+                        "level": level, "message": message, "source": source,
+                    }
+                })
+        finally:
+            conn.close()
+    except OSError as exc:
+        logger.warning("[SYSLOG] UDP/%d başlatılamadı: %s", port, exc)
+    finally:
+        sock.close()
 
 # ============================================================
 # UYGULAMA YAŞAM DÖNGÜSÜ
@@ -886,7 +968,10 @@ def _load_last_known_devices_into_cache():
     logger.info("[STARTUP] %d bilinen cihaz önbelleğe yüklendi (stale=true, tarama devam ediyor)", len(devices))
 
 
-from dhcp_monitor import start_dhcp_monitor, stop_dhcp_monitor
+try:
+    from .dhcp_monitor import start_dhcp_monitor, stop_dhcp_monitor
+except ImportError:
+    from dhcp_monitor import start_dhcp_monitor, stop_dhcp_monitor
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -905,7 +990,7 @@ async def lifespan(app: FastAPI):
 
     t2 = threading.Thread(target=diagnostics_loop, args=(_stop_event,), daemon=True)
     t4 = threading.Thread(target=device_scan_loop, args=(_stop_event,), daemon=True)
-    workers = [t2, t4]
+    workers = [t2, t4, threading.Thread(target=syslog_receiver_loop, args=(_stop_event,), daemon=True)]
     if HAS_PSUTIL:
         workers.extend([
             threading.Thread(target=traffic_sampler_loop, args=(_stop_event,), daemon=True),
@@ -967,9 +1052,58 @@ async def _auth_error_handler(request, exc: _AuthError):
 
 SESSION_TTL_SECONDS = 12 * 3600  # "Beni hatırla" seçilmezse 12 saat
 
+ROLE_DEFINITIONS = {
+    "admin": {
+        "label": "Sistem Yöneticisi",
+        "permissions": {"*"},
+    },
+    "noc_operator": {
+        "label": "NOC Operatörü",
+        "permissions": {"inventory.scan", "devices.manage", "diagnostics.run", "logs.manage", "ncm.manage"},
+    },
+    "inventory_specialist": {
+        "label": "Envanter Uzmanı",
+        "permissions": {"inventory.scan", "devices.manage"},
+    },
+    "security_analyst": {
+        "label": "Güvenlik Analisti",
+        "permissions": {"diagnostics.run", "security.manage"},
+    },
+    "viewer": {
+        "label": "Salt Okunur",
+        "permissions": set(),
+    },
+    # Eski kurulumlarla geriye dönük uyumluluk.
+    "user": {
+        "label": "Standart Kullanıcı",
+        "permissions": set(),
+    },
+}
+
+
+def _role_definition(role: str) -> dict:
+    return ROLE_DEFINITIONS.get(role, ROLE_DEFINITIONS["viewer"])
+
+
+def _role_permissions(role: str) -> list[str]:
+    permissions = _role_definition(role)["permissions"]
+    return ["*"] if "*" in permissions else sorted(permissions)
+
+
+def _has_permission(user: dict, permission: str) -> bool:
+    permissions = set(user.get("permissions") or _role_permissions(user.get("role", "viewer")))
+    return "*" in permissions or permission in permissions
+
 
 def _row_to_user(row) -> dict:
-    return {"id": row[0], "username": row[1], "role": row[2], "active": bool(row[3]), "must_change_password": bool(row[4]) if len(row) > 4 else False}
+    role = row[2]
+    return {
+        "id": row[0], "username": row[1], "role": role,
+        "role_label": _role_definition(role)["label"],
+        "permissions": _role_permissions(role),
+        "active": bool(row[3]),
+        "must_change_password": bool(row[4]) if len(row) > 4 else False,
+    }
 
 
 def get_current_user(request: Request, authorization: str | None = Header(default=None)) -> dict:
@@ -1007,11 +1141,25 @@ def get_current_user(request: Request, authorization: str | None = Header(defaul
         "/api/auth/me", "/api/auth/change-password", "/api/auth/logout"
     }:
         raise _AuthError(428, "Devam etmeden önce ilk kurulum parolanızı değiştirin.")
-    return {"id": uid, "username": username, "role": role, "must_change_password": bool(must_change_password), "token": token}
+    return {
+        "id": uid, "username": username, "role": role,
+        "role_label": _role_definition(role)["label"],
+        "permissions": _role_permissions(role),
+        "must_change_password": bool(must_change_password), "token": token,
+    }
+
+
+def require_permission(permission: str):
+    def dependency(user: dict = Depends(get_current_user)) -> dict:
+        if not _has_permission(user, permission):
+            label = _role_definition(user.get("role", "viewer"))["label"]
+            raise _AuthError(403, f"Bu işlem için '{permission}' izni gerekiyor. Mevcut rol: {label}.")
+        return user
+    return dependency
 
 
 def require_admin(user: dict = Depends(get_current_user)) -> dict:
-    if user["role"] != "admin":
+    if not _has_permission(user, "system.admin"):
         raise _AuthError(403, "Bu işlem için yönetici yetkisi gerekiyor.")
     return user
 
@@ -1094,15 +1242,26 @@ def run_ping(req: PingRequest, user: dict = Depends(get_current_user)):
     success_count = len(times)
 
     if not times:
-        return {"error": f"'{target}' adresinden yanıt alınamadı (zaman aşımı / erişilemiyor)."}
+        return {
+            "success": False, "alive": False, "received": 0, "sent": count,
+            "times": [], "average": None, "avg_rtt": None,
+            "loss": 100, "packet_loss": 100,
+            "error": f"'{target}' adresinden yanıt alınamadı (zaman aşımı / erişilemiyor).",
+        }
 
     avg = sum(times) / len(times)
     loss = max(0, int(round(((count - success_count) / count) * 100)))
 
     return {
+        "success": True,
+        "alive": True,
+        "received": success_count,
+        "sent": count,
         "times": [round(t, 1) for t in times],
         "average": round(avg, 1),
+        "avg_rtt": round(avg, 1),
         "loss": loss,
+        "packet_loss": loss,
         "quality": "cok_iyi" if avg < 30 else "iyi" if avg < 80 else "orta" if avg < 150 else "kotu",
         "min": round(min(times), 1),
         "max": round(max(times), 1)
@@ -1163,7 +1322,7 @@ class PortScanRequest(BaseModel):
     preset: str = "common"
 
 @app.post("/api/tools/portscan")
-def run_portscan(req: PortScanRequest, user: dict = Depends(require_admin)):
+def run_portscan(req: PortScanRequest, user: dict = Depends(require_permission("diagnostics.run"))):
     target = (req.target or "127.0.0.1").strip()
     if len(target) > 253 or req.preset not in {"common", "web", "full"}:
         return JSONResponse(status_code=400, content={"error": "Geçersiz hedef veya tarama profili."})
@@ -1222,7 +1381,7 @@ def run_portscan(req: PortScanRequest, user: dict = Depends(require_admin)):
 COMMON_TOP_PORTS = [21, 22, 23, 25, 53, 80, 110, 135, 139, 143, 443, 445, 993, 995, 1723, 3306, 3389, 5900, 8080, 8443]
 
 @app.post("/api/tools/deep-scan")
-def run_deep_scan(user: dict = Depends(require_admin)):
+def run_deep_scan(user: dict = Depends(require_permission("diagnostics.run"))):
     """Ağdaki bilinen tüm cihazlar için hızlı port taraması yapar.
     Basit port taramasından farkı: tek bir hedef yerine envanterdeki her
     online cihazı sırayla tarar ve her biri için açık port/servis listesi
@@ -1594,16 +1753,20 @@ def get_overview(user: dict = Depends(get_current_user)):
         try:
             inet_connections = psutil.net_connections(kind="inet")
             udp_connections = psutil.net_connections(kind="udp")
+            tcp_est = sum(1 for item in inet_connections if item.status == "ESTABLISHED")
+            tcp_listen = sum(1 for item in inet_connections if item.status == "LISTEN")
             connection_stats = {
-                "tcp": sum(1 for item in inet_connections if item.status == "ESTABLISHED"),
+                "tcp": tcp_est,
+                "listen": tcp_listen,
                 "udp": len(udp_connections),
-                "total": len(inet_connections),
+                "total": tcp_est + len(udp_connections),
+                "all_sockets": len(inet_connections),
                 "supported": True,
             }
         except (OSError, RuntimeError, psutil.Error) as exc:
-            connection_stats = {"tcp": 0, "udp": 0, "total": 0, "supported": False, "error": str(exc)}
+            connection_stats = {"tcp": 0, "listen": 0, "udp": 0, "total": 0, "all_sockets": 0, "supported": False, "error": str(exc)}
     else:
-        connection_stats = {"tcp": 0, "udp": 0, "total": 0, "supported": False}
+        connection_stats = {"tcp": 0, "listen": 0, "udp": 0, "total": 0, "all_sockets": 0, "supported": False}
     internet_test = _last_status.get("internet_test") or {}
     return {
         "version": "2.5.0",
@@ -1664,8 +1827,10 @@ def get_topology(user: dict = Depends(get_current_user)):
          "logical": True, "note": "Fiziksel switch/port keşfedilmedi; bu düğüm mantıksal LAN segmentini temsil eder."},
     ]
     edges = [
-        {"from": "internet", "to": "gateway", "status": internet_status if gateway_status == "online" else gateway_status, "kind": "uplink", "logical": True},
-        {"from": "gateway", "to": "lan", "status": lan_status, "kind": "lan", "logical": True},
+        {"from": "internet", "to": "gateway", "status": internet_status if gateway_status == "online" else gateway_status, "kind": "uplink", "layer": "l3", "logical": True,
+         "source_port": None, "target_port": None},
+        {"from": "gateway", "to": "lan", "status": lan_status, "kind": "lan", "layer": "l2", "logical": True,
+         "source_port": None, "target_port": None},
     ]
 
     type_labels = {
@@ -1771,7 +1936,9 @@ def get_topology(user: dict = Depends(get_current_user)):
         edges.append({
             "from": "gateway", "to": main_sw_node_id, 
             "status": "online" if main_switch_dev.get("status") == "online" else "discovered", 
-            "kind": "trunk", "logical": False, "label": "Trunk (SFP+ 10Gbps)"
+            "kind": "trunk", "layer": "l2", "logical": False,
+            "label": "Trunk", "source_port": None,
+            "target_port": main_switch_dev.get("switch_port")
         })
 
     for idx, dev in enumerate(unique_devices_list):
@@ -1791,11 +1958,14 @@ def get_topology(user: dict = Depends(get_current_user)):
         if switch_ip and switch_ip in ip_to_node and ip_to_node[switch_ip] != node_id:
             edges.append({
                 "from": ip_to_node[switch_ip], "to": node_id, 
-                "status": edge_status, "kind": "physical_access", "logical": False, 
-                "label": str(switch_port) if switch_port else "GE Port"
+                "status": edge_status, "kind": "physical_access", "layer": "l2", "logical": False,
+                "label": str(switch_port) if switch_port else None,
+                "source_port": str(switch_port) if switch_port else None,
+                "target_port": dev.get("interface_name") or dev.get("interface")
             })
         else:
-            edges.append({"from": "lan", "to": node_id, "status": edge_status, "kind": "logical_access", "logical": True})
+            edges.append({"from": "lan", "to": node_id, "status": edge_status, "kind": "logical_access", "layer": "l2", "logical": True,
+                          "source_port": None, "target_port": dev.get("interface_name") or dev.get("interface")})
 
     return {"nodes": nodes, "edges": edges, "meta": {
         "gateway": gateway, "gateway_type": gateway_type,
@@ -1807,15 +1977,16 @@ def get_topology(user: dict = Depends(get_current_user)):
 @app.get("/api/logs")
 def get_logs_api(limit: int = 120, user: dict = Depends(get_current_user)):
     conn = db_conn()
-    rows = conn.execute("SELECT ts, level, message FROM alerts ORDER BY ts DESC LIMIT ?", (limit,)).fetchall()
+    rows = conn.execute("SELECT ts, level, message, source FROM alerts ORDER BY ts DESC LIMIT ?", (limit,)).fetchall()
     conn.close()
-    logs = [{"time": datetime.fromtimestamp(r[0]).strftime("%H:%M:%S"), "level": r[1], "message": r[2]} for r in rows]
+    logs = [{"time": datetime.fromtimestamp(r[0]).strftime("%H:%M:%S"), "level": r[1], "message": r[2],
+             "source": r[3] or "NETMON"} for r in rows]
     if not logs:
         logs = [{"time": datetime.now().strftime("%H:%M:%S"), "level": "info", "message": "NetMon Servisi Aktif", "tag": "Sistem"}]
     return {"logs": logs}
 
 @app.post("/api/logs/clear")
-def clear_logs_api(user: dict = Depends(require_admin)):
+def clear_logs_api(user: dict = Depends(require_permission("logs.manage"))):
     conn = db_conn()
     conn.execute("DELETE FROM alerts")
     conn.commit()
@@ -2074,7 +2245,7 @@ def get_nmap_status(user: dict = Depends(get_current_user)):
 
 
 @app.post("/api/devices/rename")
-def rename_device(body: DeviceRenameRequest, user: dict = Depends(require_admin)):
+def rename_device(body: DeviceRenameRequest, user: dict = Depends(require_permission("devices.manage"))):
     mac = _normalize_mac(body.mac)
     if not mac:
         return JSONResponse(status_code=400, content={"error": "MAC adresi gerekli."})
@@ -3345,7 +3516,7 @@ class AuthorizedInventoryRequest(BaseModel):
     timeout: int = 20
 
 @app.post("/api/scan_wmi_inventory")
-def trigger_wmi_scan(req: WmiScanRequest, user: dict = Depends(require_admin)):
+def trigger_wmi_scan(req: WmiScanRequest, user: dict = Depends(require_permission("inventory.scan"))):
     if not 5 <= req.timeout <= 60:
         return JSONResponse(status_code=400, content={"error": "Zaman aşımı 5-60 saniye arasında olmalıdır."})
     if not req.ip_list or len(req.ip_list) > 64:
@@ -3393,6 +3564,102 @@ def trigger_wmi_scan(req: WmiScanRequest, user: dict = Depends(require_admin)):
     return {"ok": True, "results": results, "summary": {"total": len(results), "success": succeeded, "failed": len(results) - succeeded}}
 
 
+WMI_AUTH_FAILURE_COOLDOWN_SECONDS = 15 * 60
+_wmi_auth_failure_cooldowns: dict[tuple[str, str], float] = {}
+
+
+def _wmi_auth_cooldown_remaining(ip: str, username: str) -> int:
+    key = (ip, (username or "").strip().casefold())
+    remaining = int(_wmi_auth_failure_cooldowns.get(key, 0.0) - time.time())
+    if remaining <= 0:
+        _wmi_auth_failure_cooldowns.pop(key, None)
+        return 0
+    return remaining
+
+
+def _record_wmi_auth_result(ip: str, username: str, result: dict):
+    key = (ip, (username or "").strip().casefold())
+    if result.get("error_code") == "access_denied":
+        _wmi_auth_failure_cooldowns[key] = time.time() + WMI_AUTH_FAILURE_COOLDOWN_SECONDS
+    elif result.get("status") == "Success":
+        _wmi_auth_failure_cooldowns.pop(key, None)
+
+
+def _inventory_failure_diagnostics(
+    *, ip: str, requested_protocol: str, protocol: str, result: dict,
+    ports: set, credential_source: str, account: str = ""
+) -> dict:
+    """Build an actionable failure report without returning any credential secret."""
+    existing = dict(result.get("diagnostics") or {})
+    raw_error = str(result.get("error_message") or result.get("error") or "").strip()
+    lowered = raw_error.casefold()
+    code = result.get("error_code")
+    if not code:
+        if protocol == "ssh" and any(x in lowered for x in ("authentication failed", "auth fail", "permission denied")):
+            code = "ssh_auth_failed"
+        elif protocol == "ssh" and "host key" in lowered:
+            code = "ssh_host_key_rejected"
+        elif protocol == "ssh" and any(x in lowered for x in ("timed out", "timeout", "connection refused")):
+            code = "ssh_unreachable"
+        elif protocol == "snmp":
+            code = "snmp_no_response"
+        else:
+            code = f"{protocol}_failed"
+
+    catalog = {
+        "missing_credentials": (
+            "Kimlik bilgisi tarama başlamadan önce eksik kaldı.",
+            ["Modalda yetkili hesabı girin veya Ayarlar > Yetkili Envanter bölümüne kaydedin."],
+        ),
+        "credential_cooldown": (
+            "Önceki erişim reddi nedeniyle hesap kilitlenmesini önleyen güvenlik beklemesi etkin.",
+            ["Gösterilen bekleme süresi dolmadan yeni parola denemesi yapmayın."],
+        ),
+        "management_ports_closed": (
+            "NetMon sunucusundan hedefin Windows yönetim portlarına TCP bağlantısı kurulamadı.",
+            ["TCP 135 veya WinRM 5985/5986 erişimini ve hedef güvenlik duvarını kontrol edin."],
+        ),
+        "protocol_mismatch": (
+            "Seçilen protokol keşfedilen cihaz türüyle uyuşmuyor.",
+            ["Ağ cihazlarında SNMP, Windows uçlarında WMI/WinRM, Linux uçlarında SSH seçin."],
+        ),
+        "ssh_auth_failed": (
+            "SSH sunucusuna ulaşıldı ancak kullanıcı adı/parola yetkilendirilmedi.",
+            ["Hesabı, parolayı ve sshd PasswordAuthentication politikasını kontrol edin."],
+        ),
+        "ssh_host_key_rejected": (
+            "SSH host anahtarı NetMon sunucusunun known_hosts kaydında güvenilir değil.",
+            ["Hedef anahtar parmak izini doğrulayıp NetMon servis hesabının known_hosts dosyasına ekleyin."],
+        ),
+        "ssh_unreachable": (
+            "SSH oturumu kimlik doğrulamadan önce kurulamadı.",
+            ["TCP 22, sshd servisi, yönlendirme ve ACL kurallarını kontrol edin."],
+        ),
+        "snmp_no_response": (
+            "SNMP isteğine süre içinde yanıt gelmedi; yanlış community ile ACL/UDP engeli aynı belirtiyi üretir.",
+            ["UDP 161 erişimini, SNMP sürümünü, salt-okuma community değerini ve cihaz ACL'sini doğrulayın."],
+        ),
+    }
+    cause, actions = catalog.get(code, (
+        existing.get("failure", {}).get("cause") or "Yönetim protokolü hedefte başarıyla tamamlanamadı.",
+        existing.get("failure", {}).get("recommended_actions") or ["Ham hata ve bağlantı kanıtlarını hedef cihaz günlükleriyle eşleştirin."],
+    ))
+    existing.update({
+        "target": ip,
+        "requested_protocol": requested_protocol,
+        "effective_protocol": protocol,
+        "management_ports": sorted(int(p) for p in ports),
+        "credential_source": credential_source,
+        "account": account or None,
+        "error_code": code,
+        "cause": cause,
+        "recommended_actions": actions,
+    })
+    if raw_error:
+        existing["raw_error"] = raw_error[:1200]
+    return existing
+
+
 def _run_windows_inventory_on_devices(devices: list[dict]):
     """Derin taramada Windows adayı cihazları kayıtlı yetkiyle topluca tara."""
     if not (WMI_USERNAME and WMI_PASSWORD):
@@ -3429,8 +3696,125 @@ def _run_windows_inventory_on_devices(devices: list[dict]):
     return results
 
 
+@app.post("/api/devices/inventory/preflight")
+def preflight_authorized_inventory(req: AuthorizedInventoryRequest, user: dict = Depends(require_permission("inventory.scan"))):
+    """Check reachability, credentials and authorization without persisting inventory."""
+    if not 5 <= req.timeout <= 60:
+        return JSONResponse(status_code=400, content={"error": "Zaman aşımı 5-60 saniye arasında olmalıdır."})
+    try:
+        parsed = ipaddress.ip_address(req.ip.strip())
+    except ValueError:
+        return JSONResponse(status_code=400, content={"error": "Geçersiz hedef IP adresi."})
+    if not _is_allowed_inventory_ip(parsed):
+        return JSONResponse(status_code=400, content={"error": "Yalnızca yerel/özel IPv4 hedefleri test edilebilir."})
+    if req.protocol not in {"auto", "windows", "ssh", "snmp"}:
+        return JSONResponse(status_code=400, content={"error": "Geçersiz envanter protokolü."})
+
+    ip = str(parsed)
+    checks = [{"id": "target", "label": "Hedef doğrulama", "status": "pass", "detail": f"{ip} özel/yerel hedef olarak doğrulandı."}]
+    tcp_ports = (22, 135, 445, 5985, 5986)
+
+    def probe(port):
+        started = time.perf_counter()
+        try:
+            with socket.create_connection((ip, port), timeout=0.9):
+                return port, round((time.perf_counter() - started) * 1000, 1)
+        except OSError:
+            return None
+
+    observed = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(tcp_ports)) as executor:
+        for item in executor.map(probe, tcp_ports):
+            if item:
+                observed[item[0]] = item[1]
+    ports = set(observed)
+    checks.append({
+        "id": "ports", "label": "Yönetim kanalı",
+        "status": "pass" if ports else "warn",
+        "detail": ("Açık TCP portları: " + ", ".join(f"{p} ({observed[p]} ms)" for p in sorted(ports))) if ports else "TCP 22/135/445/5985/5986 portlarında yanıt alınmadı. SNMP UDP 161 ayrıca yetkilendirme adımında sınanır.",
+        "evidence": {"open_tcp_ports": sorted(ports), "latency_ms": observed},
+    })
+
+    requested_protocol = req.protocol
+    protocol = requested_protocol
+    if protocol == "auto":
+        if ports.intersection({135, 445, 5985, 5986}):
+            protocol = "windows"
+        elif 22 in ports:
+            protocol = "ssh"
+        elif req.snmp_community or SNMP_COMMUNITY:
+            protocol = "snmp"
+        else:
+            protocol = "none"
+    checks.append({
+        "id": "protocol", "label": "Protokol seçimi",
+        "status": "pass" if protocol != "none" else "fail",
+        "detail": f"Etkin protokol: {protocol.upper()}" if protocol != "none" else "Uygun yönetim protokolü belirlenemedi.",
+    })
+
+    credential_source = "none"
+    account = ""
+    result = {"status": "Unavailable", "error_code": "management_channel_not_detected", "error_message": "Uygun yönetim kanalı bulunamadı."}
+    if protocol == "windows":
+        account = req.username or WMI_USERNAME
+        password = req.password or WMI_PASSWORD
+        credential_source = "request" if (req.username or req.password) else "stored_dpapi" if (WMI_USERNAME or WMI_PASSWORD) else "none"
+        credentials_ok = bool(account and password)
+        checks.append({"id": "credentials", "label": "Windows kimliği", "status": "pass" if credentials_ok else "fail",
+                       "detail": f"{account} hesabı ({'bu istek' if credential_source == 'request' else 'DPAPI kaydı'}) kullanılacak." if credentials_ok else "Uzak Windows testi için kullanıcı adı ve parola bulunamadı."})
+        cooldown = _wmi_auth_cooldown_remaining(ip, account)
+        if cooldown:
+            result = {"status": "Unavailable", "error_code": "credential_cooldown", "retry_after_seconds": cooldown,
+                      "error_message": f"Hesap kilitlenmesini önlemek için {cooldown} saniye bekleniyor."}
+        elif credentials_ok:
+            scanner = WmiNetworkScanner(username=account, password=password, timeout=req.timeout, verify_tls=WINRM_VERIFY_TLS)
+            result = scanner.test_access(ip)
+            _record_wmi_auth_result(ip, account, result)
+        else:
+            result = {"status": "Unavailable", "error_code": "missing_credentials", "error_message": "Windows kullanıcı adı ve parola gerekli."}
+    elif protocol == "ssh":
+        account = req.username or SSH_USERNAME
+        password = req.password or SSH_PASSWORD
+        credential_source = "request" if (req.username or req.password) else "stored_dpapi" if (SSH_USERNAME or SSH_PASSWORD) else "none"
+        credentials_ok = bool(account and password)
+        checks.append({"id": "credentials", "label": "SSH kimliği", "status": "pass" if credentials_ok else "fail",
+                       "detail": f"{account} hesabı kullanılacak." if credentials_ok else "SSH kullanıcı adı ve parola bulunamadı."})
+        result = deep_discovery.test_ssh_access(ip, account, password, timeout=max(5, min(req.timeout, 60))) if credentials_ok else {
+            "status": "Unavailable", "error_code": "missing_credentials", "error": "SSH kullanıcı adı ve parola gerekli."
+        }
+    elif protocol == "snmp":
+        community = req.snmp_community or SNMP_COMMUNITY
+        credential_source = "request" if req.snmp_community else "stored_dpapi" if SNMP_COMMUNITY else "none"
+        checks.append({"id": "credentials", "label": "SNMP kimliği", "status": "pass" if community else "fail",
+                       "detail": "Salt-okuma community hazır; değer güvenlik nedeniyle gösterilmiyor." if community else "SNMP community bulunamadı."})
+        result = deep_discovery.scan_snmp_deep(ip, community=community, timeout=max(1, min(req.timeout, 10))) if community else {
+            "status": "Unavailable", "error_code": "missing_credentials", "error": "SNMP community gerekli."
+        }
+
+    authorized = result.get("status") == "Success"
+    diagnostics = _inventory_failure_diagnostics(
+        ip=ip, requested_protocol=requested_protocol, protocol=protocol, result=result,
+        ports=ports, credential_source=credential_source, account=account,
+    ) if not authorized else {
+        "target": ip, "requested_protocol": requested_protocol, "effective_protocol": protocol,
+        "management_ports": sorted(ports), "credential_source": credential_source, "account": account or None,
+        **(result.get("diagnostics") or {}),
+    }
+    checks.append({
+        "id": "authorization", "label": "Gerçek yetkilendirme", "status": "pass" if authorized else "fail",
+        "detail": (f"{protocol.upper()} bağlantısı ve okuma yetkisi doğrulandı." if authorized else diagnostics.get("cause") or result.get("error_message") or result.get("error") or "Yetkilendirme başarısız."),
+        "error_code": None if authorized else diagnostics.get("error_code"),
+    })
+    _audit(user["username"], "inventory_preflight", f"target={ip} protocol={protocol} status={'ready' if authorized else 'failed'}", success=authorized)
+    return {
+        "ok": authorized, "ready": authorized, "target": ip, "protocol": protocol,
+        "checks": checks, "diagnostics": diagnostics,
+        "summary": "Hedef yetkili envanter taramasına hazır." if authorized else "Hazırlık testi bir engel tespit etti.",
+    }
+
+
 @app.post("/api/devices/inventory")
-def scan_authorized_device_inventory(req: AuthorizedInventoryRequest, user: dict = Depends(require_admin)):
+def scan_authorized_device_inventory(req: AuthorizedInventoryRequest, user: dict = Depends(require_permission("inventory.scan"))):
     if not 5 <= req.timeout <= 60:
         return JSONResponse(status_code=400, content={"error": "Zaman aşımı 5-60 saniye arasında olmalıdır."})
     try:
@@ -3468,6 +3852,7 @@ def scan_authorized_device_inventory(req: AuthorizedInventoryRequest, user: dict
             ports.update(port for port in executor.map(probe, (22, 135, 445, 5985, 5986, 3389)) if port)
         device.setdefault("classification", {})["open_ports"] = sorted(ports)
 
+    requested_protocol = req.protocol
     protocol = req.protocol
     if protocol == "auto":
         if ports.intersection({135, 445, 3389, 5985, 5986}) or device.get("type") in {"computer", "pc", "laptop", "server"}:
@@ -3477,26 +3862,68 @@ def scan_authorized_device_inventory(req: AuthorizedInventoryRequest, user: dict
         elif 161 in ports or device.get("type") in {"router", "switch", "access_point", "firewall", "printer", "network_device"}:
             protocol = "snmp"
         else:
-            return {"ok": False, "protocol": "none", "result": {
+            result = {
                 "status": "Unavailable",
+                "error_code": "management_channel_not_detected",
                 "error_message": "Destekte WMI/WinRM, SSH veya SNMP yönetim kanalı tespit edilemedi. Telefon/tablet için üretici MDM API'si ya da cihaz ajanı gerekir.",
-            }}
+            }
+            result["diagnostics"] = _inventory_failure_diagnostics(
+                ip=ip, requested_protocol=requested_protocol, protocol="none", result=result,
+                ports=ports, credential_source="none",
+            )
+            return {"ok": False, "protocol": "none", "result": result}
 
+    credential_source = "none"
+    account = ""
     if protocol == "windows":
-        scanner = WmiNetworkScanner(
-            username=req.username or WMI_USERNAME or None,
-            password=req.password or WMI_PASSWORD or None,
-            timeout=req.timeout,
-            verify_tls=WINRM_VERIFY_TLS,
-        )
-        result = scanner.scan_network([ip], max_workers=1)[0]
+        network_device_types = {"router", "switch", "access_point", "firewall", "printer", "network_device"}
+        effective_username = req.username or WMI_USERNAME
+        effective_password = req.password or WMI_PASSWORD
+        credential_source = "request" if (req.username or req.password) else "stored_dpapi" if (WMI_USERNAME or WMI_PASSWORD) else "none"
+        account = effective_username
+        if device.get("type") in network_device_types:
+            result = {
+                "ip_address": ip,
+                "status": "Unavailable",
+                "error_code": "protocol_mismatch",
+                "error_message": "Bu hedef bir ağ cihazı olarak sınıflandırıldı; Windows WMI/WinRM yerine SNMP envanteri seçin.",
+            }
+        elif not device.get("is_self") and not (effective_username and effective_password):
+            result = {
+                "ip_address": ip,
+                "status": "Unavailable",
+                "error_code": "missing_credentials",
+                "error_message": "Uzak Windows envanteri için WMI kullanıcı adı ve parola gerekli. Doğru hesabı modalda girin veya Ayarlar bölümüne kaydedin.",
+            }
+        else:
+            cooldown_remaining = _wmi_auth_cooldown_remaining(ip, effective_username)
+            if cooldown_remaining:
+                result = {
+                    "ip_address": ip,
+                    "status": "Unavailable",
+                    "error_code": "credential_cooldown",
+                    "retry_after_seconds": cooldown_remaining,
+                    "error_message": f"Hesap kilitlenmesini önlemek için bu hedefte yeni WMI parola denemesi {cooldown_remaining} saniye engellendi.",
+                }
+            else:
+                scanner = WmiNetworkScanner(
+                    username=effective_username or None,
+                    password=effective_password or None,
+                    timeout=req.timeout,
+                    verify_tls=WINRM_VERIFY_TLS,
+                )
+                result = scanner.scan_network([ip], max_workers=1)[0]
+                _record_wmi_auth_result(ip, effective_username, result)
         if result.get("status") == "Success":
             device["wmi_inventory"] = result
             _persist_device_inventory(device, result, result.get("inventory_source") or "WMI/WinRM")
     elif protocol == "ssh":
+        effective_ssh_username = req.username or SSH_USERNAME
+        credential_source = "request" if (req.username or req.password) else "stored_dpapi" if (SSH_USERNAME or SSH_PASSWORD) else "none"
+        account = effective_ssh_username
         result = deep_discovery.scan_linux_deep(
             ip,
-            username=req.username or SSH_USERNAME,
+            username=effective_ssh_username,
             password=req.password or SSH_PASSWORD,
             timeout=max(5, min(req.timeout, 60)),
         )
@@ -3505,11 +3932,21 @@ def scan_authorized_device_inventory(req: AuthorizedInventoryRequest, user: dict
             device["fallback_inventory"] = result
             _persist_device_inventory(device, result, "SSH")
     else:
-        result = deep_discovery.scan_snmp_deep(
-            ip,
-            community=req.snmp_community or SNMP_COMMUNITY,
-            timeout=max(1, min(req.timeout, 10)),
-        )
+        effective_community = req.snmp_community or SNMP_COMMUNITY
+        credential_source = "request" if req.snmp_community else "stored_dpapi" if SNMP_COMMUNITY else "none"
+        if not effective_community:
+            result = {
+                "ip_address": ip,
+                "status": "Unavailable",
+                "error_code": "missing_credentials",
+                "error_message": "SNMP envanteri için salt-okuma community değeri gerekli. Ağ yöneticinizden alın ve yalnız SNMP Community alanına girin.",
+            }
+        else:
+            result = deep_discovery.scan_snmp_deep(
+                ip,
+                community=effective_community,
+                timeout=max(1, min(req.timeout, 10)),
+            )
         if result.get("status") == "Success":
             device["deep_inventory"] = result
             device["fallback_inventory"] = result
@@ -3517,7 +3954,26 @@ def scan_authorized_device_inventory(req: AuthorizedInventoryRequest, user: dict
 
     if result.get("status") != "Success":
         message = result.get("error_message") or result.get("error") or "Yetkili envanter alınamadı."
-        device["inventory_error"] = {"code": result.get("error_code", f"{protocol}_failed"), "message": message, "ts": time.time()}
+        result["diagnostics"] = _inventory_failure_diagnostics(
+            ip=ip, requested_protocol=requested_protocol, protocol=protocol, result=result,
+            ports=ports, credential_source=credential_source, account=account,
+        )
+        result["error_code"] = result["diagnostics"].get("error_code", result.get("error_code", f"{protocol}_failed"))
+        device["inventory_error"] = {
+            "code": result.get("error_code", f"{protocol}_failed"),
+            "message": message,
+            "diagnostics": result["diagnostics"],
+            "ts": time.time(),
+        }
+    else:
+        result.setdefault("diagnostics", {}).update({
+            "target": ip,
+            "requested_protocol": requested_protocol,
+            "effective_protocol": protocol,
+            "management_ports": sorted(ports),
+            "credential_source": credential_source,
+            "account": account or None,
+        })
     _enrich_device_inventory(device, allow_deep=False)
     if is_new_cache_entry:
         cached_devices.append(device)
@@ -3536,7 +3992,7 @@ class NetworkScanRequest(BaseModel):
     mode: str = "agentless"  # "agentless" (şifresiz açık protokoller) veya "deep" (yetkili WMI/SSH)
 
 @app.post("/api/devices/scan")
-def trigger_network_scan(req: Optional[NetworkScanRequest] = None, user: dict = Depends(require_admin)):
+def trigger_network_scan(req: Optional[NetworkScanRequest] = None, user: dict = Depends(require_permission("inventory.scan"))):
     if not _device_scan_lock.acquire(blocking=False):
         return JSONResponse(status_code=409, content={"error": "Tarama zaten devam ediyor."})
 
@@ -3674,7 +4130,7 @@ def list_scenarios(user: dict = Depends(get_current_user)):
     return [{"id": key, "label": val["label"]} for key, val in SCENARIOS.items()]
 
 @app.post("/api/simulate/start")
-def start_simulation(req: SimulateRequest, user: dict = Depends(require_admin)):
+def start_simulation(req: SimulateRequest, user: dict = Depends(require_permission("security.manage"))):
     if req.scenario not in SCENARIOS:
         return {"ok": False, "error": "Bilinmeyen senaryo"}
     simulation_state["active"] = True
@@ -3684,7 +4140,7 @@ def start_simulation(req: SimulateRequest, user: dict = Depends(require_admin)):
     return {"ok": True, "scenario": req.scenario, "label": SCENARIOS[req.scenario]["label"]}
 
 @app.post("/api/simulate/stop")
-def stop_simulation(user: dict = Depends(require_admin)):
+def stop_simulation(user: dict = Depends(require_permission("security.manage"))):
     simulation_state["active"] = False
     simulation_state["scenario"] = None
     simulation_state["started_at"] = None
@@ -3705,7 +4161,7 @@ class DosSimulateRequest(BaseModel):
     intensity: str = "medium"
 
 @app.get("/api/admin/xoc/metrics")
-def get_admin_xoc_metrics(user: dict = Depends(require_admin)):
+def get_admin_xoc_metrics(user: dict = Depends(require_permission("security.manage"))):
     """Ölçülebilen NOC metriklerini ve simülasyon yetenek durumunu döndürür."""
     cpu = ram = None
     active_conns = None
@@ -3777,7 +4233,7 @@ def get_admin_xoc_metrics(user: dict = Depends(require_admin)):
     }
 
 @app.post("/api/admin/xoc/blacklist/add")
-def add_to_blacklist(req: BlacklistRequest, user: dict = Depends(require_admin)):
+def add_to_blacklist(req: BlacklistRequest, user: dict = Depends(require_permission("security.manage"))):
     """IP'yi yalnız oturum içi izleme listesine ekler; firewall kuralı yazmaz."""
     ip = req.ip.strip()
     try:
@@ -3790,7 +4246,7 @@ def add_to_blacklist(req: BlacklistRequest, user: dict = Depends(require_admin))
     return {"ok": True, "message": f"{ip} izleme listesine eklendi; firewall engeli uygulanmadı.", "blacklisted_ips": list(_blacklist_ips)}
 
 @app.post("/api/admin/xoc/blacklist/remove")
-def remove_from_blacklist(req: BlacklistRequest, user: dict = Depends(require_admin)):
+def remove_from_blacklist(req: BlacklistRequest, user: dict = Depends(require_permission("security.manage"))):
     """IP'yi oturum içi izleme listesinden kaldırır."""
     ip = req.ip.strip()
     _blacklist_ips.discard(ip)
@@ -3798,7 +4254,7 @@ def remove_from_blacklist(req: BlacklistRequest, user: dict = Depends(require_ad
     return {"ok": True, "message": f"{ip} izleme listesinden kaldırıldı.", "blacklisted_ips": list(_blacklist_ips)}
 
 @app.post("/api/admin/xoc/simulate-dos")
-def start_dos_simulation(req: DosSimulateRequest, user: dict = Depends(require_admin)):
+def start_dos_simulation(req: DosSimulateRequest, user: dict = Depends(require_permission("security.manage"))):
     """ADMIN KONTROLÜ: Belirli hedefe yönelik güvenli / simüle edilmiş DoS yük testi başlatır."""
     try:
         target_ip = ipaddress.ip_address(req.target_ip.strip())
@@ -3999,7 +4455,7 @@ class SettingsUpdate(BaseModel):
 class CreateUserRequest(BaseModel):
     username: str
     password: str
-    role: str = "user"  # "admin" | "user"
+    role: str = "viewer"
 
 
 class UpdateUserRequest(BaseModel):
@@ -4009,7 +4465,7 @@ class UpdateUserRequest(BaseModel):
 
 
 def _valid_username(value: str) -> bool:
-    return bool(re.fullmatch(r"[\w.@-]{3,64}", (value or "").strip(), re.UNICODE))
+    return bool(re.fullmatch(r"[\w.@\\-]{3,64}", (value or "").strip(), re.UNICODE))
 
 
 def _validate_settings_update(updates: dict) -> str | None:
@@ -4055,6 +4511,8 @@ def _validate_settings_update(updates: dict) -> str | None:
             updates[key] = str(updates[key]).strip()
             if len(updates[key]) > 256:
                 return f"{key} en fazla 256 karakter olabilir."
+    if "wmi_username" in updates and "/" in updates["wmi_username"]:
+        return "WMI kullanıcı adı DOMAIN\\kullanıcı veya kullanıcı@domain biçiminde olmalıdır; '/' kullanmayın."
     for key in SECRET_SETTING_KEYS:
         if key in updates and len(str(updates[key])) > 1024:
             return f"{key} en fazla 1024 karakter olabilir."
@@ -4144,7 +4602,13 @@ def api_login(body: LoginRequest):
         ad_server = settings.get("ad_server")
         ad_domain = settings.get("ad_domain")
         if ad_server and ad_domain:
-            user_dn = f"{body.username}@{ad_domain}"
+            if "\\" in body.username:
+                u_clean = body.username.split("\\", 1)[1]
+                user_dn = f"{u_clean}@{ad_domain}"
+            elif "@" in body.username:
+                user_dn = body.username
+            else:
+                user_dn = f"{body.username}@{ad_domain}"
             server = Server(ad_server, get_info=ALL, connect_timeout=2)
             c = Connection(server, user=user_dn, password=body.password, auto_bind=True)
             c.unbind()
@@ -4154,7 +4618,7 @@ def api_login(body: LoginRequest):
                 new_hash = _hash_password(secrets.token_urlsafe(32), new_salt)
                 conn.execute(
                     "INSERT INTO users (username, password_hash, salt, role, created_at, must_change_password) VALUES (?, ?, ?, ?, ?, ?)",
-                    (body.username, new_hash, new_salt, 'user', time.time(), 0)
+                    (body.username, new_hash, new_salt, 'viewer', time.time(), 0)
                 )
                 conn.commit()
                 row = conn.execute(
@@ -4194,7 +4658,12 @@ def api_login(body: LoginRequest):
     conn.commit()
     conn.close()
     _audit(username, "login", "başarılı giriş", success=True)
-    return {"ok": True, "token": token, "user": {"username": username, "role": role, "must_change_password": bool(must_change_password)}}
+    return {"ok": True, "token": token, "user": {
+        "username": username, "role": role,
+        "role_label": _role_definition(role)["label"],
+        "permissions": _role_permissions(role),
+        "must_change_password": bool(must_change_password),
+    }}
 
 
 @app.post("/api/auth/logout")
@@ -4210,7 +4679,11 @@ def api_logout(authorization: str | None = Header(default=None)):
 
 @app.get("/api/auth/me")
 def api_me(user: dict = Depends(get_current_user)):
-    return {"username": user["username"], "role": user["role"], "must_change_password": user.get("must_change_password", False)}
+    return {
+        "username": user["username"], "role": user["role"],
+        "role_label": user.get("role_label"), "permissions": user.get("permissions", []),
+        "must_change_password": user.get("must_change_password", False),
+    }
 
 
 @app.post("/api/auth/change-password")
@@ -4246,15 +4719,15 @@ def api_change_password(body: ChangePasswordRequest, user: dict = Depends(get_cu
 def api_get_settings(user: dict = Depends(get_current_user)):
     s = get_all_settings()
     return {
-        "settings": _public_settings(s, include_management_metadata=user.get("role") == "admin"),
+        "settings": _public_settings(s, include_management_metadata=_has_permission(user, "system.settings.manage")),
         "version": "2.5.0",
         "platform": platform.platform(),
-        "db_path": str(DB_PATH) if user.get("role") == "admin" else None,
+        "db_path": str(DB_PATH) if _has_permission(user, "system.settings.manage") else None,
     }
 
 
 @app.post("/api/settings")
-def api_set_settings(body: SettingsUpdate, user: dict = Depends(require_admin)):
+def api_set_settings(body: SettingsUpdate, user: dict = Depends(require_permission("system.settings.manage"))):
     updates = body.model_dump(exclude_none=True)
     validation_error = _validate_settings_update(updates)
     if validation_error:
@@ -4270,7 +4743,7 @@ def api_set_settings(body: SettingsUpdate, user: dict = Depends(require_admin)):
 
 
 @app.post("/api/settings/reset")
-def api_reset_settings(user: dict = Depends(require_admin)):
+def api_reset_settings(user: dict = Depends(require_permission("system.settings.manage"))):
     conn = db_conn()
     conn.execute("DELETE FROM settings")
     conn.commit()
@@ -4281,10 +4754,19 @@ def api_reset_settings(user: dict = Depends(require_admin)):
 
 
 # ------------------------------------------------------------
-# Yönetim sekmesi: kullanıcı yönetimi (sadece admin)
+# Yönetim sekmesi: rol ve kullanıcı yönetimi
 # ------------------------------------------------------------
+@app.get("/api/admin/roles")
+def api_list_roles(user: dict = Depends(require_permission("users.manage"))):
+    order = ("admin", "noc_operator", "inventory_specialist", "security_analyst", "viewer")
+    return {"roles": [
+        {"id": role, "label": ROLE_DEFINITIONS[role]["label"], "permissions": _role_permissions(role)}
+        for role in order
+    ]}
+
+
 @app.get("/api/admin/users")
-def api_list_users(user: dict = Depends(require_admin)):
+def api_list_users(user: dict = Depends(require_permission("users.manage"))):
     conn = db_conn()
     rows = conn.execute(
         "SELECT id, username, role, active, must_change_password FROM users ORDER BY id"
@@ -4294,11 +4776,11 @@ def api_list_users(user: dict = Depends(require_admin)):
 
 
 @app.post("/api/admin/users")
-def api_create_user(body: CreateUserRequest, user: dict = Depends(require_admin)):
+def api_create_user(body: CreateUserRequest, user: dict = Depends(require_permission("users.manage"))):
     body.username = body.username.strip()
     if not _valid_username(body.username):
         return JSONResponse(status_code=400, content={"error": "Kullanıcı adı 3-64 karakter olmalı; harf, sayı, nokta, @, _ veya - içerebilir."})
-    if body.role not in ("admin", "user"):
+    if body.role not in ROLE_DEFINITIONS:
         return JSONResponse(status_code=400, content={"error": "Geçersiz rol."})
     if not 12 <= len(body.password) <= 512:
         return JSONResponse(status_code=400, content={"error": "Şifre 12-512 karakter arasında olmalı."})
@@ -4321,7 +4803,7 @@ def api_create_user(body: CreateUserRequest, user: dict = Depends(require_admin)
 
 
 @app.post("/api/admin/users/{user_id}")
-def api_update_user(user_id: int, body: UpdateUserRequest, user: dict = Depends(require_admin)):
+def api_update_user(user_id: int, body: UpdateUserRequest, user: dict = Depends(require_permission("users.manage"))):
     conn = db_conn()
     target = conn.execute("SELECT id, role, active FROM users WHERE id=?", (user_id,)).fetchone()
     if target is None:
@@ -4329,7 +4811,7 @@ def api_update_user(user_id: int, body: UpdateUserRequest, user: dict = Depends(
         return JSONResponse(status_code=404, content={"error": "Kullanıcı bulunamadı."})
 
     # Son kalan admin'i kazara kilitlemeyi/rütbe düşürmeyi engelle.
-    if (body.role == "user" or body.active is False) and target[1] == "admin" and bool(target[2]):
+    if ((body.role is not None and body.role != "admin") or body.active is False) and target[1] == "admin" and bool(target[2]):
         admin_count = conn.execute(
             "SELECT COUNT(*) FROM users WHERE role='admin' AND active=1"
         ).fetchone()[0]
@@ -4338,7 +4820,7 @@ def api_update_user(user_id: int, body: UpdateUserRequest, user: dict = Depends(
             return JSONResponse(status_code=400, content={"error": "Son admin hesabı devre dışı bırakılamaz veya rütbesi düşürülemez."})
 
     if body.role is not None:
-        if body.role not in ("admin", "user"):
+        if body.role not in ROLE_DEFINITIONS:
             conn.close()
             return JSONResponse(status_code=400, content={"error": "Geçersiz rol."})
         conn.execute("UPDATE users SET role=? WHERE id=?", (body.role, user_id))
@@ -4368,7 +4850,7 @@ def api_update_user(user_id: int, body: UpdateUserRequest, user: dict = Depends(
 
 
 @app.delete("/api/admin/users/{user_id}")
-def api_delete_user(user_id: int, user: dict = Depends(require_admin)):
+def api_delete_user(user_id: int, user: dict = Depends(require_permission("users.manage"))):
     conn = db_conn()
     target = conn.execute("SELECT role, active FROM users WHERE id=?", (user_id,)).fetchone()
     if target is None:
@@ -4390,7 +4872,7 @@ def api_delete_user(user_id: int, user: dict = Depends(require_admin)):
 
 
 @app.get("/api/admin/audit-log")
-def api_audit_log(limit: int = 200, user: dict = Depends(require_admin)):
+def api_audit_log(limit: int = 200, user: dict = Depends(require_permission("users.manage"))):
     conn = db_conn()
     rows = conn.execute(
         "SELECT ts, username, action, detail, success FROM audit_log ORDER BY ts DESC LIMIT ?",
@@ -4412,8 +4894,8 @@ def api_audit_log(limit: int = 200, user: dict = Depends(require_admin)):
 def get_ipam_data(user: dict = Depends(get_current_user)):
     devices_list = _devices_cache.get("data", [])
     gateway = _last_status.get("gateway") or ""
-    
-    # 1. IP Conflict Analysis
+
+    # 1. Aynı keşif anında aynı IP ile gözlenen farklı MAC adresleri.
     ip_to_macs = {}
     ip_to_devs = {}
     for d in devices_list:
@@ -4435,25 +4917,65 @@ def get_ipam_data(user: dict = Depends(get_current_user)):
                 "message": f"{ip} adresi {len(macs)} farklı MAC adresi ({', '.join(macs)}) tarafından aynı anda talep ediliyor!"
             })
             
-    # 2. Subnet pool estimation
-    primary_subnet = "192.168.1.0/24"
-    if gateway:
-        parts = gateway.split(".")
-        if len(parts) == 4:
-            primary_subnet = f"{parts[0]}.{parts[1]}.{parts[2]}.0/24"
-    elif devices_list:
-        sample_ip = devices_list[0].get("ip", "")
-        parts = sample_ip.split(".")
-        if len(parts) == 4:
-            primary_subnet = f"{parts[0]}.{parts[1]}.{parts[2]}.0/24"
+    # 2. Subnet görünümü. Sabit ağ, genel DNS veya DHCP aralığı üretmeyiz.
+    try:
+        network_ctx = diag.get_network_context() or {}
+    except Exception:
+        network_ctx = {}
 
-    total_ips = 254
-    used_ips = len([d for d in devices_list if d.get("ip")])
-    if gateway and not any(d.get("ip") == gateway for d in devices_list):
-        used_ips += 1
-        
-    free_ips = max(0, total_ips - used_ips)
-    utilization_pct = round((used_ips / total_ips) * 100, 1) if total_ips else 0
+    observed_ips = []
+    for device in devices_list:
+        try:
+            candidate = ipaddress.ip_address(device.get("ip") or "")
+            if candidate.version == 4 and not candidate.is_loopback and not candidate.is_multicast:
+                observed_ips.append(candidate)
+        except ValueError:
+            continue
+
+    network = None
+    subnet_source = None
+    try:
+        ctx_network = ipaddress.ip_network(network_ctx.get("cidr") or "", strict=False)
+        if ctx_network.version == 4:
+            network = ctx_network
+            subnet_source = "local_interface"
+    except ValueError:
+        pass
+
+    if observed_ips and (network is None or not any(ip in network for ip in observed_ips)):
+        buckets = collections.Counter(
+            ipaddress.ip_network(f"{ip}/24", strict=False)
+            for ip in observed_ips if ip.is_private
+        )
+        if buckets:
+            network = buckets.most_common(1)[0][0]
+            subnet_source = "derived_from_observations"
+
+    if network is not None:
+        total_ips = max(0, network.num_addresses - (2 if network.prefixlen <= 30 else 0))
+        used_set = {
+            ip for ip in observed_ips
+            if ip in network and ip not in (network.network_address, network.broadcast_address)
+        }
+        effective_gateway = None
+        gateway_candidates = [gateway, network_ctx.get("gateway")]
+        gateway_candidates.extend(d.get("ip") for d in devices_list if d.get("is_gateway"))
+        for gateway_candidate in gateway_candidates:
+            try:
+                gateway_obj = ipaddress.ip_address(gateway_candidate or "")
+                if gateway_obj in network:
+                    effective_gateway = str(gateway_obj)
+                    used_set.add(gateway_obj)
+                    break
+            except ValueError:
+                continue
+        used_ips = len(used_set)
+        free_ips = max(0, total_ips - used_ips)
+        utilization_pct = round((used_ips / total_ips) * 100, 1) if total_ips else 0
+    else:
+        total_ips = used_ips = free_ips = 0
+        utilization_pct = 0.0
+        effective_gateway = None
     
     status = "normal"
     if conflicts:
@@ -4463,17 +4985,20 @@ def get_ipam_data(user: dict = Depends(get_current_user)):
     elif utilization_pct >= 75:
         status = "warning"
 
-    subnets = [{
-        "cidr": primary_subnet,
-        "gateway": gateway or "192.168.1.1",
+    subnets = [] if network is None else [{
+        "cidr": str(network),
+        "source": subnet_source,
+        "gateway": effective_gateway,
         "total_hosts": total_ips,
         "used_hosts": used_ips,
         "free_hosts": free_ips,
-        "reserved_hosts": 2,
+        "free_hosts_are_observed": False,
+        "reserved_hosts": 2 if network.prefixlen <= 30 else 0,
         "utilization_pct": utilization_pct,
         "status": status,
-        "dhcp_range": f"{primary_subnet.rsplit('.', 1)[0]}.50 - {primary_subnet.rsplit('.', 1)[0]}.250",
-        "dns_servers": ["8.8.8.8", "1.1.1.1"]
+        "dhcp_range": None,
+        "dns_servers": network_ctx.get("dns_servers") or [],
+        "note": "Boş IP sayısı son keşifte gözlenmeyen adresleri gösterir; DHCP tahsis kaydı değildir.",
     }]
 
     allocations = []
@@ -4483,9 +5008,10 @@ def get_ipam_data(user: dict = Depends(get_current_user)):
             "mac": d.get("mac"),
             "hostname": d.get("hostname") or d.get("friendly_name") or "İsimsiz Cihaz",
             "type": d.get("type") or "unknown",
-            "status": d.get("status") or "online",
-            "allocation_type": "Static" if d.get("is_gateway") or d.get("type") in ("server", "router", "switch") else "DHCP",
-            "last_seen": d.get("last_seen") or "Şimdi"
+            "status": d.get("status") or "unknown",
+            "allocation_type": "Infrastructure" if d.get("is_gateway") else "Observed",
+            "last_seen": d.get("last_seen"),
+            "discovery_sources": d.get("discovery_sources") or [],
         })
 
     return {
@@ -4497,72 +5023,302 @@ def get_ipam_data(user: dict = Depends(get_current_user)):
     }
 
 
+def _port_to_protocol(port: int) -> tuple[str, str]:
+    PORT_MAP = {
+        80: ("HTTP (TCP 80)", "Web Servisi"),
+        443: ("HTTPS (TCP 443)", "Web & Bulut"),
+        8443: ("HTTPS (TCP 8443)", "Güvenli Web"),
+        8080: ("HTTP (TCP 8080)", "Web Proxy / API"),
+        445: ("SMB (TCP 445)", "Dosya Paylaşımı & Yedek"),
+        139: ("NetBIOS (TCP 139)", "Windows Paylaşımı"),
+        3389: ("RDP (TCP 3389)", "Uzak Masaüstü"),
+        22: ("SSH (TCP 22)", "Güvenli Yönetim"),
+        21: ("FTP (TCP 21)", "Dosya Aktarımı"),
+        53: ("DNS (UDP 53)", "Alan Adı Sorguları"),
+        554: ("RTSP (TCP 554)", "Kamera / Medya Akışı"),
+        1935: ("RTMP (TCP 1935)", "Canlı Medya Yayını"),
+        8554: ("RTSP (TCP 8554)", "Medya Akışı"),
+        3306: ("MySQL (TCP 3306)", "Veritabanı"),
+        5432: ("PostgreSQL (TCP 5432)", "Veritabanı"),
+        1433: ("MSSQL (TCP 1433)", "SQL Sunucu"),
+        27017: ("MongoDB (TCP 27017)", "NoSQL Veritabanı"),
+        6379: ("Redis (TCP 6379)", "Önbellek"),
+        8000: ("Dev Web (TCP 8000)", "Geliştirici Servisi"),
+        3000: ("Dev Web (TCP 3000)", "Node.js / React"),
+        5000: ("Dev Web (TCP 5000)", "Python API"),
+        5173: ("Vite (TCP 5173)", "Frontend Geliştirme"),
+        123: ("NTP (UDP 123)", "Zaman Senkronu"),
+        161: ("SNMP (UDP 161)", "Ağ Yönetimi"),
+        1883: ("MQTT (TCP 1883)", "IoT Cihaz İletişimi"),
+        8883: ("MQTT TLS (TCP 8883)", "Güvenli IoT"),
+        5060: ("SIP (UDP 5060)", "VoIP Telefon Santrali"),
+        7680: ("WUDO (TCP 7680)", "Windows Update P2P"),
+        5228: ("Google Push (TCP 5228)", "Push Bildirim Servisi"),
+    }
+    return PORT_MAP.get(port, (f"TCP {port}", "Ağ Trafiği"))
+
+
+def _clean_vendor_display(raw_vendor: str) -> str:
+    if not raw_vendor:
+        return ""
+    v = raw_vendor.strip()
+    for suffix in [", LTD.", " LTD.", ", INC.", " INC.", ", LLC", " LLC", " CO., LTD.", " CO.,LTD", " CO., LTD", " CORP.", " CORPORATION", " (KUNSHAN) CO.", " (KUNSHAN) CO., LTD."]:
+        if v.upper().endswith(suffix):
+            v = v[:len(v)-len(suffix)].strip()
+    if v.isupper() and len(v) > 3:
+        v = v.title()
+    low = v.lower()
+    if "fortinet" in low:
+        return "Fortinet"
+    if "huawei" in low:
+        return "Huawei"
+    if "compal" in low:
+        return "Compal"
+    if "cisco" in low:
+        return "Cisco"
+    if "hewlett packard" in low or "hpe" in low or low == "hp":
+        return "HP / Aruba"
+    if "tp-link" in low or "tplink" in low:
+        return "TP-Link"
+    if "intel" in low:
+        return "Intel"
+    if "dell" in low:
+        return "Dell"
+    if "apple" in low:
+        return "Apple"
+    if "samsung" in low:
+        return "Samsung"
+    if "realtek" in low:
+        return "Realtek"
+    if "synology" in low:
+        return "Synology"
+    if "qnap" in low:
+        return "QNAP"
+    return v
+
+
+def _identify_cloud_or_ip(ip: str) -> tuple[str, str]:
+    try:
+        if ipaddress.ip_address(ip).is_private:
+            return f"Yerel Ağ Cihazı ({ip})", "local"
+    except ValueError:
+        pass
+    # ASN/RDAP doğrulaması olmadan IP önekinden sağlayıcı adı tahmin edilmez.
+    return f"İnternet Uç Noktası ({ip})", "cloud"
+
+
+def _fmt_bandwidth_bps(bps: float) -> str:
+    if bps >= 1_000_000:
+        return f"{bps / 1_000_000:.2f} Mbps"
+    elif bps >= 1_000:
+        return f"{bps / 1_000:.1f} Kbps"
+    elif bps > 0:
+        return f"{max(1, int(bps))} bps"
+    return "0 bps"
+
+
+def _runtime_network_visibility() -> dict:
+    """Report the OS token used for socket/process inspection (never app RBAC)."""
+    identity = "\\".join(filter(None, (os.environ.get("USERDOMAIN"), os.environ.get("USERNAME"))))
+    elevated = None
+    if platform.system() == "Windows":
+        try:
+            elevated = bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except Exception:
+            elevated = None
+    elif hasattr(os, "geteuid"):
+        elevated = os.geteuid() == 0
+    return {
+        "identity": identity or os.environ.get("USERNAME") or "unknown",
+        "is_elevated": elevated,
+        "visibility": "full" if elevated else "partial",
+        "note": (
+            "Yükseltilmiş işletim sistemi belirteci etkin; işlem/PID görünürlüğü tam olmalıdır."
+            if elevated else
+            "NetMon yükseltilmiş işletim sistemi belirteciyle çalışmıyor; bazı sistem işlemlerinin adı veya PID bilgisi görünmeyebilir."
+        ),
+    }
+
+
 # ============================================================
-# TOP TALKERS & TRAFFIC BREAKDOWN
+# TOP TALKERS & TRAFFIC BREAKDOWN (REAL-TIME LIVE SOCKET TELEMETRY)
 # ============================================================
 @app.get("/api/traffic/top-talkers")
 def get_top_talkers(user: dict = Depends(get_current_user)):
     devices_list = _devices_cache.get("data", [])
+    device_by_ip = {d.get("ip"): d for d in devices_list if d.get("ip")}
+
     conn = db_conn()
     row = conn.execute("SELECT wifi_sent, wifi_recv, eth_sent, eth_recv FROM traffic ORDER BY ts DESC LIMIT 1").fetchone()
     conn.close()
     
-    total_bps = (row[0] + row[1] + row[2] + row[3]) if row else 12_500_000
-    total_mbps = max(0.5, round(total_bps / 1_000_000, 2))
+    rx_bps = (row[1] + row[3]) if row else 0.0
+    tx_bps = (row[0] + row[2]) if row else 0.0
+    total_bps = rx_bps + tx_bps
     
-    protocols = [
-        ("HTTPS (TCP 443)", "Web & Bulut"),
-        ("SMB (TCP 445)", "Dosya Paylaşımı & Yedek"),
-        ("RDP (TCP 3389)", "Uzak Masaüstü"),
-        ("RTSP (TCP 554)", "Kamera / Medya Akışı"),
-        ("DNS (UDP 53)", "Alan Adı Sorguları"),
-        ("SSH (TCP 22)", "Güvenli Yönetim"),
-        ("HTTP (TCP 80)", "Web Servisi")
-    ]
+    total_mbps = round(total_bps / 1_000_000, 2)
+    rx_total_mbps = round(rx_bps / 1_000_000, 2)
+    tx_total_mbps = round(tx_bps / 1_000_000, 2)
     
-    talkers = []
-    remaining_share = 1.0
-    sorted_devs = sorted(devices_list, key=lambda d: 0 if d.get("status") == "online" else 1)
-    
-    for idx, d in enumerate(sorted_devs[:8]):
-        ip = d.get("ip")
-        if not ip: continue
+    # Collect real active socket endpoints
+    endpoints = {}
+    raw_sessions = []
+    if HAS_PSUTIL:
+        try:
+            conns = psutil.net_connections(kind="inet")
+            for c in conns:
+                if c.status in ("ESTABLISHED", "SYN_SENT", "CLOSE_WAIT") and c.raddr:
+                    rip = c.raddr.ip
+                    rport = c.raddr.port if c.raddr else (c.laddr.port if c.laddr else 0)
+                    if not rip or rip in ("127.0.0.1", "::1", "0.0.0.0"):
+                        continue
+                    if rip not in endpoints:
+                        endpoints[rip] = {
+                            "count": 0,
+                            "pids": set(),
+                            "ports": [],
+                            "is_local": ipaddress.ip_address(rip).is_private
+                        }
+                    endpoints[rip]["count"] += 1
+                    if c.pid:
+                        endpoints[rip]["pids"].add(c.pid)
+                    if rport:
+                        endpoints[rip]["ports"].append(rport)
+                    raw_sessions.append({
+                        "remote_ip": rip,
+                        "remote_port": rport,
+                        "local_ip": c.laddr.ip if c.laddr else "",
+                        "local_port": c.laddr.port if c.laddr else 0,
+                        "pid": c.pid,
+                        "state": c.status,
+                    })
+        except Exception:
+            pass
+
+    process_names_by_pid = {}
+    for pid in {s["pid"] for s in raw_sessions if s.get("pid")}:
+        try:
+            process_names_by_pid[pid] = psutil.Process(pid).name().strip()
+        except Exception:
+            process_names_by_pid[pid] = ""
+
+    candidates = []
+
+    # 1. Process all real active socket endpoints
+    for ip, ep_info in endpoints.items():
+        pnames = set()
+        for pid in ep_info["pids"]:
+            try:
+                pname = process_names_by_pid.get(pid, "")
+                if pname:
+                    pnames.add(pname)
+            except Exception:
+                pass
+        pnames = sorted(pnames, key=str.casefold)
         
-        dev_type = d.get("type", "unknown")
-        factor = 0.35 if dev_type == "server" else (0.2 if dev_type in ("pc", "laptop") else (0.1 if dev_type in ("mobile", "phone") else 0.05))
+        ports = ep_info["ports"]
+        common_port = max(set(ports), key=ports.count) if ports else 443
+        proto_name, proto_cat = _port_to_protocol(common_port)
+        proc_name = pnames[0] if pnames else ""
         
-        share = min(remaining_share, factor / (1 + idx * 0.4))
-        remaining_share = max(0.02, remaining_share - share)
-        
-        dev_mbps = round(total_mbps * share, 2)
-        rx = round(dev_mbps * 0.75, 2)
-        tx = round(dev_mbps * 0.25, 2)
-        
-        proto_idx = idx % len(protocols)
-        proto_name, proto_cat = protocols[proto_idx]
-        if dev_type == "server":
-            proto_name, proto_cat = ("SMB (TCP 445)", "Dosya Paylaşımı & Yedek")
-        elif dev_type == "camera":
-            proto_name, proto_cat = ("RTSP (TCP 554)", "Kamera / Medya Akışı")
+        dev = device_by_ip.get(ip)
+        if dev:
+            hostname = dev.get("friendly_name") or dev.get("hostname")
+            if not hostname:
+                cleaned_v = _clean_vendor_display(dev.get("vendor") or "")
+                hostname = f"{cleaned_v} Cihazı ({ip})" if cleaned_v else f"Yerel Cihaz ({ip})"
+            dtype = dev.get("type", "pc")
+            dstatus = dev.get("status", "online")
+            mac = dev.get("mac") or "-"
+        else:
+            label, kind = _identify_cloud_or_ip(ip)
+            hostname = label
+            dtype = "unknown" if ep_info["is_local"] else "cloud"
+            dstatus = "online"
+            mac = "-"
             
-        talkers.append({
+        candidates.append({
             "ip": ip,
-            "mac": d.get("mac"),
-            "hostname": d.get("hostname") or d.get("friendly_name") or f"Host-{ip.split('.')[-1]}",
-            "type": dev_type,
-            "status": d.get("status") or "online",
-            "rx_mbps": rx,
-            "tx_mbps": tx,
-            "total_mbps": dev_mbps,
-            "share_pct": round(share * 100, 1),
+            "mac": mac,
+            "hostname": hostname,
+            "type": dtype,
+            "status": dstatus,
+            "weight": ep_info["count"],
             "primary_protocol": proto_name,
-            "app_category": proto_cat
+            "app_category": proto_cat,
+            "active_conns": ep_info["count"],
+            # These are local socket owners, not names of the remote endpoint.
+            "local_processes": pnames,
+            "local_process_name": proc_name,
+            "process_name": proc_name
         })
+
+    candidates.sort(key=lambda x: x["weight"], reverse=True)
+    selected = candidates[:10]
+    talkers = []
+
+    for c in selected:
+        talkers.append({
+            "ip": c["ip"],
+            "mac": c["mac"],
+            "hostname": c["hostname"],
+            "type": c["type"],
+            "status": c["status"],
+            "rx_mbps": None,
+            "tx_mbps": None,
+            "total_mbps": None,
+            "speed_display": None,
+            "share_pct": None,
+            "primary_protocol": c["primary_protocol"],
+            "app_category": c["app_category"],
+            "active_conns": c.get("active_conns", 1),
+            "local_processes": c.get("local_processes", []),
+            "local_process_name": c.get("local_process_name", ""),
+            "process_name": c.get("process_name", "")
+        })
+
+    sessions = []
+    for item in raw_sessions:
+        remote_ip = item["remote_ip"]
+        remote_port = item["remote_port"]
+        proto_name, proto_cat = _port_to_protocol(remote_port)
+        try:
+            scope = "local" if ipaddress.ip_address(remote_ip).is_private else "internet"
+        except ValueError:
+            scope = "unknown"
+        process_name = process_names_by_pid.get(item.get("pid"), "")
+        sessions.append({
+            **item,
+            "process_name": process_name,
+            "process_visible": bool(process_name),
+            "primary_protocol": proto_name,
+            "app_category": proto_cat,
+            "scope": scope,
+        })
+    sessions.sort(key=lambda s: (
+        (s.get("process_name") or "~").casefold(),
+        s.get("remote_ip") or "",
+        s.get("remote_port") or 0,
+    ))
         
     return {
         "total_bandwidth_mbps": total_mbps,
+        "total_bandwidth_display": _fmt_bandwidth_bps(total_bps),
+        "rx_mbps": rx_total_mbps,
+        "tx_mbps": tx_total_mbps,
+        "rx_display": _fmt_bandwidth_bps(rx_bps),
+        "tx_display": _fmt_bandwidth_bps(tx_bps),
         "top_talkers": talkers,
-        "sample_time": datetime.now().strftime("%H:%M:%S")
+        "sessions": sessions[:100],
+        "session_count": len(sessions),
+        "distinct_remote_count": len(endpoints),
+        "distinct_process_count": len({s["process_name"] for s in sessions if s.get("process_name")}),
+        "runtime_visibility": _runtime_network_visibility(),
+        "sample_time": datetime.now().strftime("%H:%M:%S"),
+        "measurement_source": "psutil_interface_counters_and_socket_table",
+        "per_endpoint_bandwidth_supported": False,
+        "endpoint_metric": "active_connections",
+        "note": "Toplam hız yerel arayüz sayaçlarından ölçülür. Uç noktalar gerçek aktif uzak soketlerdir; local_processes alanı bağlantıyı bu bilgisayarda açan uygulamaları gösterir. Paket yakalama olmadan uç nokta başına byte miktarı ölçülemez.",
     }
 
 
@@ -4574,76 +5330,76 @@ class NcmBackupRequest(BaseModel):
     version_label: str | None = None
     manual_config: str | None = None
 
+
+def _fetch_running_config_ssh(ip: str) -> tuple[str, str]:
+    """Bilinen host anahtarına sahip cihazdan salt-okuma yapılandırma al."""
+    if not deep_discovery.HAS_PARAMIKO:
+        raise RuntimeError("SSH yedekleme için Paramiko kurulu değil.")
+    if not SSH_USERNAME:
+        raise RuntimeError("Ayarlar bölümünde SSH kullanıcı adı yapılandırılmamış.")
+
+    client = deep_discovery.paramiko.SSHClient()
+    client.load_system_host_keys()
+    client.set_missing_host_key_policy(deep_discovery.paramiko.RejectPolicy())
+    try:
+        client.connect(
+            ip,
+            port=22,
+            username=SSH_USERNAME,
+            password=SSH_PASSWORD or None,
+            timeout=8,
+            auth_timeout=8,
+            banner_timeout=8,
+            look_for_keys=not bool(SSH_PASSWORD),
+            allow_agent=not bool(SSH_PASSWORD),
+        )
+        commands = (
+            "show running-config",
+            "show configuration | display set",
+            "display current-configuration",
+        )
+        errors = []
+        for command in commands:
+            _, stdout, stderr = client.exec_command(command, timeout=15)
+            output = stdout.read().decode("utf-8", "replace").strip()
+            error = stderr.read().decode("utf-8", "replace").strip()
+            if output and len(output.splitlines()) >= 2:
+                return output + "\n", command
+            if error:
+                errors.append(error[:160])
+        raise RuntimeError("Cihaz desteklenen salt-okuma konfigürasyon komutlarına yanıt vermedi: " + "; ".join(errors))
+    finally:
+        client.close()
+
 @app.post("/api/ncm/backup")
-def post_ncm_backup(req: NcmBackupRequest, user: dict = Depends(require_admin)):
+def post_ncm_backup(req: NcmBackupRequest, user: dict = Depends(require_permission("ncm.manage"))):
     ip = req.ip.strip()
-    if not ip:
-        raise HTTPException(status_code=400, detail="IP adresi gereklidir.")
+    try:
+        parsed_ip = ipaddress.ip_address(ip)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Geçerli bir IP adresi gereklidir.")
+    if not _is_allowed_inventory_ip(parsed_ip):
+        raise HTTPException(status_code=400, detail="NCM yalnızca yerel/özel ağ cihazlarında kullanılabilir.")
         
     devices_list = _devices_cache.get("data", [])
     dev = next((d for d in devices_list if d.get("ip") == ip), None)
-    hostname = (dev or {}).get("hostname") or (dev or {}).get("friendly_name") or f"SW-{ip.replace('.', '-')}"
-    dev_type = (dev or {}).get("type") or "switch"
+    hostname = (dev or {}).get("hostname") or (dev or {}).get("friendly_name") or ip
+    dev_type = (dev or {}).get("type") or "unknown"
     
     if req.manual_config:
         config_text = req.manual_config
+        config_source = "manual"
+        source_command = None
     else:
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        config_text = f"""!
-! Last configuration change at {now_str} by admin
-! NVRAM config last updated at {now_str}
-!
-version 17.6
-service timestamps debug datetime msec
-service timestamps log datetime msec
-no service password-encryption
-!
-hostname {hostname}
-!
-boot-start-marker
-boot-end-marker
-!
-vrf definition Mgmt-intf
- address-family ipv4
- exit-address-family
-!
-spanning-tree mode rapid-pvst
-spanning-tree extend system-id
-!
-vlan 10
- name MANAGEMENT
-!
-vlan 20
- name SERVERS
-!
-vlan 100
- name CLIENTS
-!
-interface GigabitEthernet0/0
- description Management Interface
- vrf forwarding Mgmt-intf
- ip address {ip} 255.255.255.0
- negotiation auto
- no shutdown
-!
-interface GigabitEthernet0/1
- description Trunk to Core Switch
- switchport mode trunk
- switchport trunk allowed vlan 10,20,100
-!
-interface GigabitEthernet0/2
- description Access Port Floor 1
- switchport access vlan 100
- switchport mode access
- spanning-tree portfast
-!
-line con 0
- stopbits 2
-line vty 0 4
- transport input ssh
-!
-end
-"""
+        try:
+            config_text, source_command = _fetch_running_config_ssh(ip)
+            config_source = "ssh"
+        except Exception as exc:
+            _audit(user["username"], "ncm_backup", f"ip={ip} fetch_failed={str(exc)[:180]}", success=False)
+            raise HTTPException(status_code=503, detail=f"Gerçek cihaz konfigürasyonu alınamadı: {exc}")
+
+    if len(config_text.encode("utf-8")) > 2_000_000:
+        raise HTTPException(status_code=413, detail="Konfigürasyon 2 MB sınırını aşıyor.")
 
     cfg_hash = hashlib.sha256(config_text.encode("utf-8")).hexdigest()
     label = req.version_label or f"Backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
@@ -4658,8 +5414,12 @@ end
     cfg_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     conn.close()
     
-    _audit(user["username"], "ncm_backup", f"ip={ip} config_id={cfg_id} hash={cfg_hash[:8]}")
-    return {"ok": True, "id": cfg_id, "ip": ip, "hostname": hostname, "version_label": label, "hash": cfg_hash, "created_at": created_at}
+    _audit(user["username"], "ncm_backup", f"ip={ip} source={config_source} config_id={cfg_id} hash={cfg_hash[:8]}")
+    return {
+        "ok": True, "id": cfg_id, "ip": ip, "hostname": hostname,
+        "version_label": label, "hash": cfg_hash, "created_at": created_at,
+        "source": config_source, "source_command": source_command,
+    }
 
 @app.get("/api/ncm/configs")
 def get_ncm_configs(ip: str | None = None, user: dict = Depends(get_current_user)):

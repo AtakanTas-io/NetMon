@@ -73,6 +73,18 @@ def test_management_secret_is_encrypted_and_never_returned(isolated_server):
     assert "wmi_password" not in public
 
 
+def test_wmi_username_rejects_forward_slash_domain_format(isolated_server):
+    client, _, password_path = isolated_server
+    headers = _bootstrap_admin(client, password_path)
+    response = client.post(
+        "/api/settings",
+        headers=headers,
+        json={"wmi_username": "DOMAIN/service.account"},
+    )
+    assert response.status_code == 400
+    assert "DOMAIN\\kullanıcı" in response.json()["error"]
+
+
 def test_user_update_audit_does_not_store_password(isolated_server):
     client, db_path, password_path = isolated_server
     headers = _bootstrap_admin(client, password_path)
@@ -186,16 +198,123 @@ def test_failed_authorized_inventory_is_audited_as_failure(isolated_server, monk
     response = client.post(
         "/api/devices/inventory",
         headers=headers,
-        json={"ip": "192.168.50.26", "protocol": "windows"},
+        json={"ip": "192.168.50.26", "protocol": "windows", "username": "DOMAIN\\reader", "password": "secret"},
     )
     assert response.status_code == 200
     assert response.json()["ok"] is False
+    diagnostics = response.json()["result"]["diagnostics"]
+    assert diagnostics["target"] == "192.168.50.26"
+    assert diagnostics["effective_protocol"] == "windows"
+    assert diagnostics["credential_source"] == "request"
+    assert diagnostics["account"] == "DOMAIN\\reader"
+    assert diagnostics["management_ports"] == [135]
+    assert diagnostics["recommended_actions"]
+    assert "secret" not in str(diagnostics)
     with sqlite3.connect(db_path) as conn:
         row = conn.execute(
             "SELECT success, detail FROM audit_log WHERE action='authorized_inventory' ORDER BY id DESC LIMIT 1"
         ).fetchone()
     assert row[0] == 0
     assert "status=Failed" in row[1]
+
+
+def test_inventory_preflight_reports_steps_without_persisting_secrets(isolated_server, monkeypatch):
+    client, _, password_path = isolated_server
+    headers = _bootstrap_admin(client, password_path)
+
+    class ReadyScanner:
+        def __init__(self, **kwargs):
+            assert kwargs["username"] == "DOMAIN\\reader"
+
+        def test_access(self, ip):
+            return {
+                "ip_address": ip,
+                "status": "Success",
+                "management_ports": [135],
+                "diagnostics": {"selected_transport": "WMI/DCOM"},
+            }
+
+    monkeypatch.setattr(server, "WmiNetworkScanner", ReadyScanner)
+    monkeypatch.setattr(server.socket, "create_connection", lambda *args, **kwargs: type("Connection", (), {"__enter__": lambda self: self, "__exit__": lambda self, *exc: None})())
+    response = client.post(
+        "/api/devices/inventory/preflight",
+        headers=headers,
+        json={"ip": "192.168.50.27", "protocol": "windows", "username": "DOMAIN\\reader", "password": "secret"},
+    )
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["ready"] is True
+    assert payload["protocol"] == "windows"
+    assert [item["id"] for item in payload["checks"]] == ["target", "ports", "protocol", "credentials", "authorization"]
+    assert payload["checks"][-1]["status"] == "pass"
+    assert "secret" not in str(payload)
+
+
+def test_remote_windows_inventory_requires_credentials(isolated_server, monkeypatch):
+    client, _, password_path = isolated_server
+    headers = _bootstrap_admin(client, password_path)
+    server._devices_cache["data"] = [{
+        "ip": "192.168.50.74", "type": "computer", "classification": {"open_ports": [135]},
+    }]
+    monkeypatch.setattr(server, "WMI_USERNAME", "")
+    monkeypatch.setattr(server, "WMI_PASSWORD", "")
+
+    response = client.post(
+        "/api/devices/inventory", headers=headers,
+        json={"ip": "192.168.50.74", "protocol": "windows"},
+    )
+    result = response.json()["result"]
+    assert response.json()["ok"] is False
+    assert result["error_code"] == "missing_credentials"
+    assert "kullanıcı adı ve parola gerekli" in result["error_message"]
+
+
+def test_firewall_rejects_windows_inventory_protocol(isolated_server):
+    client, _, password_path = isolated_server
+    headers = _bootstrap_admin(client, password_path)
+    server._devices_cache["data"] = [{
+        "ip": "192.168.50.254", "type": "firewall", "classification": {"open_ports": []},
+    }]
+
+    response = client.post(
+        "/api/devices/inventory", headers=headers,
+        json={"ip": "192.168.50.254", "protocol": "windows", "username": "DOMAIN\\reader", "password": "secret"},
+    )
+    result = response.json()["result"]
+    assert response.json()["ok"] is False
+    assert result["error_code"] == "protocol_mismatch"
+    assert "SNMP envanteri" in result["error_message"]
+
+
+def test_repeated_wmi_access_denied_is_rate_limited(isolated_server, monkeypatch):
+    client, _, password_path = isolated_server
+    headers = _bootstrap_admin(client, password_path)
+    server._wmi_auth_failure_cooldowns.clear()
+    server._devices_cache["data"] = [{
+        "ip": "192.168.50.75", "type": "computer", "classification": {"open_ports": [135]},
+    }]
+    calls = []
+
+    class DeniedScanner:
+        def __init__(self, **kwargs):
+            pass
+
+        def scan_network(self, targets, max_workers=1):
+            calls.append(targets[0])
+            return [{
+                "ip_address": targets[0], "status": "Failed",
+                "error_code": "access_denied", "error_message": "Erişim Engellendi",
+            }]
+
+    monkeypatch.setattr(server, "WmiNetworkScanner", DeniedScanner)
+    payload = {"ip": "192.168.50.75", "protocol": "windows", "username": "PC\\reader", "password": "wrong"}
+    first = client.post("/api/devices/inventory", headers=headers, json=payload).json()
+    second = client.post("/api/devices/inventory", headers=headers, json=payload).json()
+    assert first["result"]["error_code"] == "access_denied"
+    assert second["result"]["error_code"] == "credential_cooldown"
+    assert second["result"]["retry_after_seconds"] > 0
+    assert calls == ["192.168.50.75"]
+    server._wmi_auth_failure_cooldowns.clear()
 
 
 def test_unavailable_inventory_has_no_fabricated_hardware():
@@ -382,6 +501,16 @@ def _create_regular_user(client, admin_headers, username="tester.user", password
     return username, password
 
 
+def _create_role_user(client, admin_headers, role, username, password="Temporary-Pass-2026!"):
+    created = client.post(
+        "/api/admin/users",
+        headers=admin_headers,
+        json={"username": username, "password": password, "role": role},
+    )
+    assert created.status_code == 200
+    return username, password
+
+
 def _login(client, username, password):
     login = client.post("/api/auth/login", json={"username": username, "password": password})
     assert login.status_code == 200
@@ -398,6 +527,27 @@ def _login_active_user(client, username, password, new_password="Post-Onboarding
     )
     assert changed.status_code == 200
     return headers, new_password
+
+
+def test_rbac_roles_expose_permissions_and_enforce_operation_boundaries(isolated_server):
+    client, _, password_path = isolated_server
+    admin_headers = _bootstrap_admin(client, password_path)
+    roles_response = client.get("/api/admin/roles", headers=admin_headers)
+    assert roles_response.status_code == 200
+    roles = {item["id"]: item for item in roles_response.json()["roles"]}
+    assert roles["admin"]["permissions"] == ["*"]
+    assert "inventory.scan" in roles["noc_operator"]["permissions"]
+    assert roles["viewer"]["permissions"] == []
+
+    username, password = _create_role_user(client, admin_headers, "noc_operator", "noc.operator")
+    noc_headers, _ = _login_active_user(client, username, password)
+    me = client.get("/api/auth/me", headers=noc_headers).json()
+    assert me["role"] == "noc_operator"
+    assert me["role_label"] == "NOC Operatörü"
+    assert "logs.manage" in me["permissions"]
+    assert client.post("/api/logs/clear", headers=noc_headers, json={}).status_code == 200
+    assert client.get("/api/admin/users", headers=noc_headers).status_code == 403
+    assert client.post("/api/settings", headers=noc_headers, json={"ping_count": 3}).status_code == 403
 
 
 def test_newly_created_user_must_change_password_before_using_api(isolated_server):

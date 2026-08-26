@@ -1,4 +1,4 @@
-from backend.server import _analyst_device, _exposure_for_device, _inventory_completeness
+from server import _analyst_device, _exposure_for_device, _inventory_completeness
 
 
 def test_analyst_device_explains_classification_and_exposure():

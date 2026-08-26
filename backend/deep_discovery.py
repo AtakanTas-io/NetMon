@@ -163,6 +163,48 @@ def scan_windows_deep(
 # ============================================================
 # 2. LINUX DERİN TARAMA MODÜLÜ (Paramiko / SSH)
 # ============================================================
+def test_ssh_access(ip: str, username: str, password: str = "", timeout: int = 5) -> Dict[str, Any]:
+    """Validate SSH connectivity/authentication without collecting inventory."""
+    result = {"status": "Failed", "error_code": "ssh_failed", "error": ""}
+    if not HAS_PARAMIKO:
+        result.update({"error_code": "ssh_dependency_missing", "error": "Paramiko SSH bağımlılığı kurulu değil."})
+        return result
+    if not username:
+        result.update({"error_code": "missing_credentials", "error": "SSH kullanıcı adı gerekli."})
+        return result
+    client = paramiko.SSHClient()
+    client.load_system_host_keys()
+    client.set_missing_host_key_policy(paramiko.RejectPolicy())
+    try:
+        client.connect(
+            ip, port=22, username=username, password=password or None,
+            timeout=timeout, banner_timeout=timeout, auth_timeout=timeout,
+        )
+        transport = client.get_transport()
+        result.update({
+            "status": "Success", "error_code": "",
+            "server_version": getattr(transport, "remote_version", None),
+        })
+    except Exception as exc:
+        message = str(exc)
+        lowered = message.casefold()
+        if "authentication failed" in lowered or "permission denied" in lowered:
+            code = "ssh_auth_failed"
+        elif "host key" in lowered or "not found in known_hosts" in lowered:
+            code = "ssh_host_key_rejected"
+        elif "timed out" in lowered or "refused" in lowered or "unreachable" in lowered:
+            code = "ssh_unreachable"
+        else:
+            code = "ssh_failed"
+        result.update({"error_code": code, "error": message[:1200]})
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+    return result
+
+
 def scan_linux_deep(
     ip: str,
     username: str = "root",

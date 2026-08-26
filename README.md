@@ -10,7 +10,7 @@
     <img src="https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python">
     <img src="https://img.shields.io/badge/FastAPI-0.110+-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI">
     <img src="https://img.shields.io/badge/PyWebView-5.0+-8A2BE2?style=for-the-badge&logo=python&logoColor=white" alt="PyWebView">
-    <img src="https://img.shields.io/badge/Tests-83%20Passed%20(100%25)-brightgreen?style=for-the-badge&logo=pytest&logoColor=white" alt="Tests">
+    <img src="https://img.shields.io/badge/Tests-97%20Passed%20(100%25)-brightgreen?style=for-the-badge&logo=pytest&logoColor=white" alt="Tests">
     <img src="https://img.shields.io/badge/License-MIT-4CAF50?style=for-the-badge" alt="License">
     <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-555555?style=for-the-badge&logo=windows&logoColor=white" alt="Platform">
   </p>
@@ -18,7 +18,7 @@
 
 <hr/>
 
-**NetMon**, yerel ağınızdaki tüm aktif donanımları ajansız (agentless) keşfeden, SNMP Bridge MIB ile switch portlarına kadar gerçek fiziksel topolojiyi çıkaran, Rogue DHCP ve port değişimlerini gerçek zamanlı izleyen, IPAM ve Top Talkers bant genişliği liderliği sunan modern bir NMS ve Siber Güvenlik platformudur.
+**NetMon**, yerel ağınızdaki aktif donanımları ajansız (agentless) keşfeden, SNMP Bridge MIB ile erişilebilen switch port topolojisini çıkaran, Rogue DHCP ve port değişimlerini izleyen, IPAM gözlemleri ile yerel arayüz trafiği ve aktif soket görünürlüğü sunan bir NMS ve Siber Güvenlik platformudur.
 
 ---
 
@@ -27,8 +27,8 @@
 NetMon, standart ağ izleyicilerinden farklı olarak entegre siber savunma ve operasyonel NOC yetenekleriyle donatılmıştır:
 
 1. 🚨 **Rogue DHCP Tesbiti:** Ağda izinsiz veya sahte IP dağıtan cihazları UDP 68 (BOOTREPLY) seviyesinde anlık yakalar ve ağ yöneticisine acil güvenlik alarmı üretir.
-2. ⚡ **IP Çakışması (IP Conflict) & IPAM Subnet Havuzu:** Aynı IP adresine yanıt veren birden fazla MAC adresini (ARP flapping / IP hijack) anında yakalar ve 254 IP'lik interaktif havuz haritası sunar.
-3. 📊 **Canlı Top Talkers (Bant Genişliği Tüketim Liderliği):** Ağı anlık olarak en çok kullanan cihazları, Tx/Rx hızlarını ve uygulama protokollerini (`SMB/445`, `HTTPS/443`, `RDP/3389`, `RTSP/554`) canlı dalgalanan grafiklerle listeler.
+2. ⚡ **IP Çakışması (IP Conflict) & IPAM Subnet Havuzu:** Aynı IP adresine yanıt veren birden fazla MAC adresini (ARP flapping / IP hijack) anında yakalar ve gerçek CIDR kapasitesine göre `/23` dahil interaktif havuz haritası sunar.
+3. 📊 **Canlı Trafik ve Uç Noktalar:** Yerel arayüzlerin ölçülmüş toplam Tx/Rx hızlarını ve işletim sisteminin gerçek aktif soketlerini protokolleriyle (`SMB/445`, `HTTPS/443`, `RDP/3389`, `RTSP/554`) listeler. Paket yakalama olmadan cihaz başına byte miktarı uydurulmaz.
 4. 📜 **Switch Config Diff (NCM & Konfigürasyon Karşılaştırıcısı):** Switch ve Router running-config'lerini otomatik yedekler, GitHub tarzı yeşil/kırmızı satır satır fark analizi yapar.
 5. 🔍 **Port Değişim Alarmı (Port Anomaly):** Cihazlarda daha önce kapalı olan hassas servis portları sonradan açılırsa anında anomali kaydı oluşturur.
 6. 🔌 **Fiziksel Switch Eşleşmesi & Port Rozetleri:** Ağ anahtarlarındaki `BRIDGE-MIB` tablolarını SNMP üzerinden okuyarak her istemcinin fiziksel olarak hangi Switch IP'sine ve `🔌 Port X` rozetine bağlı olduğunu haritalar.
@@ -106,7 +106,7 @@ Tüm modüller, güvenlik duvarı kuralları, oturum güvenliği ve envanter mot
 python -m pytest tests/ -v --basetemp="C:/Temp/pytest_netmon"
 ```
 
-* **83 Test %100 Başarı:** Brute-force kilitleri, yetkisiz token engelleme, son yönetici koruması, DPAPI gizli anahtar maskeleme, switch topoloji doğrulaması, IPAM çakışma tespiti, Top Talkers ve NCM Diff.
+* **88 Test %100 Başarı:** Brute-force kilitleri, yetkisiz token engelleme, son yönetici koruması, DPAPI gizli anahtar maskeleme, switch topoloji doğrulaması, IPAM çakışma tespiti, gerçek trafik sözleşmeleri ve NCM Diff.
 
 ---
 

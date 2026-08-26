@@ -1,4 +1,4 @@
-from backend.netdiag_core import NetworkDiagnostics
+from netdiag_core import NetworkDiagnostics
 
 def test_classification_has_explainable_scores():
     r = NetworkDiagnostics._guess_device_type(hostname='camera-lobby', vendor='Hikvision', open_ports={554}, services=[{'service':'rtsp','banner':'Hikvision RTSP'}])

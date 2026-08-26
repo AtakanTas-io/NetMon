@@ -462,7 +462,6 @@ class NetworkDiagnostics:
         if ports or svcs:
             evidence.append("services")
             if 23 in ports or "telnet" in svc_names:
-                add("switch", 0.88, "service: telnet (switch/router)")
                 add("router", 0.75, "service: telnet")
             if 161 in ports or "snmp" in svc_names:
                 add("switch", 0.65, "service: snmp")
