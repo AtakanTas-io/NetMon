@@ -27,6 +27,9 @@ const S = {
   traffic: { up: 0, down: 0 },
   sparkUp: [],
   sparkDown: [],
+  sparkTs: [],
+  trafficSampleTs: null,
+  trafficSimulated: false,
   connections: { tcp: 0, udp: 0, total: 0, supported: true },
   overview: {},
   logs: [],
@@ -547,6 +550,17 @@ function applyRolePermissions() {
   if (adminIcon) adminIcon.innerHTML = ico("shield", 12);
 }
 
+function renderLoadError(targetOrId, title, error, retryCall = "") {
+  const target = typeof targetOrId === "string" ? $(targetOrId) : targetOrId;
+  if (!target) return;
+  const message = error?.message || String(error || "Bilinmeyen hata");
+  target.innerHTML = `<div class="load-state error" role="alert">
+    <b>${esc(title || "Veri alınamadı")}</b>
+    <span>${esc(message)}</span>
+    ${retryCall ? `<button class="mini-btn" onclick="${retryCall}">Tekrar Dene</button>` : ""}
+  </div>`;
+}
+
 const ROLE_LABELS = {
   admin: "Sistem Yöneticisi",
   noc_operator: "NOC Operatörü",
@@ -574,6 +588,9 @@ const NAV_ITEMS = [
   { id: "toptalkers", label: "Aktif Oturumlar & Trafik", icon: "activity" },
   { id: "ncm", label: "Switch Config Diff", icon: "terminal" },
   { id: "security", label: "Güvenlik Görünürlüğü", icon: "shield" },
+  { id: "reports", label: "Raporlama & SLA", icon: "report", permission: "reports.view" },
+  { id: "locations", label: "Lokasyon Haritası", icon: "route", permission: "locations.view" },
+  { id: "access", label: "Yetki ve Hazırlık", icon: "lock" },
   { id: "analyst", label: "Analist Merkezi", icon: "shield" },
   { id: "purpleteam", label: "Cyber Lab", icon: "shield" },
   { id: "egitim", label: "NetMon Academy", icon: "book" },
@@ -593,6 +610,9 @@ Object.assign(PAGE_TITLES, {
   security: "Güvenlik Görünürlüğü",
   analyst: "Analist Merkezi",
   logs: "Operasyon Kayıtları",
+  reports: "Operasyon, Kapasite ve SLA Raporları",
+  locations: "Şube, Bina ve Kabinet Görünümü",
+  access: "Yetki ve Hazırlık Merkezi",
 });
 
 function buildNav() {
@@ -672,6 +692,18 @@ function go(page) {
       case "security":
         renderSecurityPage();
         refreshSecurity();
+        break;
+      case "reports":
+        renderReportsPage();
+        refreshReports();
+        break;
+      case "locations":
+        renderLocationsPage();
+        refreshLocations();
+        break;
+      case "access":
+        renderAccessPage();
+        refreshAccessCenter();
         break;
       case "analyst":
         renderAnalystPage();
@@ -1319,6 +1351,7 @@ function renderSecurityPage() {
 async function refreshSecurity() {
   try {
     const data = await get("/api/security");
+    S.securityData = data;
     const body = $("securityBody");
     if (!body) return;
     if (data.error) {
@@ -1329,10 +1362,11 @@ async function refreshSecurity() {
       const d = (desc || "").toLowerCase();
       if (d.includes("aktif") || d.includes("açık") || d.includes("açik") || d.includes("izin") || d.includes("başarılı")) return `<span class="badge ok">PASS</span>`;
       if (d.includes("uyarı") || d.includes("sınırlı") || d.includes("warning")) return `<span class="badge warn">WARNING</span>`;
-      return `<span class="badge fail">ERROR</span>`;
+      if (!d || d.includes("bilinmiyor") || d.includes("doğrulanamadı") || d.includes("ölçül")) return `<span class="badge gray">DOĞRULANAMADI</span>`;
+      return `<span class="badge fail">SORUN</span>`;
     };
     
-    const rulesHtml = (data.rules || []).length > 0 ? (data.rules || []).map((r) => 
+    const rulesHtml = (data.rules || []).length > 0 ? (data.rules || []).map((r, index) =>
       `<div style="display:flex; justify-content:space-between; padding:12px; border:1px solid var(--line-soft); border-radius:8px; background:var(--panel-2); margin-bottom:8px; align-items:center;">
         <div style="display:flex; align-items:center; gap:10px;">
           <div style="color:var(--blue);">${ico("shield", 20)}</div>
@@ -1340,7 +1374,7 @@ async function refreshSecurity() {
         </div>
         <div style="display:flex; align-items:center; gap:12px;">
           ${statusBadge(r.status)}
-          <button class="mini-btn" onclick="alert('Kural detayları simüle ediliyor...')">İncele</button>
+          <button class="mini-btn" onclick="showSecurityRule(${index})">Kanıtı İncele</button>
         </div>
       </div>`
     ).join("") : '<div class="hint">Kayıtlı güvenlik kuralı ihlali bulunamadı.</div>';
@@ -1353,7 +1387,7 @@ async function refreshSecurity() {
             ${statusBadge(data.firewall_desc)}
           </div>
           <div style="font-size:12px; color:var(--txt-2); line-height:1.5; margin-top:4px;">${esc(data.firewall_desc || "")}</div>
-          <div style="margin-top:auto; padding-top:12px;"><button class="btn btn-sm" style="width:100%" onclick="alert('Firewall konfigürasyonu taranıyor...')">Yapılandırmayı Tara</button></div>
+          <div style="margin-top:auto; padding-top:12px;"><button class="btn btn-sm" style="width:100%" onclick="inspectSecurityCapability('firewall')">Ölçüm Ayrıntısını Gör</button></div>
         </div>
         <div style="padding:16px; background:var(--panel-2); border:1px solid var(--line); border-radius:10px; display:flex; flex-direction:column; gap:8px;">
           <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -1361,15 +1395,46 @@ async function refreshSecurity() {
             ${statusBadge(data.webfilter_desc)}
           </div>
           <div style="font-size:12px; color:var(--txt-2); line-height:1.5; margin-top:4px;">${esc(data.webfilter_desc || "")}</div>
-          <div style="margin-top:auto; padding-top:12px;"><button class="btn btn-sm" style="width:100%" onclick="alert('Web filtre logları analiz ediliyor...')">Trafik Loglarını İncele</button></div>
+          <div style="margin-top:auto; padding-top:12px;"><button class="btn btn-sm" style="width:100%" onclick="inspectSecurityCapability('web_filter')">Entegrasyon Durumunu Gör</button></div>
         </div>
       </div>
       <h3 style="margin:0 0 12px; font-size:14px; color:var(--txt); border-bottom:1px solid var(--line-soft); padding-bottom:8px;">Politika İhlalleri & Güvenlik Logları</h3>
       ${rulesHtml}
+      <div id="securityPostureBody" style="margin-top:18px"></div>
     `;
+    const postureEl = $("securityPostureBody");
+    if (!hasPermission("security.manage")) {
+      postureEl.innerHTML = `<div style="padding:14px;border:1px solid rgba(245,158,11,.35);border-radius:10px"><b>Risk bulguları için rol izni gerekiyor.</b><div class="hint">Gerekli izin: <code>security.manage</code></div><button class="mini-btn" style="margin-top:8px" onclick="go('access')">Yöneticiden Ne İstemeliyim?</button></div>`;
+    } else {
+      const posture = await get("/api/security/posture");
+      postureEl.innerHTML = `<h3>Kanıta Dayalı Risk Bulguları</h3><div class="hint" style="margin-bottom:10px">${esc(posture.scope_note)}</div>
+        ${(posture.findings||[]).map(f=>`<div style="padding:12px;border:1px solid ${f.severity==='high'?'rgba(239,68,68,.35)':'rgba(245,158,11,.35)'};border-radius:9px;margin-bottom:8px"><div style="display:flex;justify-content:space-between"><b>${esc(f.asset)}</b><span class="badge ${f.severity==='high'?'fail':'warn'}">${esc(f.severity)}</span></div><div>${esc(f.title)}</div><div class="hint">Kanıt: ${esc(f.evidence)}</div><div class="hint"><b>Öneri:</b> ${esc(f.recommendation)}</div></div>`).join('') || '<div class="hint">Mevcut keşif kanıtlarında risk bulgusu oluşmadı.</div>'}`;
+    }
   } catch (e) {
     console.warn("Güvenlik verisi alınamadı:", e);
+    renderLoadError("securityBody", "Güvenlik görünürlüğü alınamadı", e, "refreshSecurity()");
   }
+}
+
+function showSecurityRule(index) {
+  const rule = (S.securityData?.rules || [])[Number(index)];
+  if (!rule) return toast("Kural kanıtı artık mevcut değil; ekranı yenileyin.", "warn");
+  openModal(`<h3>${esc(rule.name || rule.title || "Güvenlik bulgusu")}</h3>
+    <div class="sub">Yalnız ölçülen yerel güvenlik verisi gösterilir.</div>
+    <div class="device-learning" style="margin-top:12px"><b>Durum / Kanıt</b><div>${esc(rule.status || rule.detail || "Ayrıntı sağlanmadı.")}</div></div>
+    <div style="display:flex;justify-content:flex-end;margin-top:16px"><button class="mini-btn blue" onclick="closeModalForce()">Kapat</button></div>`);
+}
+
+async function inspectSecurityCapability(kind) {
+  try {
+    const [security, readiness] = await Promise.all([get("/api/security"), get("/api/system/readiness")]);
+    const capability = (readiness.items || []).find(item => item.id === kind);
+    const title = kind === "firewall" ? "Yerel Güvenlik Duvarı Ölçümü" : "Web Filtresi Entegrasyonu";
+    const detail = kind === "firewall" ? (security.firewall_desc || "Güvenlik duvarı durumu doğrulanamadı.") : (capability?.detail || "Bu sürümde web filtresi bağlayıcısı yok.");
+    openModal(`<h3>${esc(title)}</h3><div class="device-learning ${capability?.state === 'unavailable' ? 'warning' : ''}" style="margin-top:12px"><b>${esc(capability?.state === 'unavailable' ? "Kullanılamıyor" : "Gerçek ölçüm")}</b><div>${esc(detail)}</div></div>
+      ${capability?.action ? `<div class="hint" style="margin-top:10px">${esc(capability.action)}</div>` : ""}
+      <div style="display:flex;justify-content:flex-end;margin-top:16px"><button class="mini-btn blue" onclick="closeModalForce()">Kapat</button></div>`);
+  } catch (e) { toast(e.message || "Güvenlik hazırlığı alınamadı.", "error"); }
 }
 
 /* ---------- Raporlar ---------- */
@@ -2395,7 +2460,10 @@ async function loadAdminXocMetrics() {
         }
       }
     }
-  } catch (e) {}
+  } catch (e) {
+    const container = $("xocBlacklistContainer");
+    if (container) renderLoadError(container, "SOC/NOC ölçümleri alınamadı", e, "loadAdminXocMetrics()");
+  }
 }
 
 async function addXocBlacklist() {
@@ -2649,21 +2717,110 @@ function renderReportsPage() {
     el.dataset.built = "1";
     el.innerHTML = `
       <div class="panel">
-        <div class="panel-head" style="flex-wrap:wrap; height:auto; padding:12px; gap:12px;"><h2>Raporlar</h2></div>
-        <div class="panel-body" id="reportsBody"><div class="hint">Genel bakış verileri buradan özetlenir.</div></div>
+        <div class="panel-head" style="flex-wrap:wrap;height:auto;padding:12px;gap:12px">
+          <div><h2 style="margin:0">Operasyon & SLA Raporu</h2><small class="hint">Gerçek envanter, trafik, alarm ve snapshot kayıtlarından üretilir.</small></div>
+          <div class="right"><button class="mini-btn" onclick="window.print()">Yazdır / PDF</button><button class="mini-btn blue" onclick="refreshReports()">Raporu Güncelle</button></div>
+        </div>
+        <div class="panel-body" id="reportsBody"><div class="hint">Rapor hazırlanıyor…</div></div>
       </div>
     `;
   }
-  const o = S.overview || {};
+}
+
+async function refreshReports() {
   const body = $("reportsBody");
-  if (body) {
+  if (!body) return;
+  try {
+    const data = await get("/api/reports/operations");
+    const s = data.summary || {};
+    const t = data.traffic || {};
+    const val = v => v == null ? "Ölçüm yok" : v;
     body.innerHTML = `
-      <div class="info-card" style="margin-bottom:8px"><span>Toplam Cihaz</span><b>${o.devices?.total ?? "-"}</b></div>
-      <div class="info-card" style="margin-bottom:8px"><span>Çevrimiçi</span><b>${o.devices?.online ?? "-"}</b></div>
-      <div class="info-card" style="margin-bottom:8px"><span>İnternet Durumu</span><b>${o.internet?.connected == null ? "Ölçüm bekleniyor" : o.internet.connected ? "Bağlı" : "Yok"}</b></div>
-      <div class="info-card"><span>Ortalama Gecikme</span><b>${o.latency?.average ?? "-"} ms</b></div>
+      <div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-bottom:16px">
+        <div class="info-card"><span>Varlık</span><b>${val(s.assets)}</b><small>${val(s.verified_assets)} doğrulanmış</small></div>
+        <div class="info-card"><span>Envanter Tamlığı</span><b>${s.inventory_completeness_pct == null ? "Veri yok" : "%"+s.inventory_completeness_pct}</b></div>
+        <div class="info-card"><span>Tahmini SLA · 24s</span><b>${s.estimated_sla_pct == null ? "Snapshot yok" : "%"+s.estimated_sla_pct}</b></div>
+        <div class="info-card"><span>Ortalama Sağlık</span><b>${s.average_health == null ? "Ölçüm yok" : s.average_health+"/100"}</b></div>
+        <div class="info-card"><span>Lokasyon Kapsamı</span><b>${s.location_coverage_pct == null ? "Veri yok" : "%"+s.location_coverage_pct}</b></div>
+        <div class="info-card"><span>NCM Yedeği · 24s</span><b>${val(s.configuration_backups_24h)}</b></div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px">
+        <div class="panel" style="box-shadow:none"><div class="panel-head"><h2>Trafik & Kapasite</h2></div><div class="panel-body">
+          <div class="info-card"><span>Ortalama In / Out</span><b>${t.average_in_mbps} / ${t.average_out_mbps} Mbps</b></div>
+          <div class="info-card" style="margin-top:8px"><span>Tepe In / Out</span><b>${t.peak_in_mbps} / ${t.peak_out_mbps} Mbps</b></div>
+        </div></div>
+        <div class="panel" style="box-shadow:none"><div class="panel-head"><h2>Tekrarlanan Alarmlar</h2></div><div class="panel-body">
+          ${(data.recurring_alerts||[]).map(a=>`<div style="padding:8px 0;border-bottom:1px solid var(--line-soft)"><span class="badge ${a.level==='critical'?'fail':a.level==='warning'?'warn':'blue'}">${esc(a.level)}</span> <b>${a.count}×</b> ${esc(a.message)}</div>`).join("") || '<div class="hint">Son 24 saatte alarm kaydı yok.</div>'}
+        </div></div>
+      </div>
+      <div class="hint" style="margin-top:12px">${esc(data.data_note)}</div>
     `;
+  } catch (e) {
+    body.innerHTML = `<div class="hint c-red">Rapor alınamadı: ${esc(e.message)}</div>`;
   }
+}
+
+function renderAccessPage() {
+  const el = $("page-access");
+  if (!el.dataset.built) {
+    el.dataset.built = "1";
+    el.innerHTML = `<div class="panel"><div class="panel-head"><div><h2 style="margin:0">Yetki ve Hazırlık Merkezi</h2><small class="hint">Rol izni ile uzak sistem erişimi birbirinden ayrıdır.</small></div></div><div class="panel-body" id="accessCenterBody"><div class="hint">Yetkiler denetleniyor…</div></div></div>`;
+  }
+}
+
+async function refreshAccessCenter() {
+  const body = $("accessCenterBody"); if (!body) return;
+  try {
+    const [data, readiness] = await Promise.all([get("/api/access/capabilities"), get("/api/system/readiness")]);
+    const stateLabel = {ready:"HAZIR",degraded:"SINIRLI",needs_configuration:"AYAR GEREKLİ",unavailable:"KULLANILAMIYOR",error:"HATA"};
+    const stateBadge = {ready:"ok",degraded:"warn",needs_configuration:"warn",unavailable:"gray",error:"fail"};
+    body.innerHTML = `
+      <div style="padding:14px;border:1px solid ${data.is_admin?'rgba(168,85,247,.45)':'var(--line)'};background:${data.is_admin?'rgba(88,28,135,.16)':'var(--panel-2)'};border-radius:10px;margin-bottom:14px">
+        <b>${data.is_admin?'🛡️ YÖNETİCİ MODU AKTİF':'🔐 STANDART ROL'}</b> · ${esc(data.current_user)} / ${esc(data.current_role)}
+        <div class="hint" style="margin-top:5px">${esc(data.important)}</div>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:end;gap:12px;margin:4px 0 10px"><div><h3 style="margin:0">Sistem Hazırlığı</h3><div class="hint">Bağımlılık, ayar ve çalışma durumu gerçek zamanlı denetlenir.</div></div><button class="mini-btn" onclick="refreshAccessCenter()">Yeniden Denetle</button></div>
+      <div class="readiness-grid">
+        ${(readiness.items||[]).map(item=>`<div class="readiness-card ${esc(item.state)}"><div><b>${esc(item.title)}</b><span class="badge ${stateBadge[item.state]||'gray'}">${stateLabel[item.state]||esc(item.state)}</span></div><p>${esc(item.detail)}</p>${item.action?`<small>${esc(item.action)}</small>`:''}</div>`).join('')}
+      </div>
+      <h3 style="margin:18px 0 10px">Rol ve Operasyon Yetkileri</h3>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px">
+        ${(data.capabilities||[]).map(c=>`<div style="padding:16px;background:var(--panel-2);border:1px solid ${c.state==='ready'?'rgba(16,185,129,.35)':c.state==='needs_role'?'rgba(239,68,68,.35)':'rgba(245,158,11,.35)'};border-radius:12px">
+          <div style="display:flex;justify-content:space-between;gap:8px"><b>${esc(c.title)}</b><span class="badge ${c.state==='ready'?'ok':c.state==='needs_role'?'fail':'warn'}">${c.state==='ready'?'HAZIR':c.state==='needs_role'?'ROL İZNİ YOK':'ORTAM HAZIR DEĞİL'}</span></div>
+          <div class="hint" style="margin:8px 0"><b>Yöneticimden isteyeceğim:</b> ${esc(c.request_text)}</div>
+          <div style="font-size:11px;color:var(--txt-2)"><b>Uygun roller:</b> ${esc((c.roles||[]).join(', '))}<br><b>NetMon izni:</b> <code>${esc(c.permission)}</code></div>
+          <ol style="padding-left:18px;margin:10px 0 0;font-size:11px;line-height:1.55">${(c.manager_checklist||[]).map(x=>`<li>${esc(x)}</li>`).join('')}</ol>
+        </div>`).join('')}
+      </div>`;
+  } catch (e) { body.innerHTML = `<div class="hint c-red">Yetki bilgisi alınamadı: ${esc(e.message)}</div>`; }
+}
+
+function renderLocationsPage() {
+  const el = $("page-locations");
+  if (!el.dataset.built) {
+    el.dataset.built = "1";
+    el.innerHTML = `<div class="panel"><div class="panel-head"><div><h2 style="margin:0">Lokasyon Haritası</h2><small class="hint">Şube > Bina > Kat > Oda/Kabinet standardı</small></div><button class="mini-btn" onclick="refreshLocations()">Güncelle</button></div><div class="panel-body" id="locationsBody"><div class="hint">Lokasyonlar yükleniyor…</div></div></div>`;
+  }
+}
+
+async function refreshLocations() {
+  const body = $("locationsBody"); if (!body) return;
+  try {
+    const data = await get("/api/locations/summary");
+    body.innerHTML = `
+      <div class="hint" style="margin-bottom:12px">Adlandırma örneği: <code>${esc(data.naming_example)}</code></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-bottom:16px">${(data.sites||[]).map(s=>`<div class="info-card"><span>${esc(s.location)}</span><b>${s.total} cihaz</b><small>${s.online} çevrimiçi · ${s.offline} çevrimdışı</small></div>`).join('') || '<div class="hint">Henüz lokasyon atanmış envanter yok.</div>'}</div>
+      <div class="table-wrap"><table><thead><tr><th>Cihaz</th><th>IP</th><th>Tip</th><th>Durum</th><th>Lokasyon</th>${data.can_manage?'<th>İşlem</th>':''}</tr></thead><tbody>
+      ${(data.assets||[]).map(a=>`<tr><td>${esc(a.hostname||'İsimsiz')}</td><td><code>${esc(a.ip||'-')}</code></td><td>${esc(a.device_type||'unknown')}</td><td>${esc(a.status||'unknown')}</td><td>${data.can_manage?`<input id="loc-${a.asset_id}" value="${esc(a.location==='Atanmamış'?'':a.location)}" placeholder="Şube > Bina > Kat > Kabinet" style="min-width:260px">`:esc(a.location)}</td>${data.can_manage?`<td><button class="mini-btn blue" onclick="saveLocation(${a.asset_id})">Kaydet</button></td>`:''}</tr>`).join('')}
+      </tbody></table></div>`;
+  } catch(e) { body.innerHTML=`<div class="hint c-red">Lokasyon verisi alınamadı: ${esc(e.message)}</div>`; }
+}
+
+async function saveLocation(assetId) {
+  const location = $("loc-"+assetId)?.value.trim();
+  if (!location) { toast("Lokasyon alanını doldurun.", "warn"); return; }
+  try { await post("/api/locations/assign", {asset_id:assetId, location}); toast("Lokasyon kaydedildi.", "success"); refreshLocations(); }
+  catch(e) { toast(e.message || "Lokasyon kaydedilemedi.", "error"); }
 }
 
 /* ---------- Ayarlar sayfası ---------- */
@@ -2704,6 +2861,13 @@ async function loadSettings() {
       <input id="setDiagInterval" type="number" min="5" max="3600" value="${esc(s.diagnostics_interval)}" ${isAdmin ? "" : "disabled"} />
       <div class="field-label" style="margin-top:10px">Veri Saklama Süresi (saat)</div>
       <input id="setRetention" type="number" min="1" max="8760" value="${esc(s.retention_hours)}" ${isAdmin ? "" : "disabled"} />
+      <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line-soft)">
+        <h4 style="margin:0 0 8px;color:var(--purple);font-size:13px">📜 Otomatik NCM Yedekleme</h4>
+        <label style="display:flex;align-items:center;gap:8px"><input id="setNcmAuto" type="checkbox" ${s.ncm_auto_backup_enabled ? "checked" : ""} ${isAdmin ? "" : "disabled"}><span>Ağ cihazlarının konfigürasyonunu otomatik sürümle</span></label>
+        <div class="field-label" style="margin-top:10px">Yedekleme Aralığı (saniye)</div>
+        <input id="setNcmInterval" type="number" min="900" max="604800" value="${esc(s.ncm_backup_interval || 86400)}" ${isAdmin ? "" : "disabled"} />
+        <div class="hint">Önerilen: 86400 (24 saat). SSH salt-okuma hesabı kullanılır ve değişiklikte alarm oluşturulur.</div>
+      </div>
       
       <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line-soft)">
         <h4 style="margin:0 0 4px;color:var(--red);font-size:13px">🚨 Rogue DHCP Koruması</h4>
@@ -2724,9 +2888,9 @@ async function loadSettings() {
       <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line-soft)">
         <h4 style="margin:0 0 4px;color:var(--blue);font-size:13px">🔑 Yetkili Envanter Kimlik Bilgileri</h4>
         <div class="hint" style="margin-bottom:10px">Windows için WMI/WinRM, Linux için SSH ve ağ cihazları için SNMP salt-okuma bilgileri kullanılır.</div>
-        <div class="field-label">WMI Yönetici Kullanıcı Adı</div>
-      <input id="setWmiUser" name="netmon-wmi-user" type="text" value="${esc(s.wmi_username || "")}" placeholder="Örn. DOMAIN\\Administrator veya Administrator" autocomplete="off" spellcheck="false" data-lpignore="true" data-1p-ignore ${isAdmin ? "" : "disabled"} />
-      <div class="field-label" style="margin-top:10px">WMI Yönetici Şifresi</div>
+        <div class="field-label">Windows Envanter Servis Hesabı (en az yetki)</div>
+      <input id="setWmiUser" name="netmon-wmi-user" type="text" value="${esc(s.wmi_username || "")}" placeholder="Örn. DOMAIN\\svc_netmon_ro" autocomplete="off" spellcheck="false" data-lpignore="true" data-1p-ignore ${isAdmin ? "" : "disabled"} />
+      <div class="field-label" style="margin-top:10px">Windows Servis Hesabı Şifresi</div>
       <input id="setWmiPass" name="netmon-wmi-secret" type="password" value="" placeholder="${s.wmi_password_configured ? "Kayıtlı — değiştirmek için yeni parola yazın" : "Şifre"}" autocomplete="new-password" data-lpignore="true" data-1p-ignore ${isAdmin ? "" : "disabled"} />
       <div class="hint">Parola API'den geri okunmaz; Windows DPAPI ile şifrelenir.</div>
       ${s.wmi_password_configured && isAdmin ? '<label class="hint"><input id="clearWmiPass" type="checkbox" /> Kayıtlı WMI/WinRM parolasını sil</label>' : ''}
@@ -2765,6 +2929,11 @@ async function saveSettings() {
       scan_interval: Number($("setScanInterval")?.value) || undefined,
       diagnostics_interval: Number($("setDiagInterval")?.value) || undefined,
       retention_hours: Number($("setRetention")?.value) || undefined,
+      ncm_auto_backup_enabled: Boolean($("setNcmAuto")?.checked),
+      ncm_backup_interval: Number($("setNcmInterval")?.value) || undefined,
+      authorized_dhcp_servers: $("setAuthDhcp")?.value.trim() ?? undefined,
+      ad_server: $("setAdServer")?.value.trim() ?? undefined,
+      ad_domain: $("setAdDomain")?.value.trim() ?? undefined,
       wmi_username: $("setWmiUser")?.value.trim() ?? undefined,
       ssh_username: $("setSshUser")?.value.trim() ?? undefined,
       public_ip_lookup: Boolean($("setPublicIpLookup")?.checked),
@@ -3026,7 +3195,27 @@ function drawTrafficChart() {
   const canvas = $("trafficChart");
   if (!canvas || typeof Chart === "undefined") return;
 
-  const labels = S.sparkUp.map((_, i) => i);
+  const hasSamples = S.sparkUp.length > 1 || S.sparkDown.length > 1;
+  let empty = $("trafficEmptyState");
+  if (!hasSamples) {
+    canvas.style.display = "none";
+    if (!empty) {
+      empty = document.createElement("div");
+      empty.id = "trafficEmptyState";
+      empty.className = "hint";
+      empty.style.cssText = "height:150px;display:grid;place-items:center;text-align:center;border:1px dashed var(--line-soft);border-radius:10px";
+      empty.innerHTML = "Trafik örneği henüz oluşmadı.<br><small>İlk iki telemetri ölçümünden sonra grafik otomatik görüntülenecek.</small>";
+      canvas.parentNode.insertBefore(empty, canvas.nextSibling);
+    }
+    return;
+  }
+  canvas.style.display = "block";
+  if (empty) empty.remove();
+
+  const labels = S.sparkUp.map((_, i) => {
+    const ts = Number(S.sparkTs[i] || 0);
+    return ts ? new Date(ts * 1000).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "";
+  });
 
   if (_trafficChartInstance) {
     _trafficChartInstance.data.labels = labels;
@@ -3077,7 +3266,11 @@ function drawTrafficChart() {
       maintainAspectRatio: false,
       interaction: { mode: "index", intersect: false },
       scales: {
-        x: { display: false },
+        x: {
+          display: true,
+          grid: { display: false },
+          ticks: { color: "#64748b", maxTicksLimit: 6, maxRotation: 0 },
+        },
         y: {
           beginAtZero: true,
           grid: { color: "rgba(255, 255, 255, 0.05)" },
@@ -3915,6 +4108,7 @@ async function saveDeviceEdit(mac) {
     await post("/api/devices/rename", {
       mac,
       friendly_name: $("editDeviceName")?.value.trim() || null,
+      owner: $("editDeviceOwner")?.value.trim() || null,
       device_type: $("editDeviceType")?.value || "unknown",
       notes: $("editDeviceNotes")?.value.trim() || "",
     });
@@ -4072,8 +4266,10 @@ function renderInventoryCommandCenter() {
   // NMS Status Pills (Görsel 3 Referansı)
   if ($("nmsTotalCnt")) $("nmsTotalCnt").textContent = total;
   if ($("nmsOnlineCnt")) $("nmsOnlineCnt").textContent = online;
-  if ($("nmsWarnCnt")) $("nmsWarnCnt").textContent = discovered + unknown;
+  if ($("nmsWarnCnt")) $("nmsWarnCnt").textContent = discovered;
   if ($("nmsCritCnt")) $("nmsCritCnt").textContent = offline;
+  if ($("nmsUnknownCnt")) $("nmsUnknownCnt").textContent = unknown;
+  renderDiscoveryStatus();
 
   // Radyal Göstergeler (Görsel 2 Referansı)
   renderRadialHealthGauges(list);
@@ -4094,14 +4290,14 @@ function renderInventoryCommandCenter() {
 function renderRadialHealthGauges(list) {
   const panel = $("healthPanel");
   if (!panel) return;
-  const total = list.length || 1;
+  const total = list.length;
   const online = list.filter((d) => deviceStatus(d) === "online").length;
-  const healthPct = Math.round((online / total) * 100);
+  const healthPct = total ? Math.round((online / total) * 100) : null;
   const verified = list.filter((d) => d.unified_inventory?.verified || d.wmi_inventory?.status === "Success" || d.deep_inventory?.status === "Success").length;
-  const inventoryPct = Math.round((verified / total) * 100);
+  const inventoryPct = total ? Math.round((verified / total) * 100) : null;
 
-  const healthOffset = Math.round(251 - (251 * healthPct) / 100);
-  const inventoryOffset = Math.round(251 - (251 * inventoryPct) / 100);
+  const healthOffset = healthPct == null ? 251 : Math.round(251 - (251 * healthPct) / 100);
+  const inventoryOffset = inventoryPct == null ? 251 : Math.round(251 - (251 * inventoryPct) / 100);
 
   panel.innerHTML = `
     <div class="radial-gauge-container">
@@ -4116,7 +4312,7 @@ function renderRadialHealthGauges(list) {
             </linearGradient>
           </defs>
         </svg>
-        <div class="gauge-val" style="color:var(--green)">%${healthPct}</div>
+        <div class="gauge-val" style="color:var(--green)">${healthPct == null ? "Veri yok" : "%"+healthPct}</div>
         <div class="gauge-lbl">Ağ Sağlığı</div>
       </div>
 
@@ -4131,7 +4327,7 @@ function renderRadialHealthGauges(list) {
             </linearGradient>
           </defs>
         </svg>
-        <div class="gauge-val" style="color:var(--blue)">%${inventoryPct}</div>
+        <div class="gauge-val" style="color:var(--blue)">${inventoryPct == null ? "Veri yok" : "%"+inventoryPct}</div>
         <div class="gauge-lbl">Doğrulanmış Envanter</div>
       </div>
     </div>
@@ -4243,6 +4439,29 @@ function toggleTopoActiveOnly(checked) {
   const page = $("page-topology");
   if (page) page.dataset.built = "";
   renderTopologyPage();
+}
+
+function renderDiscoveryStatus() {
+  const text = $("scanWaveText");
+  const bar = $("scanWaveBar");
+  if (!text || !bar) return;
+  if (S.scanning) {
+    text.textContent = "Ağ keşfi çalışıyor — doğrulanan sonuçlar geldikçe güncellenecek";
+    bar.style.width = "65%";
+    return;
+  }
+  const count = Array.isArray(S.devices) ? S.devices.length : 0;
+  if (S.deviceScanError) {
+    text.textContent = `Son keşif tamamlanamadı: ${S.deviceScanError}`;
+    bar.style.width = "100%";
+    bar.style.background = "var(--red)";
+    return;
+  }
+  bar.style.background = "linear-gradient(90deg, var(--blue), var(--cyan))";
+  text.textContent = S.devicesTs
+    ? `Son keşif ${formatSeen(S.devicesTs)} · ${count} varlık kaydı`
+    : "Henüz tamamlanmış ağ keşfi yok — Ağı Keşfet ile başlayın";
+  bar.style.width = S.devicesTs ? "100%" : "0%";
 }
 
 function setTopoLayer(layer) {
@@ -5205,6 +5424,7 @@ function renderTopologyPage() {
             ${hasPermission("inventory.scan") ? `<button class="mini-btn blue" onclick="scanNetwork()">Ağı Tara</button>` : ""}
           </div>
         </div>
+        <div id="discoveryScheduleCard" style="margin:10px 12px 0;padding:10px 12px;border:1px solid var(--line-soft);border-radius:9px;background:var(--panel-2)"><span class="hint">Otomatik keşif zamanlaması yükleniyor…</span></div>
         <div class="topo-wrap" style="height:calc(100vh - 250px); min-height:460px" id="topoWrap2">
           <svg class="topo-svg" id="topoSvg2"></svg>
           <div class="topo-status-legend" aria-label="Bağlantı durumları">
@@ -5220,6 +5440,7 @@ function renderTopologyPage() {
     bindTopoDrag($("topoSvg2"));
   }
   drawTopology("topoSvg2");
+  refreshDiscoverySchedule();
   if (!S.activeTopoNodeId) {
     renderNocOverviewDrawer();
   }
@@ -5234,10 +5455,11 @@ async function refreshDashboardWidgets() {
     try {
       const data = await get("/api/traffic/top-talkers");
       const talkers = data?.top_talkers || [];
+      const sampleMeta = `<div class="traffic-footnote" style="margin:0 0 9px;padding:0 0 8px"><span>Toplam: ${esc(data.total_bandwidth_display || "0 bps")} · ${Number(data.session_count || 0)} aktif soket</span><span>${data.sample_stale ? "Trafik örneği güncel değil" : `Sayaç ${esc(data.sample_time || "-")}`}</span></div>`;
       if (!talkers.length) {
-        ttContainer.innerHTML = `<div style="color:var(--muted); font-size:12px; padding:12px; text-align:center">Aktif ağ trafiği veya konuşmacı bulunamadı.</div>`;
+        ttContainer.innerHTML = `${sampleMeta}<div style="color:var(--muted); font-size:12px; padding:12px; text-align:center">Aktif uzak soket bulunamadı. Bu durum arayüz trafiğinin sıfır olduğu anlamına gelmez.</div>`;
       } else {
-        ttContainer.innerHTML = talkers.slice(0, 4).map((t, idx) => {
+        ttContainer.innerHTML = sampleMeta + talkers.slice(0, 4).map((t, idx) => {
           const activityDisplay = `${Number(t.active_conns || 0)} aktif bağlantı`;
           return `
           <div class="talker-row" style="margin-bottom:6px; padding:8px 10px;">
@@ -5260,7 +5482,7 @@ async function refreshDashboardWidgets() {
         `;}).join("");
       }
     } catch (e) {
-      ttContainer.innerHTML = `<div style="color:var(--muted); font-size:11px">Aktif oturum özeti yüklenemedi.</div>`;
+      renderLoadError(ttContainer, "Aktif oturum özeti yüklenemedi", e, "refreshDashboardWidgets()");
     }
   }
 
@@ -5312,7 +5534,7 @@ async function refreshDashboardWidgets() {
         </div>
       `;
     } catch (e) {
-      ipamContainer.innerHTML = `<div style="color:var(--muted); font-size:11px">IPAM özeti yüklenemedi.</div>`;
+      renderLoadError(ipamContainer, "IPAM özeti yüklenemedi", e, "refreshDashboardWidgets()");
     }
   }
 }
@@ -5408,6 +5630,19 @@ function ipv4ToUint32(ip) {
   const octets = String(ip || "").split(".").map(Number);
   if (octets.length !== 4 || octets.some(o => !Number.isInteger(o) || o < 0 || o > 255)) return null;
   return ((((octets[0] * 256 + octets[1]) * 256 + octets[2]) * 256 + octets[3]) >>> 0);
+}
+
+async function refreshDiscoverySchedule() {
+  const el = $("discoveryScheduleCard"); if (!el) return;
+  try {
+    const s = await get("/api/discovery/schedule");
+    const mins = Math.round(Number(s.interval_seconds || 0) / 60);
+    const next = s.next_run ? new Date(s.next_run * 1000).toLocaleString() : "İlk çalışma bekleniyor";
+    el.innerHTML = `<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap">
+      <div><b>⏱ Otomatik Ağ Keşfi</b> <span class="badge ${s.last_status==='failed'?'fail':s.last_status==='running'?'warn':'ok'}">${esc(s.last_status)}</span><div class="hint">Kapsam: ${esc(s.target_subnet)} · Her ${mins} dakika · Sonuç: ${Number(s.last_total||0)} cihaz</div></div>
+      <div style="text-align:right"><small class="hint">Sonraki çalışma: ${esc(next)}</small><br>${s.can_manage?'<button class="mini-btn" onclick="go(\'settings\')">Zamanlamayı Düzenle</button>':'<button class="mini-btn" onclick="go(\'access\')">Gerekli Yetkiyi Gör</button>'}</div>
+    </div>${s.last_error?`<div class="hint c-red" style="margin-top:6px">${esc(s.last_error)}</div>`:''}`;
+  } catch(e) { el.innerHTML=`<div class="hint c-red">Keşif zamanlaması alınamadı: ${esc(e.message)}</div>`; }
 }
 
 function uint32ToIpv4(value) {
@@ -5799,6 +6034,7 @@ function renderNcmPage() {
           </div>
         </div>
         <div class="panel-body">
+          <div id="ncmStatusCard" style="padding:12px 16px;border:1px solid var(--line-soft);border-radius:10px;background:var(--panel-2);margin-bottom:14px"><span class="hint">Otomatik yedekleme durumu yükleniyor…</span></div>
           <div data-permission="ncm.manage" style="background:var(--panel-2); border:1px solid var(--line-soft); border-radius:10px; padding:12px 16px; margin-bottom:16px;">
             <div style="display:grid;grid-template-columns:minmax(180px,.35fr) minmax(260px,1fr);gap:10px;align-items:start">
               <div>
@@ -5839,6 +6075,9 @@ function renderNcmPage() {
 let _ncmConfigsCache = [];
 async function refreshNcm() {
   try {
+    const status = await get("/api/ncm/status");
+    const statusCard = $("ncmStatusCard");
+    if (statusCard) statusCard.innerHTML = `<div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap"><div><b>Otomatik Konfigürasyon Yedeği</b> <span class="badge ${status.enabled&&status.ssh_account_configured?'ok':'warn'}">${status.enabled?'ETKİN':'KAPALI'}</span><div class="hint">Her ${Math.round(status.interval_seconds/3600)} saat · Son kontrolde ${status.checked||0} cihaz · ${status.changed||0} değişiklik</div></div><div><b>${status.ssh_account_configured?'SSH hesabı hazır':'SSH salt-okuma hesabı eksik'}</b><div class="hint">${esc(status.least_privilege_note)}</div>${status.can_manage?'<button class="mini-btn" onclick="go(\'settings\')">Ayarları Aç</button>':'<button class="mini-btn" onclick="go(\'access\')">Gerekli Yetkiyi Gör</button>'}</div></div>`;
     const devSelect = $("ncmDeviceSelect");
     if (devSelect) {
       const devices = S.devices || [];
@@ -6171,7 +6410,10 @@ async function refreshNetworkInfo() {
       </div>
       <div style="margin-top:5px;color:var(--muted);font-size:10px">İpucu: "Yanıt doğrulanamadı" cihazın kapalı olduğunu kanıtlamaz; ICMP filtrelenmiş olabilir.</div>
     `;
-  } catch (e) {}
+  } catch (e) {
+    const el = $("networkInfoStrip");
+    if (el) renderLoadError(el, "Yerel ağ bilgisi alınamadı", e, "refreshNetworkInfo()");
+  }
 }
 
 async function refreshDevices() {
@@ -6198,7 +6440,12 @@ async function refreshDevices() {
         scanBox.innerHTML = `<div class="device-learning"><b>Son envanter taramaları</b><div style="display:grid;gap:4px;margin-top:6px">${scans.scans.map(x => `<div style="display:flex;justify-content:space-between;gap:8px;font-size:10.5px"><span>${esc(x.mode)} · ${esc(x.requested_by || "-")}</span><span>${Number(x.total||0)} cihaz · ${x.finished_at ? "Tamamlandı" : "Devam ediyor"}</span></div>`).join("")}</div></div>`;
       }
     }
-  } catch (e) { S.deviceScanError = e.message || null; }
+  } catch (e) {
+    S.deviceScanError = e.message || "Cihaz verisi alınamadı.";
+    renderInventoryCommandCenter();
+    const body = $("deviceTableBody");
+    if (body) body.innerHTML = `<tr><td colspan="9"><div class="load-state error"><b>Cihaz listesi alınamadı</b><span>${esc(S.deviceScanError)}</span><button class="mini-btn" onclick="refreshDevices()">Tekrar Dene</button></div></td></tr>`;
+  }
 }
 
 async function refreshTopology() {
@@ -6206,7 +6453,11 @@ async function refreshTopology() {
     const data = await get("/api/topology");
     S.topology = data.topology || data;
     drawTopology();
-  } catch (e) {}
+  } catch (e) {
+    const drawer = $("topoDetailDrawer");
+    if (drawer) renderLoadError(drawer, "Topoloji alınamadı", e, "refreshTopology()");
+    toast(e.message || "Topoloji alınamadı.", "error");
+  }
 }
 
 function renderSystemStatus(sys) {
@@ -6215,7 +6466,7 @@ function renderSystemStatus(sys) {
   const quickRow = $("quickRow");
   if (quickRow && sys) {
     const percent = (value) => value == null ? "-" : `${value}%`;
-    const netSpeed = sys.net_total_mbps == null ? "-" : `${Number(sys.net_total_mbps).toFixed(2)} Mbps`;
+    const netSpeed = S.trafficSampleTs == null ? "-" : `${Number(((S.traffic.up || 0) + (S.traffic.down || 0)) / 1e6).toFixed(2)} Mbps`;
     quickRow.innerHTML = `
       <div class="quick"><span style="color:var(--blue); font-weight:bold;">${percent(sys.cpu)}</span><span>CPU</span></div>
       <div class="quick"><span style="color:var(--purple); font-weight:bold;">${percent(sys.ram)}</span><span>RAM</span></div>
@@ -6250,11 +6501,34 @@ function renderSystemStatus(sys) {
     const loss = overview.packet_loss;
     const item = (label, value, color) => `<div style="border-left-color:${color}"><span>${label}</span><b>${value}</b></div>`;
     trafficStrip.innerHTML = [
-      item("Inbound", `${Number(sys.net_rx_mbps || S.traffic.down / 1e6 || 0).toFixed(2)} Mbps`, "#3b9bff"),
-      item("Outbound", `${Number(sys.net_tx_mbps || S.traffic.up / 1e6 || 0).toFixed(2)} Mbps`, "#10b981"),
+      item("Alınan (Download)", `${Number((S.traffic.down || 0) / 1e6).toFixed(2)} Mbps`, "#3b9bff"),
+      item("Gönderilen (Upload)", `${Number((S.traffic.up || 0) / 1e6).toFixed(2)} Mbps`, "#10b981"),
       item("Gecikme", latency == null ? "Ölçülmedi" : `${latency} ms`, "#8b5cf6"),
       item("Paket kaybı", loss == null ? "Ölçülmedi" : `%${loss}`, Number(loss) > 2 ? "#ef4444" : "#f59e0b"),
     ].join("");
+  }
+  renderDashboardDataStatus();
+}
+
+function formatSampleAge(ts) {
+  if (!ts) return "Örnek bekleniyor";
+  const seconds = Math.max(0, Math.round(Date.now() / 1000 - Number(ts)));
+  if (seconds < 5) return "Şimdi";
+  if (seconds < 60) return `${seconds} sn önce`;
+  return `${Math.floor(seconds / 60)} dk önce`;
+}
+
+function renderDashboardDataStatus() {
+  const sample = $("trafficSampleStatus");
+  if (sample) {
+    const stale = !S.trafficSampleTs || (Date.now() / 1000 - Number(S.trafficSampleTs)) > 20;
+    sample.className = `dashboard-freshness ${stale ? "stale" : "fresh"}`;
+    sample.innerHTML = `<i></i><span>${S.trafficSimulated ? "Simülasyon verisi" : "Gerçek arayüz ölçümü"} · ${formatSampleAge(S.trafficSampleTs)}</span>`;
+  }
+  const live = $("dashboardLiveState");
+  if (live) {
+    const socketOpen = networkSocket && networkSocket.readyState === WebSocket.OPEN;
+    live.innerHTML = `<i class="dot ${socketOpen ? "pulse" : "red pulse"}"></i><div><b>${socketOpen ? "Canlı veri akışı" : "Yedek yenileme etkin"}</b><span>${socketOpen ? "WebSocket bağlı" : "Bağlantı bekleniyor"} · son trafik ${formatSampleAge(S.trafficSampleTs)}</span></div>`;
   }
 }
 
@@ -6263,11 +6537,18 @@ async function refreshOverview() {
     const data = await get("/api/overview");
     S.overview = data.overview || data;
     S.system = { ...(S.system || {}), ...(S.overview.system || {}) };
+    const c = S.overview.connections || {};
+    S.connections = {
+      tcp: Number(c.tcp || 0), listen: Number(c.listen || 0), udp: Number(c.udp || 0),
+      total: Number(c.total || 0), supported: c.supported !== false,
+    };
     renderStats();
     renderInventoryCommandCenter();
     renderNetworkHealth();
     renderSystemStatus(S.system);
-  } catch (e) {}
+  } catch (e) {
+    renderLoadError("statRow", "Kontrol merkezi özeti alınamadı", e, "refreshOverview()");
+  }
 }
 
 async function refreshConnections() {
@@ -6282,7 +6563,7 @@ async function refreshConnections() {
       supported: c.supported !== false,
     };
     renderStats();
-  } catch (e) {}
+  } catch (e) { console.warn("Bağlantı özeti alınamadı:", e); }
 }
 
 // /api/traffic'ten çekip sparkUp/sparkDown'ı dolduruyor ve grafiği çiziyor.
@@ -6299,13 +6580,23 @@ async function refreshTraffic() {
         const mbps = ((Number(r.wifi_recv) || 0) + (Number(r.eth_recv) || 0)) / 1_000_000;
         return Number(mbps.toFixed(2));
       });
+      S.sparkTs = list.map((r) => Number(r.ts || 0));
       const last = list[list.length - 1];
       S.traffic.up = (Number(last.wifi_sent) || 0) + (Number(last.eth_sent) || 0);
       S.traffic.down = (Number(last.wifi_recv) || 0) + (Number(last.eth_recv) || 0);
+      S.trafficSampleTs = Number(last.ts || 0) || null;
+      S.trafficSimulated = false;
     }
     if (typeof renderStats === "function") renderStats();
     if (typeof drawTrafficChart === "function") drawTrafficChart();
-  } catch (e) {}
+    renderSystemStatus(S.system || {});
+  } catch (e) {
+    const status = $("trafficSampleStatus");
+    if (status) {
+      status.className = "dashboard-freshness stale";
+      status.innerHTML = `<i></i><span>Trafik API hatası: ${esc(e.message || e)}</span>`;
+    }
+  }
 }
 
 function updateLastScan() {
@@ -6313,24 +6604,32 @@ function updateLastScan() {
   if (el) el.textContent = nowTime();
 }
 
+let _refreshInFlight = null;
+
 async function refreshAll(force = false) {
   if (!S.auto && !force) return;
-  const pageTasks = [];
-  if (S.page === "toptalkers" && typeof refreshTopTalkers === "function") pageTasks.push(refreshTopTalkers());
-  if (S.page === "ipam" && typeof refreshIpam === "function") pageTasks.push(refreshIpam());
-  if (S.page === "ncm" && typeof refreshNcm === "function") pageTasks.push(refreshNcm());
-
-  await Promise.allSettled([
-    refreshOverview(),
-    refreshTraffic(),
-    refreshConnections(),
-    refreshDevices(),
-    refreshNetworkInfo(),
-    refreshTopology(),
-    refreshLogs(),
-    refreshDashboardWidgets(),
-    ...pageTasks
-  ]);
+  if (_refreshInFlight) return _refreshInFlight;
+  const page = S.page || "dashboard";
+  const tasksByPage = {
+    dashboard: [refreshOverview, refreshTraffic, refreshDevices, refreshNetworkInfo, refreshLogs, refreshDashboardWidgets],
+    devices: [refreshDevices],
+    topology: [refreshDevices, refreshTopology],
+    ipam: [refreshIpam],
+    toptalkers: [refreshTopTalkers],
+    ncm: [refreshNcm],
+    security: [refreshSecurity],
+    reports: [refreshReports],
+    locations: [refreshLocations],
+    access: [refreshAccessCenter],
+    analyst: [refreshAnalyst],
+    logs: [refreshLogs],
+    settings: [loadSettings],
+    management: [refreshManagementData],
+  };
+  const taskFns = tasksByPage[page] || [];
+  _refreshInFlight = Promise.allSettled(taskFns.map(fn => Promise.resolve().then(() => fn())))
+    .finally(() => { _refreshInFlight = null; });
+  await _refreshInFlight;
   updateLastScan();
 }
 
@@ -6514,6 +6813,7 @@ let networkSocket = null;
 let reconnectTimer = null;
 let reconnectAttempts = 0;
 let autoRefreshTimer = null;
+let _lastSocketDetailRefresh = 0;
 
 function getWebSocketUrl() {
   const protocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -6583,6 +6883,7 @@ function setConnectionStatus(connected) {
   if (liveText) liveText.textContent = connected ? "Canlı" : "Bağlantı koptu";
   if (brandDot) brandDot.className = connected ? "dot" : "dot red pulse";
   if (liveDot) liveDot.className = connected ? "dot" : "dot red pulse";
+  renderDashboardDataStatus();
 }
 
 async function handleNetworkMessage(message) {
@@ -6606,6 +6907,8 @@ async function handleNetworkMessage(message) {
     const devices = message.devices || message.data;
     if (Array.isArray(devices)) {
       S.devices = devices;
+      S.devicesTs = Number(message.ts || Date.now() / 1000);
+      S.deviceScanError = null;
       renderDeviceTable();
       renderStats();
       renderInventoryCommandCenter();
@@ -6626,21 +6929,26 @@ async function handleNetworkMessage(message) {
     const recvBps = Number(traffic.recv ?? traffic.download ?? traffic.down ?? 0);
     S.traffic.up = sentBps;
     S.traffic.down = recvBps;
+    S.trafficSampleTs = Number(traffic.ts || message.ts || Date.now() / 1000);
+    S.trafficSimulated = Boolean(traffic.simulated);
 
     const MAX_POINTS = 60;
     const mbpsUp = Number((sentBps / 1_000_000).toFixed(2));
     const mbpsDown = Number((recvBps / 1_000_000).toFixed(2));
     S.sparkUp.push(mbpsUp);
     S.sparkDown.push(mbpsDown);
+    S.sparkTs.push(S.trafficSampleTs);
     if (S.sparkUp.length > MAX_POINTS) S.sparkUp.shift();
     if (S.sparkDown.length > MAX_POINTS) S.sparkDown.shift();
+    if (S.sparkTs.length > MAX_POINTS) S.sparkTs.shift();
     if (typeof renderStats === "function") renderStats();
     if (typeof drawTrafficChart === "function") drawTrafficChart();
-    if (S.page === "toptalkers" && typeof refreshTopTalkers === "function") {
-      refreshTopTalkers();
-    }
-    if (S.page === "dashboard" && typeof refreshDashboardWidgets === "function") {
-      refreshDashboardWidgets();
+    renderSystemStatus(S.system || {});
+    const detailNow = Date.now();
+    if (detailNow - _lastSocketDetailRefresh > 20000) {
+      _lastSocketDetailRefresh = detailNow;
+      if (S.page === "toptalkers" && typeof refreshTopTalkers === "function") refreshTopTalkers();
+      if (S.page === "dashboard" && typeof refreshDashboardWidgets === "function") refreshDashboardWidgets();
     }
     return;
   }
@@ -6687,7 +6995,7 @@ function startAutoRefresh() {
   autoRefreshTimer = setInterval(async () => {
     if (document.hidden) return;
     refreshAll();
-  }, 5000);
+  }, 10000);
 }
 
 function stopAutoRefresh() {

@@ -27,6 +27,7 @@ dist/
 # Testing, Coverage & Linters
 # ==============================================================================
 .pytest_cache/
+.pytest-*/
 .coverage
 .coverage.*
 .cache

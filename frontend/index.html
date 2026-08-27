@@ -965,6 +965,19 @@
       .traffic-metric-strip > div { border-left:2px solid var(--blue); padding:3px 8px; }
       .traffic-metric-strip span { display:block; color:var(--muted); font-size:9px; }
       .traffic-metric-strip b { font-size:12px; font-variant-numeric:tabular-nums; }
+      .dashboard-scope-note { display:flex; align-items:flex-start; gap:9px; margin:8px 0 12px; padding:9px 11px; border:1px solid rgba(56,189,248,.22); border-radius:9px; background:rgba(14,116,144,.08); color:var(--txt-2); font-size:10px; line-height:1.45; }
+      .dashboard-scope-note b { color:var(--cyan); }
+      .dashboard-freshness { display:flex; align-items:center; gap:6px; color:var(--muted); font-size:9px; white-space:nowrap; }
+      .dashboard-freshness i { width:7px; height:7px; border-radius:50%; background:var(--muted); }
+      .dashboard-freshness.fresh i { background:var(--green); box-shadow:0 0 8px rgba(16,185,129,.7); }
+      .dashboard-freshness.stale i { background:var(--orange); }
+      .traffic-footnote { display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-top:9px; padding-top:8px; border-top:1px solid var(--line-soft); color:var(--muted); font-size:9px; line-height:1.4; }
+      .load-state { min-height:110px; display:grid; place-items:center; align-content:center; gap:7px; padding:18px; text-align:center; border:1px dashed var(--line); border-radius:10px; color:var(--muted); }
+      .load-state b { color:var(--txt); }.load-state span{max-width:620px;line-height:1.45}.load-state.error{border-color:rgba(239,68,68,.35);background:rgba(127,29,29,.08)}.load-state.error b{color:#fca5a5}
+      .readiness-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:9px; }
+      .readiness-card { padding:11px 12px; border:1px solid var(--line); border-radius:10px; background:var(--panel-2); }
+      .readiness-card>div { display:flex; justify-content:space-between; gap:8px; align-items:start; }.readiness-card p{margin:7px 0 0;color:var(--txt-2);font-size:9.5px;line-height:1.45}.readiness-card small{display:block;margin-top:6px;color:var(--muted)}
+      .readiness-card.ready{border-color:rgba(16,185,129,.28)}.readiness-card.degraded,.readiness-card.needs_configuration{border-color:rgba(245,158,11,.3)}.readiness-card.error{border-color:rgba(239,68,68,.4)}.readiness-card.unavailable{opacity:.78}
       .topo-layer-switch { display:flex; padding:3px; gap:3px; border:1px solid var(--line); background:var(--panel-2); border-radius:8px; }
       .topo-layer-switch button { border:0; background:transparent; color:var(--muted); border-radius:6px; padding:6px 10px; font-size:10px; font-weight:700; cursor:pointer; }
       .topo-layer-switch button.active { color:white; background:#1668d6; }
@@ -2244,11 +2257,11 @@
           <!-- SCAN WAVE CANLI KEŞİF BARI -->
           <div class="scan-wave-banner" id="scanWaveBanner" style="display:block;background:radial-gradient(circle at 10% 50%, rgba(56,189,248,0.18), rgba(15,23,42,0.95));border:1px solid rgba(56,189,248,0.3);border-radius:10px;padding:10px 14px;margin-bottom:12px">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-              <span style="font-weight:700;font-size:12px;color:var(--blue)" id="scanWaveText">⚡ Agentless Discovery Engine — Hazır (ARP + Nmap + DNS + mDNS + SSDP + SNMP + NetBIOS + LLDP)</span>
-              <span style="font-size:10.5px;color:var(--muted)">8 Keşif Protokolü Entegre</span>
+              <span style="font-weight:700;font-size:12px;color:var(--blue)" id="scanWaveText">Keşif motoru durumu yükleniyor…</span>
+              <span style="font-size:10.5px;color:var(--muted)">Yalnız doğrulanan kaynaklar gösterilir</span>
             </div>
             <div style="height:6px;background:var(--bg);border-radius:3px;overflow:hidden">
-              <div id="scanWaveBar" style="width:100%;height:100%;background:linear-gradient(90deg, var(--blue), var(--cyan));border-radius:3px;transition:width 0.4s ease"></div>
+              <div id="scanWaveBar" style="width:0%;height:100%;background:linear-gradient(90deg, var(--blue), var(--cyan));border-radius:3px;transition:width 0.4s ease"></div>
             </div>
           </div>
 
@@ -2262,25 +2275,24 @@
               <div class="nms-pill total" onclick="go('devices')"><span>📡 Toplam Cihaz:</span><b id="nmsTotalCnt">-</b></div>
               <div class="nms-pill online" onclick="go('devices')"><span>🟢 Çevrimiçi:</span><b id="nmsOnlineCnt">-</b></div>
               <div class="nms-pill warn" onclick="go('devices')"><span>⚠️ Yanıtsız / ICMP Engel:</span><b id="nmsWarnCnt">-</b></div>
-              <div class="nms-pill critical" onclick="go('devices')"><span>🔴 Kritik Durum:</span><b id="nmsCritCnt">0</b></div>
+              <div class="nms-pill critical" onclick="go('devices')"><span>🔴 Çevrimdışı:</span><b id="nmsCritCnt">-</b></div>
+              <div class="nms-pill total" onclick="go('devices')"><span>◌ Türü Belirsiz:</span><b id="nmsUnknownCnt">-</b></div>
             </div>
 
             <div class="ops-header">
               <div>
                 <span class="ops-eyebrow">NETWORK OPERATIONS CENTER</span>
                 <h2>Ağ Sağlık Özeti</h2>
-                <p>Canlı telemetri, kritik alarmlar ve bağlantı kalitesi tek görünümde.</p>
+                <p>Ölçüm kapsamı, veri kaynağı ve güncellik bilgisiyle operasyon görünümü.</p>
               </div>
-              <div class="ops-live-state">
-                <i class="dot pulse"></i>
-                <div><b>Canlı izleme</b><span>WebSocket · 5 sn yedek yenileme</span></div>
-              </div>
+              <div class="ops-live-state" id="dashboardLiveState"><i class="dot red pulse"></i><div><b>Veri akışı bağlanıyor</b><span>WebSocket bekleniyor</span></div></div>
             </div>
+            <div class="dashboard-scope-note"><span>ⓘ</span><div><b>Ölçüm kapsamı:</b> cihaz sağlığı yapılandırılmış keşif kapsamını; trafik ise yalnız bu NetMon sunucusunun aktif fiziksel arayüzlerini gösterir. Switch portu / flow collector olmadan tüm LAN trafiği veya cihaz başına bant genişliği olduğu varsayılmaz.</div></div>
             <div class="stat-row" id="statRow"></div>
 
             <div class="grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start;">
               <div class="panel">
-                <div class="panel-head"><h2>Cihaz Sağlığı & Donanım Telemetrisi</h2><span class="data-scope">Bu NetMon sunucusu</span></div>
+                <div class="panel-head"><h2>Ağ Sağlığı & Sunucu Telemetrisi</h2><span class="data-scope">Keşif + bu NetMon sunucusu</span></div>
                 <div class="panel-body">
                   <div id="healthMetricGrid" class="health-metric-grid"></div>
                   <div id="healthPanel">Yükleniyor...</div>
@@ -2288,10 +2300,11 @@
               </div>
               
               <div class="panel">
-                <div class="panel-head"><h2>Arayüz Trafiği</h2><span class="data-scope">Inbound / Outbound · Mbps</span></div>
+                <div class="panel-head"><div><h2 style="margin:0">NetMon Sunucusu Arayüz Trafiği</h2><small class="data-scope">Gerçek fiziksel arayüz sayaçları · Mbps</small></div><div id="trafficSampleStatus" class="dashboard-freshness stale"><i></i><span>Örnek bekleniyor</span></div></div>
                 <div class="panel-body">
                   <div id="trafficMetricStrip" class="traffic-metric-strip"></div>
                   <canvas id="trafficChart" height="150"></canvas>
+                  <div class="traffic-footnote"><span>Download = alınan bit/sn · Upload = gönderilen bit/sn</span><span>Kaynak: işletim sistemi arayüz sayaçları</span></div>
                 </div>
               </div>
 
@@ -2300,7 +2313,7 @@
                 <div class="panel-head">
                   <div style="display:flex;align-items:center;gap:8px">
                     <span style="color:var(--cyan)">📊</span>
-                    <h2 style="margin:0">Canlı Uç Noktalar (Gerçek Soketler)</h2>
+                    <div><h2 style="margin:0">Canlı Uç Noktalar</h2><small class="data-scope">Gerçek soketler · bağlantı sayısına göre</small></div>
                   </div>
                   <div class="right"><button class="mini-btn blue" onclick="go('toptalkers')">Detaylı Gör</button></div>
                 </div>
@@ -2359,6 +2372,8 @@
           <section class="page" id="page-purpleteam"></section>
           <section class="page" id="page-logs"></section>
           <section class="page" id="page-reports"></section>
+          <section class="page" id="page-locations"></section>
+          <section class="page" id="page-access"></section>
           <section class="page" id="page-egitim"></section>
           
           <section class="page" id="page-settings"></section>

@@ -29,6 +29,52 @@ def _bootstrap_admin(client, password_path):
     return headers
 
 
+def test_operations_modules_expose_real_data_and_permission_guidance(isolated_server):
+    client, db_path, password_path = isolated_server
+    headers = _bootstrap_admin(client, password_path)
+    server._devices_cache["data"] = [
+        {"ip": "10.20.0.10", "hostname": "legacy-switch", "type": "switch", "status": "online", "open_ports": [22, 23]},
+        {"ip": "10.20.0.50", "hostname": "unknown-client", "type": "unknown", "status": "online"},
+    ]
+
+    access = client.get("/api/access/capabilities", headers=headers)
+    assert access.status_code == 200
+    assert access.json()["is_admin"] is True
+    assert {item["id"] for item in access.json()["capabilities"]} == {
+        "automatic_discovery", "reports", "configuration_backup", "security_posture", "locations"
+    }
+
+    report = client.get("/api/reports/operations", headers=headers)
+    assert report.status_code == 200
+    assert report.json()["summary"]["assets"] == 0
+    assert report.json()["summary"]["estimated_sla_pct"] is None
+
+    posture = client.get("/api/security/posture", headers=headers)
+    assert posture.status_code == 200
+    assert posture.json()["assets_evaluated"] == 2
+    assert any("TCP/23" in item["evidence"] for item in posture.json()["findings"])
+
+
+def test_location_assignment_roundtrip(isolated_server):
+    client, db_path, password_path = isolated_server
+    headers = _bootstrap_admin(client, password_path)
+    now = 1_700_000_000.0
+    with server.db_conn() as conn:
+        conn.execute(
+            """INSERT INTO inventory_assets(identity_key,hostname,ip_address,device_type,status,first_seen,last_seen,created_at,updated_at)
+               VALUES(?,?,?,?,?,?,?,?,?)""",
+            ("mac:aa", "core-sw", "10.0.0.1", "switch", "online", now, now, now, now),
+        )
+        asset_id = conn.execute("SELECT asset_id FROM inventory_assets WHERE identity_key='mac:aa'").fetchone()[0]
+        conn.commit()
+
+    saved = client.post("/api/locations/assign", headers=headers, json={"asset_id": asset_id, "location": "İstanbul > A Blok > Kat 3 > Kabinet 3A"})
+    assert saved.status_code == 200
+    summary = client.get("/api/locations/summary", headers=headers).json()
+    assert summary["sites"][0]["location"] == "İstanbul > A Blok > Kat 3 > Kabinet 3A"
+    assert summary["sites"][0]["total"] == 1
+
+
 def test_ipam_calculates_subnets_and_detects_conflicts(isolated_server):
     client, _, password_path = isolated_server
     headers = _bootstrap_admin(client, password_path)

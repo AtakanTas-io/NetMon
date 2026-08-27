@@ -10,7 +10,7 @@
     <img src="https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python">
     <img src="https://img.shields.io/badge/FastAPI-0.110+-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI">
     <img src="https://img.shields.io/badge/PyWebView-5.0+-8A2BE2?style=for-the-badge&logo=python&logoColor=white" alt="PyWebView">
-    <img src="https://img.shields.io/badge/Tests-97%20Passed%20(100%25)-brightgreen?style=for-the-badge&logo=pytest&logoColor=white" alt="Tests">
+    <img src="https://img.shields.io/badge/Tests-105%20Passed%20(100%25)-brightgreen?style=for-the-badge&logo=pytest&logoColor=white" alt="Tests">
     <img src="https://img.shields.io/badge/License-MIT-4CAF50?style=for-the-badge" alt="License">
     <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-555555?style=for-the-badge&logo=windows&logoColor=white" alt="Platform">
   </p>
@@ -57,12 +57,13 @@ Netmon/
 │   ├── dhcp_monitor.py      # Rogue DHCP dinleyici servisi
 │   ├── snmp_switch_mapper.py# Switch MAC/Port MIB çözümleyici
 │   ├── wmi_scanner.py       # Windows WMI/WinRM envanter tarayıcı
-│   ├── desktop_app.py       # PyWebView masaüstü kabuğu
-│   └── netmon.db            # SQLite WAL modlu yerel veritabanı
+│   └── desktop_app.py       # PyWebView masaüstü kabuğu
 ├── frontend/                # Vanilla JS / HTML5 Modern Siber Panel
 │   ├── index.html           # SPA Tek Sayfalık Arayüz
 │   └── app.js               # Canlı Topoloji, WebSocket ve UI Mantığı
-├── tests/                   # 80+ Otomatik Pytest Testleri (Güvenlik, Envanter)
+├── tests/                   # 100+ otomatik Pytest testi (güvenlik, envanter, operasyon)
+├── scripts/windows/         # Windows başlatma, build ve Git yardımcıları
+├── scripts/utils/           # Yönetim ve envanter yardımcı araçları
 ├── .github/workflows/       # GitHub Actions CI/CD Pipeline (Python 3.10-3.13)
 └── docs/                    # Mimari ve Teknik Dokümantasyon
 ```
@@ -106,7 +107,7 @@ Tüm modüller, güvenlik duvarı kuralları, oturum güvenliği ve envanter mot
 python -m pytest tests/ -v --basetemp="C:/Temp/pytest_netmon"
 ```
 
-* **88 Test %100 Başarı:** Brute-force kilitleri, yetkisiz token engelleme, son yönetici koruması, DPAPI gizli anahtar maskeleme, switch topoloji doğrulaması, IPAM çakışma tespiti, gerçek trafik sözleşmeleri ve NCM Diff.
+* **105 Test %100 Başarı:** Brute-force kilitleri, yetkisiz token engelleme, son yönetici koruması, DPAPI gizli anahtar maskeleme, switch topoloji doğrulaması, IPAM çakışma tespiti, gerçek trafik sözleşmeleri, operasyonel hazırlık ve NCM Diff.
 
 ---
 
