@@ -1,27 +1,27 @@
 # auto-push.ps1
-Write-Host "GitHub Otomatik Güncelleme Başlatılıyor..." -ForegroundColor Cyan
+Write-Host "GitHub gönderimi başlatılıyor..." -ForegroundColor Cyan
 
 # Git durumunu kontrol et
 $gitStatus = git status --porcelain
 
-if ([string]::IsNullOrWhiteSpace($gitStatus)) {
-    Write-Host "Değişiklik bulunamadı. İşlem iptal ediliyor." -ForegroundColor Yellow
-    exit
+if (-not [string]::IsNullOrWhiteSpace($gitStatus)) {
+    Write-Host "Commit edilmemiş değişiklikler var." -ForegroundColor Yellow
+    Write-Host "Backend, frontend, test ve dokümantasyon değişikliklerini ayrı ayrı stage edip commit edin." -ForegroundColor Yellow
+    Write-Host "Bu araç toplu 'git add .' veya otomatik commit yapmaz." -ForegroundColor Yellow
+    exit 1
 }
 
-# Değişiklikleri ekle
-git add .
+$branch = (git branch --show-current).Trim()
+if ([string]::IsNullOrWhiteSpace($branch)) {
+    Write-Host "Aktif Git dalı belirlenemedi." -ForegroundColor Red
+    exit 1
+}
 
-# Tarih ve saat ile commit mesajı oluştur
-$date = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-$commitMsg = "Otomatik Güncelleme: $date"
+Write-Host "$branch dalındaki hazır commitler GitHub'a gönderiliyor..." -ForegroundColor Cyan
+git push origin $branch
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "GitHub gönderimi başarısız oldu." -ForegroundColor Red
+    exit $LASTEXITCODE
+}
 
-# Commit yap
-git commit -m "$commitMsg"
-
-# GitHub (AtakanTas-io) profiline pushla
-# Not: Branch adınız 'main' veya 'master' olabilir, duruma göre aşağıyı değiştirin.
-Write-Host "Kodlar GitHub'a gönderiliyor..." -ForegroundColor Cyan
-git push origin main
-
-Write-Host "Başarıyla AtakanTas-io profiline işlendi!" -ForegroundColor Green
+Write-Host "Gönderim tamamlandı." -ForegroundColor Green

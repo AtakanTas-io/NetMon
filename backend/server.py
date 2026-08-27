@@ -815,6 +815,13 @@ def diagnostics_loop(stop_event: threading.Event):
 # ============================================================
 _system_prev_net = None
 _system_prev_ts = None
+_last_system_stats = {
+    "cpu": None, "ram": None, "disk": None,
+    "net_rx_mbps": None, "net_tx_mbps": None, "net_total_mbps": None,
+    "net_percent": None, "network_data_source": None, "supported": HAS_PSUTIL,
+    "uptime_seconds": None, "temperature_c": None, "power_status": None,
+    "sample_ts": None,
+}
 
 def _system_stats_payload():
     global _system_prev_net, _system_prev_ts
@@ -872,6 +879,8 @@ def system_stats_loop(stop_event: threading.Event):
     while not stop_event.is_set():
         try:
             payload = _system_stats_payload()
+            payload["sample_ts"] = time.time()
+            _last_system_stats.update(payload)
             manager.broadcast_threadsafe({"type": "system", **payload})
         except Exception:
             pass
@@ -969,13 +978,14 @@ def _load_last_known_devices_into_cache():
 
 
 try:
-    from .dhcp_monitor import start_dhcp_monitor, stop_dhcp_monitor
+    from .dhcp_monitor import start_dhcp_monitor, stop_dhcp_monitor, configure_authorized_dhcp_provider, get_dhcp_monitor_status
 except ImportError:
-    from dhcp_monitor import start_dhcp_monitor, stop_dhcp_monitor
+    from dhcp_monitor import start_dhcp_monitor, stop_dhcp_monitor, configure_authorized_dhcp_provider, get_dhcp_monitor_status
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _stop_event.clear()
+    configure_authorized_dhcp_provider(_authorized_dhcp_servers)
     start_dhcp_monitor()
     _threads.clear()
     init_db()
@@ -990,7 +1000,8 @@ async def lifespan(app: FastAPI):
 
     t2 = threading.Thread(target=diagnostics_loop, args=(_stop_event,), daemon=True)
     t4 = threading.Thread(target=device_scan_loop, args=(_stop_event,), daemon=True)
-    workers = [t2, t4, threading.Thread(target=syslog_receiver_loop, args=(_stop_event,), daemon=True)]
+    workers = [t2, t4, threading.Thread(target=syslog_receiver_loop, args=(_stop_event,), daemon=True),
+               threading.Thread(target=ncm_backup_loop, args=(_stop_event,), daemon=True)]
     if HAS_PSUTIL:
         workers.extend([
             threading.Thread(target=traffic_sampler_loop, args=(_stop_event,), daemon=True),
@@ -1059,15 +1070,15 @@ ROLE_DEFINITIONS = {
     },
     "noc_operator": {
         "label": "NOC Operatörü",
-        "permissions": {"inventory.scan", "devices.manage", "diagnostics.run", "logs.manage", "ncm.manage"},
+        "permissions": {"inventory.scan", "discovery.schedule.manage", "devices.manage", "diagnostics.run", "logs.manage", "ncm.manage", "reports.view", "locations.view"},
     },
     "inventory_specialist": {
         "label": "Envanter Uzmanı",
-        "permissions": {"inventory.scan", "devices.manage"},
+        "permissions": {"inventory.scan", "devices.manage", "reports.view", "locations.view", "locations.manage"},
     },
     "security_analyst": {
         "label": "Güvenlik Analisti",
-        "permissions": {"diagnostics.run", "security.manage"},
+        "permissions": {"diagnostics.run", "security.manage", "reports.view", "locations.view"},
     },
     "viewer": {
         "label": "Salt Okunur",
@@ -1079,6 +1090,57 @@ ROLE_DEFINITIONS = {
         "permissions": set(),
     },
 }
+
+CAPABILITY_CATALOG = (
+    {
+        "id": "automatic_discovery", "title": "Otomatik Ağ Keşfi", "permission": "discovery.schedule.manage",
+        "roles": ["Sistem Yöneticisi", "NOC Operatörü"],
+        "request_text": "Onaylı IP/CIDR kapsamı ve zamanlanmış agentless tarama çalıştırma yetkisi",
+        "manager_checklist": [
+            "Taranmasına izin verilen özel IP/CIDR aralığını yazılı olarak belirtin.",
+            "NetMon sunucusundan ICMP, DNS ve gerekli yönetim portlarına erişime izin verin.",
+            "Windows için WMI/WinRM, Linux/ağ cihazları için salt-okuma SSH veya SNMPv3 hesabı sağlayın.",
+        ],
+    },
+    {
+        "id": "reports", "title": "Operasyon ve SLA Raporları", "permission": "reports.view",
+        "roles": ["Sistem Yöneticisi", "NOC Operatörü", "Envanter Uzmanı", "Güvenlik Analisti"],
+        "request_text": "Envanter, alarm ve performans özetlerini görüntüleme yetkisi",
+        "manager_checklist": [
+            "Raporların hangi şube ve cihaz kapsamını içereceğini onaylatın.",
+            "Kişisel veri içerebilecek cihaz sahibi alanları için kurum politikasını doğrulayın.",
+        ],
+    },
+    {
+        "id": "configuration_backup", "title": "Konfigürasyon Yedekleme (NCM)", "permission": "ncm.manage",
+        "roles": ["Sistem Yöneticisi", "NOC Operatörü"],
+        "request_text": "Ağ cihazlarında yalnızca running-config okuma ve NetMon'da yedek yönetme yetkisi",
+        "manager_checklist": [
+            "Cisco/Aruba/Huawei cihazlarında yalnızca show/display configuration komutlarına izin veren hesap açın.",
+            "NetMon sunucusundan TCP/22 erişimi ve cihaz host anahtarının kontrollü kaydını sağlayın.",
+            "Konfigürasyon değiştirme komutlarını bu hesaba vermeyin; salt-okuma/least-privilege kullanın.",
+        ],
+    },
+    {
+        "id": "security_posture", "title": "Güvenlik Görünürlüğü", "permission": "security.manage",
+        "roles": ["Sistem Yöneticisi", "Güvenlik Analisti"],
+        "request_text": "Açık servis, risk ve güvenlik bulgularını inceleme yetkisi",
+        "manager_checklist": [
+            "Varlıklar üzerinde yetkili ve kapsamı belirlenmiş güvenlik görünürlük taramasını onaylatın.",
+            "Port/servis sonuçlarının kimlerle paylaşılabileceğini belirleyin.",
+            "Düzeltme işlemleri için ayrı değişiklik kaydı açın; NetMon keşif hesabına yönetim yetkisi vermeyin.",
+        ],
+    },
+    {
+        "id": "locations", "title": "Şube, Bina ve Lokasyon Haritası", "permission": "locations.manage",
+        "roles": ["Sistem Yöneticisi", "Envanter Uzmanı"],
+        "request_text": "Varlıkların şube/bina/kat/kabinet bilgisini düzenleme yetkisi",
+        "manager_checklist": [
+            "Kurumun standart lokasyon adlandırmasını paylaşın (Şube > Bina > Kat > Oda/Kabinet).",
+            "Hangi ekiplerin lokasyon bilgisini değiştirebileceğini onaylayın.",
+        ],
+    },
+)
 
 
 def _role_definition(role: str) -> dict:
@@ -1162,6 +1224,108 @@ def require_admin(user: dict = Depends(get_current_user)) -> dict:
     if not _has_permission(user, "system.admin"):
         raise _AuthError(403, "Bu işlem için yönetici yetkisi gerekiyor.")
     return user
+
+
+@app.get("/api/access/capabilities")
+def get_access_capabilities(user: dict = Depends(get_current_user)):
+    """Uygulama rolü ile cihaz/ağ önkoşullarını tek, anlaşılır sözleşmede göster."""
+    settings = get_all_settings()
+    readiness = {
+        "automatic_discovery": bool(settings.get("subnet")),
+        "reports": True,
+        "configuration_backup": bool(settings.get("ssh_username") and settings.get("ssh_password")),
+        "security_posture": bool(_devices_cache.get("data")),
+        "locations": True,
+    }
+    capabilities = []
+    for item in CAPABILITY_CATALOG:
+        permission = item["permission"]
+        allowed = _has_permission(user, permission)
+        capabilities.append({
+            **item,
+            "allowed": allowed,
+            "environment_ready": readiness.get(item["id"], False),
+            "state": "ready" if allowed and readiness.get(item["id"], False) else "needs_environment" if allowed else "needs_role",
+            "current_role": user["role_label"],
+        })
+    return {
+        "current_user": user["username"],
+        "current_role": user["role_label"],
+        "is_admin": user.get("role") == "admin",
+        "capabilities": capabilities,
+        "important": "NetMon rolü tek başına uzak cihaza erişim sağlamaz. BT yöneticisi ayrıca hedef kapsamını, güvenlik duvarı erişimini ve salt-okuma cihaz hesabını onaylamalıdır.",
+    }
+
+
+@app.get("/api/system/readiness")
+def get_system_readiness(user: dict = Depends(get_current_user)):
+    """Gerçek özellik hazırlığını bağımlılık, ayar ve çalışma durumu ile açıkla."""
+    settings = get_all_settings()
+    try:
+        conn = db_conn()
+        conn.execute("SELECT 1").fetchone()
+        conn.close()
+        database_ready = True
+        database_detail = "SQLite veri deposu okunabiliyor."
+    except Exception as exc:
+        database_ready = False
+        database_detail = f"Veri deposu erişilemiyor: {str(exc)[:160]}"
+
+    try:
+        nmap_ready = bool(diag.nmap_available())
+    except Exception:
+        nmap_ready = False
+    try:
+        from . import snmp_switch_mapper
+    except ImportError:
+        try:
+            import snmp_switch_mapper
+        except ImportError:
+            snmp_switch_mapper = None
+    snmp_dependency = bool(snmp_switch_mapper and getattr(snmp_switch_mapper, "HAS_PYSNMP", False))
+    dhcp_state = get_dhcp_monitor_status()
+    firewall_state = _cached_firewall_status()
+
+    def item(key, title, state, detail, action="", category="core"):
+        return {"id": key, "title": title, "state": state, "detail": detail, "action": action, "category": category}
+
+    items = [
+        item("database", "Veri deposu", "ready" if database_ready else "error", database_detail, category="core"),
+        item("live_telemetry", "Canlı sistem ve trafik telemetrisi", "ready" if HAS_PSUTIL else "unavailable",
+             "Fiziksel arayüz, soket, CPU ve bellek sayaçları kullanılabilir." if HAS_PSUTIL else "psutil bağımlılığı kurulu değil.", category="core"),
+        item("discovery", "Ağ keşfi", "ready" if nmap_ready else "degraded",
+             "Nmap ve yerleşik keşif motoru kullanılabilir." if nmap_ready else "Nmap bulunamadı; ARP, ICMP ve yerleşik yöntemlerle sınırlı keşif çalışır.",
+             "Nmap kurulumunu doğrulayın." if not nmap_ready else "", "discovery"),
+        item("speedtest", "İnternet hız testi", "ready" if speedtest is not None else "unavailable",
+             "speedtest-cli kullanılabilir." if speedtest is not None else "speedtest-cli bağımlılığı kurulu değil.", category="diagnostics"),
+        item("windows_inventory", "Windows derin envanteri", "ready" if (deep_discovery.HAS_WMI or deep_discovery.HAS_WINRM) and settings.get("wmi_username") and settings.get("wmi_password") else "needs_configuration" if (deep_discovery.HAS_WMI or deep_discovery.HAS_WINRM) else "unavailable",
+             "WMI/WinRM bağımlılığı ve servis hesabı hazır." if (deep_discovery.HAS_WMI or deep_discovery.HAS_WINRM) and settings.get("wmi_username") and settings.get("wmi_password") else "Uzak Windows envanteri için WMI/WinRM bağımlılığı ve salt-okuma servis hesabı gerekir.",
+             "Ayarlar > Yetkili Envanter", "inventory"),
+        item("ssh_inventory", "SSH / NCM", "ready" if deep_discovery.HAS_PARAMIKO and settings.get("ssh_username") and settings.get("ssh_password") else "needs_configuration" if deep_discovery.HAS_PARAMIKO else "unavailable",
+             "Paramiko ve SSH servis hesabı hazır." if deep_discovery.HAS_PARAMIKO and settings.get("ssh_username") and settings.get("ssh_password") else "SSH bağımlılığı ile salt-okuma kullanıcı/parola gerekir.",
+             "Ayarlar > Yetkili Envanter", "inventory"),
+        item("snmp_inventory", "SNMP ağ cihazı envanteri", "ready" if snmp_dependency and settings.get("snmp_community") else "needs_configuration" if snmp_dependency else "unavailable",
+             "SNMP bağımlılığı ve community hazır." if snmp_dependency and settings.get("snmp_community") else "pysnmp bağımlılığı ve salt-okuma community gerekir.",
+             "Ayarlar > Yetkili Envanter", "inventory"),
+        item("active_directory", "Active Directory oturum açma", "ready" if settings.get("ad_server") and settings.get("ad_domain") else "needs_configuration",
+             "AD sunucusu ve domain yapılandırıldı." if settings.get("ad_server") and settings.get("ad_domain") else "AD sunucusu ve domain alanları henüz yapılandırılmadı.",
+             "Ayarlar > Active Directory", "access"),
+        item("dhcp_monitor", "Rogue DHCP izleyicisi", "ready" if dhcp_state.get("running") else "error" if dhcp_state.get("error") else "needs_configuration",
+             "UDP/68 dinleyicisi çalışıyor." if dhcp_state.get("running") else (dhcp_state.get("error") or "DHCP izleyicisi henüz başlamadı."),
+             "UDP/68 kullanımını ve yönetici yetkisini kontrol edin.", "security"),
+        item("firewall", "Yerel güvenlik duvarı", "ready" if firewall_state.get("state") == "enabled" else "error" if firewall_state.get("state") == "disabled" else "degraded",
+             "İşletim sistemi profillerinde açık." if firewall_state.get("state") == "enabled" else "İşletim sistemi profillerinde kapalı." if firewall_state.get("state") == "disabled" else "Durum işletim sisteminden doğrulanamadı.",
+             "Windows güvenlik duvarı profillerini kontrol edin.", "security"),
+        item("web_filter", "Web filtresi / proxy log entegrasyonu", "unavailable", "Bu sürümde gerçek web filtresi veya proxy log bağlayıcısı yok.", category="security"),
+        item("siem", "SIEM ve otomatik engelleme", "unavailable", "Bu sürüm SIEM alarmı açmaz ve firewall kuralı uygulamaz.", category="security"),
+    ]
+    counts = {state: sum(1 for entry in items if entry["state"] == state) for state in ("ready", "degraded", "needs_configuration", "unavailable", "error")}
+    return {
+        "generated_at": time.time(), "items": items, "counts": counts,
+        "overall": "error" if counts["error"] else "attention" if counts["needs_configuration"] or counts["unavailable"] or counts["degraded"] else "ready",
+        "can_manage_settings": _has_permission(user, "system.settings.manage"),
+        "note": "Hazır olmayan özellikler otomatik olarak çalışıyor kabul edilmez; simülasyonlar operasyon özelliği sayılmaz.",
+    }
 
 
 
@@ -1802,7 +1966,18 @@ def get_overview(user: dict = Depends(get_current_user)):
             "label": "Ölçüm bekleniyor" if score is None else "Sağlıklı" if score >= 85 else "İzlenmeli" if score >= 65 else "Sorunlu"
         },
         "connections": connection_stats,
-        "system": _system_stats_payload(),
+        # Overview reads the most recent background sample. Calling
+        # _system_stats_payload() here would advance its delta counters and make
+        # concurrent dashboard requests report misleading near-zero rates.
+        "system": dict(_last_system_stats),
+        "measurement": {
+            "generated_at": time.time(),
+            "device_scope": "configured_discovery_scope",
+            "traffic_scope": "netmon_host_physical_interfaces",
+            "traffic_source": "psutil_per_interface_counters",
+            "traffic_note": "Trafik değerleri bu NetMon sunucusunun aktif fiziksel ağ arayüzlerinde ölçülür; tüm LAN trafiğini temsil etmez.",
+            "endpoint_bandwidth_supported": False,
+        },
         "simulation": simulation_state
     }
 
@@ -2222,6 +2397,7 @@ def enrich_devices(devices: list[dict]) -> list[dict]:
 class DeviceRenameRequest(BaseModel):
     mac: str
     friendly_name: str | None = None
+    owner: str | None = None
     notes: str | None = None
     device_type: str | None = None
 
@@ -2264,6 +2440,9 @@ def rename_device(body: DeviceRenameRequest, user: dict = Depends(require_permis
     if body.notes is not None:
         updates.append("notes=?")
         values.append(body.notes.strip())
+    if body.owner is not None:
+        updates.append("owner=?")
+        values.append(body.owner.strip() or None)
     if body.device_type is not None:
         allowed = {"router", "firewall", "server", "printer", "mobile", "phone", "tablet", "laptop", "pc", "computer", "iot", "http", "switch", "access_point", "network_device", "unknown"}
         if body.device_type not in allowed:
@@ -2289,6 +2468,8 @@ def rename_device(body: DeviceRenameRequest, user: dict = Depends(require_permis
                     device["friendly_name"] = body.friendly_name.strip() or None
                 if body.notes is not None:
                     device["notes"] = body.notes.strip()
+                if body.owner is not None:
+                    device["owner"] = body.owner.strip() or None
                 if body.device_type is not None:
                     device["type"] = body.device_type
                 break
@@ -4064,12 +4245,19 @@ def trigger_network_scan(req: Optional[NetworkScanRequest] = None, user: dict = 
 # ayarı değiştirmenin gerçek bir etkisi yoktu. Bu döngü, cihaz taramasını
 # gerçekten SCAN_INTERVAL saniyede bir otomatik tekrarlar.
 # ------------------------------------------------------------
+_discovery_schedule_state = {
+    "last_started": None, "last_finished": None, "last_status": "waiting",
+    "last_total": 0, "last_error": None,
+}
+
+
 def device_scan_loop(stop_event: threading.Event):
     while not stop_event.is_set():
         if not _device_scan_lock.acquire(blocking=False):
             stop_event.wait(5)
             continue
         _devices_cache["scan_status"] = "running"
+        _discovery_schedule_state.update(last_started=time.time(), last_status="running", last_error=None)
         try:
             devices = _discover_configured_devices()
             devices = enrich_devices(devices)
@@ -4086,16 +4274,34 @@ def device_scan_loop(stop_event: threading.Event):
             _devices_cache["data"] = devices
             _devices_cache["ts"] = time.time()
             _devices_cache["error"] = None
+            _discovery_schedule_state.update(last_status="success", last_total=len(devices))
             manager.broadcast_threadsafe({"type": "devices", "devices": devices, "ts": _devices_cache["ts"]})
         except NetworkDiscoveryError as exc:
             logger.warning("[LOOP] Auto device scan failed: %s", exc)
             _devices_cache["error"] = str(exc)
+            _discovery_schedule_state.update(last_status="failed", last_error=str(exc)[:500])
         except Exception:
             logger.exception("[LOOP] Unexpected error in device_scan_loop")
+            _discovery_schedule_state.update(last_status="failed", last_error="Beklenmeyen keşif hatası; uygulama günlüğünü inceleyin.")
         finally:
+            _discovery_schedule_state["last_finished"] = time.time()
             _devices_cache["scan_status"] = "idle"
             _device_scan_lock.release()
         stop_event.wait(max(60, SCAN_INTERVAL))
+
+
+@app.get("/api/discovery/schedule")
+def get_discovery_schedule(user: dict = Depends(get_current_user)):
+    last_finished = _discovery_schedule_state.get("last_finished")
+    return {
+        **_discovery_schedule_state,
+        "enabled": True,
+        "interval_seconds": SCAN_INTERVAL,
+        "target_subnet": SUBNET_OVERRIDE or "Otomatik yerel ağ",
+        "next_run": (last_finished + max(60, SCAN_INTERVAL)) if last_finished else None,
+        "can_manage": _has_permission(user, "discovery.schedule.manage"),
+        "required_permission": "discovery.schedule.manage",
+    }
 
 @app.get("/api/diagnostics")
 def get_diagnostics(user: dict = Depends(get_current_user)):
@@ -4336,6 +4542,8 @@ SSH_PASSWORD = ""
 SNMP_COMMUNITY = ""
 PUBLIC_IP_LOOKUP = False
 WINRM_VERIFY_TLS = True
+NCM_AUTO_BACKUP_ENABLED = False
+NCM_BACKUP_INTERVAL = 86400
 
 DEFAULT_SETTINGS = {
     "ping_target": "8.8.8.8",
@@ -4352,7 +4560,32 @@ DEFAULT_SETTINGS = {
     "snmp_community": "",
     "public_ip_lookup": False,
     "winrm_verify_tls": True,
+    "ncm_auto_backup_enabled": False,
+    "ncm_backup_interval": 86400,
+    "authorized_dhcp_servers": "",
+    "ad_server": "",
+    "ad_domain": "",
 }
+
+
+def _authorized_dhcp_servers() -> list[str]:
+    """Ayar listesini doğrula; boşsa bilinen gateway'i güvenli varsayılan yap."""
+    raw = str(get_setting("authorized_dhcp_servers") or "")
+    values = []
+    for item in re.split(r"[,;\s]+", raw):
+        candidate = item.strip()
+        if not candidate:
+            continue
+        try:
+            if ipaddress.ip_address(candidate).version == 4:
+                values.append(candidate)
+        except ValueError:
+            logger.warning("Geçersiz yetkili DHCP IP ayarı yok sayıldı: %s", candidate)
+    if not values:
+        gateway = str((_last_status or {}).get("gateway") or "").strip()
+        if gateway:
+            values.append(gateway)
+    return sorted(set(values))
 
 def get_setting(key: str):
     conn = db_conn()
@@ -4368,14 +4601,14 @@ def get_all_settings():
     conn.close()
     result = dict(DEFAULT_SETTINGS)
     result.update(rows)
-    for k in ("ping_count", "diagnostics_interval", "scan_interval", "retention_hours"):
+    for k in ("ping_count", "diagnostics_interval", "scan_interval", "retention_hours", "ncm_backup_interval"):
         try:
             result[k] = int(result[k])
         except (TypeError, ValueError):
             result[k] = DEFAULT_SETTINGS[k]
     for key in SECRET_SETTING_KEYS:
         result[key] = _unprotect_secret(result.get(key, "") or "")
-    for bool_key in ("public_ip_lookup", "winrm_verify_tls"):
+    for bool_key in ("public_ip_lookup", "winrm_verify_tls", "ncm_auto_backup_enabled"):
         raw_bool = result.get(bool_key, DEFAULT_SETTINGS[bool_key])
         result[bool_key] = raw_bool if isinstance(raw_bool, bool) else str(raw_bool).lower() in ("1", "true", "yes", "on")
     return result
@@ -4408,6 +4641,7 @@ def apply_settings_to_runtime(s: dict):
     değişkenlere yansıtır — yeniden başlatmaya gerek kalmaz."""
     global PING_TARGET, DNS_DOMAIN, PING_COUNT, DIAGNOSTICS_INTERVAL, RETENTION_HOURS, SCAN_INTERVAL, SUBNET_OVERRIDE
     global WMI_USERNAME, WMI_PASSWORD, SSH_USERNAME, SSH_PASSWORD, SNMP_COMMUNITY, PUBLIC_IP_LOOKUP, WINRM_VERIFY_TLS
+    global NCM_AUTO_BACKUP_ENABLED, NCM_BACKUP_INTERVAL
     PING_TARGET = s["ping_target"]
     DNS_DOMAIN = s["dns_domain"]
     PING_COUNT = s["ping_count"]
@@ -4422,6 +4656,8 @@ def apply_settings_to_runtime(s: dict):
     SNMP_COMMUNITY = s.get("snmp_community", "") or ""
     PUBLIC_IP_LOOKUP = bool(s.get("public_ip_lookup", False))
     WINRM_VERIFY_TLS = bool(s.get("winrm_verify_tls", True))
+    NCM_AUTO_BACKUP_ENABLED = bool(s.get("ncm_auto_backup_enabled", False))
+    NCM_BACKUP_INTERVAL = int(s.get("ncm_backup_interval", 86400))
 
 
 class LoginRequest(BaseModel):
@@ -4450,6 +4686,11 @@ class SettingsUpdate(BaseModel):
     snmp_community: str | None = None
     public_ip_lookup: bool | None = None
     winrm_verify_tls: bool | None = None
+    ncm_auto_backup_enabled: bool | None = None
+    ncm_backup_interval: int | None = None
+    authorized_dhcp_servers: str | None = None
+    ad_server: str | None = None
+    ad_domain: str | None = None
 
 
 class CreateUserRequest(BaseModel):
@@ -4474,6 +4715,7 @@ def _validate_settings_update(updates: dict) -> str | None:
         "diagnostics_interval": (5, 3600),
         "scan_interval": (60, 86400),
         "retention_hours": (1, 8760),
+        "ncm_backup_interval": (900, 604800),
     }
     for key, (lower, upper) in bounds.items():
         if key in updates and not lower <= updates[key] <= upper:
@@ -4505,6 +4747,30 @@ def _validate_settings_update(updates: dict) -> str | None:
                 return f"Çok geniş subnet desteklenmiyor (en geniş /16): {net_str}"
             normalized.append(str(network) + name_str)
         updates["subnet"] = ",".join(normalized)
+
+    if "authorized_dhcp_servers" in updates:
+        raw_servers = str(updates["authorized_dhcp_servers"] or "")
+        normalized_servers = []
+        for raw in re.split(r"[,;\s]+", raw_servers):
+            if not raw:
+                continue
+            try:
+                address = ipaddress.ip_address(raw)
+            except ValueError:
+                return f"Geçersiz yetkili DHCP IP adresi: {raw}"
+            if address.version != 4:
+                return "Yetkili DHCP listesinde yalnız IPv4 adresleri kullanılabilir."
+            normalized_servers.append(str(address))
+        if len(normalized_servers) > 32:
+            return "En fazla 32 yetkili DHCP sunucusu tanımlanabilir."
+        updates["authorized_dhcp_servers"] = ",".join(sorted(set(normalized_servers)))
+
+    for key in ("ad_server", "ad_domain"):
+        if key in updates:
+            value = str(updates[key] or "").strip()
+            if value and (len(value) > 253 or re.search(r"[^A-Za-z0-9._:-]", value)):
+                return f"{key} geçerli bir IP veya alan adı olmalıdır."
+            updates[key] = value
 
     for key in ("wmi_username", "ssh_username"):
         if key in updates:
@@ -5149,11 +5415,12 @@ def get_top_talkers(user: dict = Depends(get_current_user)):
     device_by_ip = {d.get("ip"): d for d in devices_list if d.get("ip")}
 
     conn = db_conn()
-    row = conn.execute("SELECT wifi_sent, wifi_recv, eth_sent, eth_recv FROM traffic ORDER BY ts DESC LIMIT 1").fetchone()
+    row = conn.execute("SELECT ts, wifi_sent, wifi_recv, eth_sent, eth_recv FROM traffic ORDER BY ts DESC LIMIT 1").fetchone()
     conn.close()
-    
-    rx_bps = (row[1] + row[3]) if row else 0.0
-    tx_bps = (row[0] + row[2]) if row else 0.0
+
+    sample_ts = float(row[0]) if row else None
+    rx_bps = (row[2] + row[4]) if row else 0.0
+    tx_bps = (row[1] + row[3]) if row else 0.0
     total_bps = rx_bps + tx_bps
     
     total_mbps = round(total_bps / 1_000_000, 2)
@@ -5314,7 +5581,10 @@ def get_top_talkers(user: dict = Depends(get_current_user)):
         "distinct_remote_count": len(endpoints),
         "distinct_process_count": len({s["process_name"] for s in sessions if s.get("process_name")}),
         "runtime_visibility": _runtime_network_visibility(),
-        "sample_time": datetime.now().strftime("%H:%M:%S"),
+        "sample_ts": sample_ts,
+        "sample_time": datetime.fromtimestamp(sample_ts).strftime("%H:%M:%S") if sample_ts else None,
+        "sample_age_seconds": max(0, round(time.time() - sample_ts)) if sample_ts else None,
+        "sample_stale": sample_ts is None or (time.time() - sample_ts) > max(20, TRAFFIC_SAMPLE_INTERVAL * 3),
         "measurement_source": "psutil_interface_counters_and_socket_table",
         "per_endpoint_bandwidth_supported": False,
         "endpoint_metric": "active_connections",
@@ -5370,6 +5640,62 @@ def _fetch_running_config_ssh(ip: str) -> tuple[str, str]:
         raise RuntimeError("Cihaz desteklenen salt-okuma konfigürasyon komutlarına yanıt vermedi: " + "; ".join(errors))
     finally:
         client.close()
+
+
+_ncm_auto_state = {"last_run": None, "last_status": "disabled", "checked": 0, "changed": 0, "errors": []}
+
+
+def ncm_backup_loop(stop_event: threading.Event):
+    """Açıkça etkinleştirildiğinde ağ cihazlarının salt-okuma konfigürasyonunu sürümle."""
+    while not stop_event.is_set():
+        if not NCM_AUTO_BACKUP_ENABLED:
+            _ncm_auto_state.update(last_status="disabled", errors=[])
+            stop_event.wait(30)
+            continue
+        if not (SSH_USERNAME and SSH_PASSWORD):
+            _ncm_auto_state.update(last_status="missing_credentials", errors=["Ayarlar'da SSH salt-okuma hesabı eksik."])
+            stop_event.wait(min(300, max(30, NCM_BACKUP_INTERVAL)))
+            continue
+        candidates = [d for d in _devices_cache.get("data", []) if d.get("ip") and (d.get("is_gateway") or d.get("type") in {"switch", "router", "firewall", "access_point"})]
+        checked = changed = 0
+        errors = []
+        for dev in candidates:
+            if stop_event.is_set():
+                break
+            ip = dev["ip"]
+            try:
+                config_text, _ = _fetch_running_config_ssh(ip)
+                cfg_hash = hashlib.sha256(config_text.encode("utf-8")).hexdigest()
+                conn = db_conn()
+                previous = conn.execute("SELECT config_hash FROM device_configs WHERE ip=? ORDER BY created_at DESC LIMIT 1", (ip,)).fetchone()
+                checked += 1
+                if not previous or previous[0] != cfg_hash:
+                    now = time.time()
+                    conn.execute(
+                        "INSERT INTO device_configs (ip, hostname, device_type, config_text, config_hash, version_label, created_at) VALUES (?,?,?,?,?,?,?)",
+                        (ip, dev.get("hostname") or dev.get("friendly_name") or ip, dev.get("type") or "unknown", config_text, cfg_hash, f"Otomatik-{datetime.fromtimestamp(now).strftime('%Y%m%d-%H%M%S')}", now),
+                    )
+                    if previous:
+                        conn.execute("INSERT INTO alerts(ts,level,message,source) VALUES(?,?,?,?)", (now, "warning", f"Konfigürasyon değişikliği inceleme bekliyor: {ip}", "NCM"))
+                    conn.commit()
+                    changed += 1
+                conn.close()
+            except Exception as exc:
+                errors.append(f"{ip}: {str(exc)[:180]}")
+        _ncm_auto_state.update(last_run=time.time(), last_status="completed" if not errors else "completed_with_errors", checked=checked, changed=changed, errors=errors[:20])
+        stop_event.wait(max(900, NCM_BACKUP_INTERVAL))
+
+
+@app.get("/api/ncm/status")
+def get_ncm_status(user: dict = Depends(get_current_user)):
+    return {
+        **_ncm_auto_state, "enabled": NCM_AUTO_BACKUP_ENABLED,
+        "interval_seconds": NCM_BACKUP_INTERVAL,
+        "ssh_account_configured": bool(SSH_USERNAME and SSH_PASSWORD),
+        "can_manage": _has_permission(user, "ncm.manage"),
+        "required_permission": "ncm.manage",
+        "least_privilege_note": "Hesap yalnızca running-config/show configuration okumalı; yapılandırma değiştirme yetkisi verilmemelidir.",
+    }
 
 @app.post("/api/ncm/backup")
 def post_ncm_backup(req: NcmBackupRequest, user: dict = Depends(require_permission("ncm.manage"))):
@@ -5498,6 +5824,125 @@ def get_ncm_diff(ip: str, v1_id: int, v2_id: int, user: dict = Depends(get_curre
         "stats": {"additions": adds, "deletions": dels, "total_diff_lines": len(parsed_lines)},
         "diff_lines": parsed_lines
     }
+
+
+@app.get("/api/reports/operations")
+def get_operations_report(user: dict = Depends(require_permission("reports.view"))):
+    """Gerçek envanter, snapshot, alarm ve trafik kayıtlarından yönetici özeti üret."""
+    since = time.time() - 24 * 3600
+    conn = db_conn()
+    asset_total = conn.execute("SELECT COUNT(*) FROM inventory_assets").fetchone()[0]
+    verified = conn.execute("SELECT COUNT(*) FROM inventory_assets WHERE completeness >= 70").fetchone()[0]
+    assigned = conn.execute("SELECT COUNT(*) FROM asset_metadata WHERE TRIM(COALESCE(location,'')) <> ''").fetchone()[0]
+    snapshots = conn.execute("SELECT total, online, health FROM analyst_snapshots WHERE created_at>=? ORDER BY created_at", (since,)).fetchall()
+    alert_rows = conn.execute("SELECT level, message, COUNT(*) c FROM alerts WHERE ts>=? GROUP BY level, message ORDER BY c DESC LIMIT 8", (since,)).fetchall()
+    traffic_row = conn.execute("SELECT AVG(wifi_sent+eth_sent), AVG(wifi_recv+eth_recv), MAX(wifi_sent+eth_sent), MAX(wifi_recv+eth_recv) FROM traffic WHERE ts>=?", (since,)).fetchone()
+    config_count = conn.execute("SELECT COUNT(*) FROM device_configs WHERE created_at>=?", (since,)).fetchone()[0]
+    conn.close()
+    sla_samples = [online / total * 100 for total, online, _ in snapshots if total]
+    health_samples = [float(health) for _, _, health in snapshots if health is not None]
+    return {
+        "generated_at": time.time(), "window_hours": 24,
+        "summary": {
+            "assets": asset_total, "verified_assets": verified,
+            "inventory_completeness_pct": round((verified / asset_total * 100), 1) if asset_total else None,
+            "location_coverage_pct": round((assigned / asset_total * 100), 1) if asset_total else None,
+            "estimated_sla_pct": round(sum(sla_samples) / len(sla_samples), 2) if sla_samples else None,
+            "average_health": round(sum(health_samples) / len(health_samples), 1) if health_samples else None,
+            "configuration_backups_24h": config_count,
+        },
+        "traffic": {
+            "average_out_mbps": round(float(traffic_row[0] or 0) / 1_000_000, 2),
+            "average_in_mbps": round(float(traffic_row[1] or 0) / 1_000_000, 2),
+            "peak_out_mbps": round(float(traffic_row[2] or 0) / 1_000_000, 2),
+            "peak_in_mbps": round(float(traffic_row[3] or 0) / 1_000_000, 2),
+        },
+        "recurring_alerts": [{"level": r[0], "message": r[1], "count": r[2]} for r in alert_rows],
+        "data_note": "SLA değeri son 24 saatte kaydedilen analist snapshotlarındaki erişilebilirlik örneklerinden hesaplanan tahmini orandır; sözleşmesel SLA değildir.",
+    }
+
+
+@app.get("/api/security/posture")
+def get_security_posture(user: dict = Depends(require_permission("security.manage"))):
+    risky_ports = {21: "FTP düz metin", 23: "Telnet düz metin", 445: "SMB", 3389: "RDP", 5900: "VNC"}
+    findings = []
+    for dev in _devices_cache.get("data", []):
+        ports = (dev.get("classification") or {}).get("open_ports") or dev.get("open_ports") or []
+        if isinstance(ports, str):
+            try:
+                ports = json.loads(ports)
+            except (TypeError, ValueError):
+                ports = [int(x) for x in re.findall(r"\d+", ports)]
+        exposed = sorted({int(p) for p in ports if str(p).isdigit()} & set(risky_ports))
+        if exposed:
+            findings.append({
+                "severity": "high" if any(p in (23, 445, 3389) for p in exposed) else "medium",
+                "asset": dev.get("hostname") or dev.get("ip") or "Bilinmeyen cihaz", "ip": dev.get("ip"),
+                "title": "İncelenmesi gereken yönetim/legacy servisi",
+                "evidence": ", ".join(f"TCP/{p} {risky_ports[p]}" for p in exposed),
+                "recommendation": "Servisin iş gereksinimini doğrulayın; kaynak IP kısıtı, VPN veya güvenli alternatif uygulayın.",
+            })
+        if (dev.get("type") or "unknown") == "unknown":
+            findings.append({"severity": "medium", "asset": dev.get("hostname") or dev.get("ip") or "Bilinmeyen", "ip": dev.get("ip"),
+                             "title": "Kimliği doğrulanmamış cihaz", "evidence": "Cihaz tipi ve sahibi doğrulanmadı.",
+                             "recommendation": "Envanter yetki testi yapın ve varlık sahibini/lokasyonunu kaydedin."})
+    rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    findings.sort(key=lambda item: rank.get(item["severity"], 9))
+    return {
+        "generated_at": time.time(), "assets_evaluated": len(_devices_cache.get("data", [])),
+        "findings": findings[:200],
+        "counts": {level: sum(1 for f in findings if f["severity"] == level) for level in ("critical", "high", "medium", "low")},
+        "scope_note": "Bulgular yalnızca keşfedilmiş gerçek port ve envanter kanıtlarından üretilir; zafiyet sömürüsü veya izinsiz saldırı testi yapılmaz.",
+    }
+
+
+class LocationAssignmentRequest(BaseModel):
+    asset_id: int
+    location: str
+
+
+@app.get("/api/locations/summary")
+def get_locations_summary(user: dict = Depends(require_permission("locations.view"))):
+    conn = db_conn()
+    rows = conn.execute("""
+        SELECT a.asset_id, a.hostname, a.ip_address, a.device_type, a.status,
+               COALESCE(NULLIF(TRIM(m.location), ''), 'Atanmamış') location
+        FROM inventory_assets a LEFT JOIN asset_metadata m ON m.asset_id=a.asset_id
+        ORDER BY location, a.hostname, a.ip_address
+    """).fetchall()
+    conn.close()
+    sites = {}
+    assets = []
+    for asset_id, hostname, ip, device_type, status, location in rows:
+        item = {"asset_id": asset_id, "hostname": hostname, "ip": ip, "device_type": device_type, "status": status, "location": location}
+        assets.append(item)
+        bucket = sites.setdefault(location, {"location": location, "total": 0, "online": 0, "offline": 0, "types": {}})
+        bucket["total"] += 1
+        if status == "online": bucket["online"] += 1
+        if status == "offline": bucket["offline"] += 1
+        dtype = device_type or "unknown"
+        bucket["types"][dtype] = bucket["types"].get(dtype, 0) + 1
+    return {"sites": list(sites.values()), "assets": assets, "can_manage": _has_permission(user, "locations.manage"), "naming_example": "İstanbul Merkez > A Blok > Kat 3 > Kabinet 3A"}
+
+
+@app.post("/api/locations/assign")
+def assign_asset_location(req: LocationAssignmentRequest, user: dict = Depends(require_permission("locations.manage"))):
+    location = " > ".join(part.strip() for part in req.location.split(">") if part.strip())
+    if not 2 <= len(location) <= 180:
+        raise HTTPException(status_code=400, detail="Lokasyon 2-180 karakter arasında olmalıdır.")
+    conn = db_conn()
+    exists = conn.execute("SELECT 1 FROM inventory_assets WHERE asset_id=?", (req.asset_id,)).fetchone()
+    if not exists:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Varlık bulunamadı.")
+    conn.execute("""
+        INSERT INTO asset_metadata(asset_id, location, status, updated_at) VALUES(?,?,?,?)
+        ON CONFLICT(asset_id) DO UPDATE SET location=excluded.location, updated_at=excluded.updated_at
+    """, (req.asset_id, location, "managed", time.time()))
+    conn.commit()
+    conn.close()
+    _audit(user["username"], "asset_location_update", f"asset_id={req.asset_id} location={location}")
+    return {"ok": True, "asset_id": req.asset_id, "location": location}
 
 
 # ============================================================

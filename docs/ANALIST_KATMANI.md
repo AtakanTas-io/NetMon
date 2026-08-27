@@ -1,9 +1,9 @@
-# NetMon v9 — Network Analyst Intelligence
+# Analist katmanı
 
 ## Amaç
-NetMon; vendor bağımsız ağ keşfi, BT varlık envanteri, güvenlik görünürlüğü ve eğitim işlevlerini tek üründe birleştirir.
+Bu bölüm ağ keşfi ve envanter kayıtlarını cihaz bazında özetler.
 
-## Analist katmanı
+## API'ler
 - `/api/analyst/summary`: ağ sağlığı, envanter tamlığı, güvenlik incelemeleri ve performans özeti.
 - `/api/analyst/devices`: cihaz bazında kimlik, sınıf güveni, kanıt, maruziyet ve öneriler.
 - `/api/analyst/device/{ip}`: tek cihaz analizi.
@@ -13,8 +13,3 @@ NetMon; vendor bağımsız ağ keşfi, BT varlık envanteri, güvenlik görünü
 
 ## Güvenlik ilkesi
 NetMon cihaz yapılandırmasını değiştirmez. SNMP/LLDP/CDP gibi kaynaklar yalnızca yetkili salt-okuma görünürlük için kullanılır. Açık port tek başına güvenlik açığı olarak raporlanmaz.
-
-## Test
-`PYTHONPATH=. pytest -q` → 25 passed, 1 skipped (Windows DPAPI testi Windows ortamına özgü).
-`node --check frontend/app.js` → PASS.
-`python -m py_compile backend/server.py` → PASS.

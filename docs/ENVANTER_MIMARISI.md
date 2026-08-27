@@ -1,16 +1,16 @@
-# NetMon – Envanter Odaklı Ürün Mimarisi
+# Envanter mimarisi
 
 ## Öncelik
 1. BT varlık envanteri
-2. Agentless ağ keşfi ve topoloji
+2. Ajansız ağ keşfi ve topoloji
 3. Yetkili derin envanter
 4. Siber güvenlik görünürlüğü ve güvenli Cyber Lab
 5. NetMon Academy
 
 ## Envanter kimliği
 - MAC varsa birincil kimlik olarak kullanılır.
-- MAC yoksa hostname + IP, o da yoksa IP fingerprint kullanılır.
-- IP değişimi yeni asset oluşturmaz.
+- MAC yoksa bilgisayar adı ve IP, o da yoksa IP parmak izi kullanılır.
+- IP değişimi yeni varlık oluşturmaz.
 - Eksik bilgi uydurulmaz; NULL/UNKNOWN kullanılır.
 
 ## SQL
@@ -24,7 +24,7 @@ Yeni normalize tablolar:
 Mevcut `known_devices` ve `device_inventory` geriye dönük uyumluluk için korunur.
 
 ## Yetki modeli
-Agentless Discovery yalnızca ağdan teknik olarak gözlenebilen verileri toplar.
+Ajansız keşif yalnızca ağdan gözlenebilen verileri toplar.
 CPU/RAM/disk/yazılım gibi derin sistem bilgileri yalnızca yetkili WMI/WinRM/SSH/SNMP gibi kanallardan alınır.
 Yetki yoksa sistem zorlamaz ve eksik alanları açıkça belirtir.
 
@@ -33,9 +33,9 @@ Yetki yoksa sistem zorlamaz ve eksik alanları açıkça belirtir.
 - `GET /api/inventory/assets`
 - `GET /api/academy/modules`
 
-Mevcut cihaz ve yetkili inventory API'leri korunmuştur.
+Mevcut cihaz ve yetkili envanter API'leri korunur.
 
-## UI sadeleştirmesi
+## Arayüz
 Ana navigasyon yalnızca ürünün çekirdek alanlarına odaklanır:
 - Kontrol Merkezi
 - BT Varlık Envanteri
@@ -46,4 +46,4 @@ Ana navigasyon yalnızca ürünün çekirdek alanlarına odaklanır:
 - Ayarlar
 - Yönetim
 
-Ping, traceroute, portscan ve speedtest gibi yardımcı araçlar ana navigasyondan çıkarılmış; backend fonksiyonları gereksiz yere silinmemiştir.
+Ping, traceroute, port taraması ve hız testi gibi yardımcı araçlar ana menü dışında tutulur; API işlevleri kullanılmaya devam eder.

@@ -1,23 +1,23 @@
-# Contributing to NetMon
+# Katkıda bulunma
 
-First off, thank you for considering contributing to NetMon! It's people like you that make NetMon such a great tool.
+Hata bildirirken işletim sistemi, Python sürümü, tekrar adımları ve varsa ilgili log satırlarını ekleyin. Parola, token, kullanıcı adı veya şirket ağına ait gerçek IP adreslerini paylaşmayın.
 
-## Where do I go from here?
+Kod değişikliği göndermek için:
 
-If you've noticed a bug or have a feature request, make sure to check our Issues to see if someone else in the community has already created a ticket. If not, go ahead and make one!
+1. Depoyu fork edin ve ayrı bir dal açın.
+2. Değişikliği tek bir konu ile sınırlı tutun.
+3. İlgili testi ekleyin veya mevcut testi güncelleyin.
+4. `python -m pytest tests -v` komutunu çalıştırın.
+5. Pull request açıklamasında neyi, neden değiştirdiğinizi ve nasıl denediğinizi yazın.
 
-## Fork & create a branch
+## Commit mesajları
 
-If this is something you think you can fix, then fork NetMon and create a branch with a descriptive name.
+Kısa ve doğal Türkçe kullanın. Conventional Commit ön ekleri zorunlu değildir ve bu depoda tercih edilmez.
 
-## Implementing your change
+Örnekler:
 
-- Adhere to the PEP 8 coding style for backend (FastAPI/Python).
-- Document new features or APIs.
-- Write unit tests for your changes where possible.
+- `DHCP ayarını veritabanına kaydet`
+- `Boş trafik verisinde hata mesajını göster`
+- `Switch port eşleştirmesi için test ekle`
 
-## Pull Request Process
-
-1. Ensure any install or build dependencies are removed before the end of the layer when doing a build.
-2. Update the README.md with details of changes to the interface, this includes new environment variables, exposed ports, useful file locations and container parameters.
-3. You may merge the Pull Request in once you have the sign-off of two other developers, or if you do not have permission to do that, you may request the second reviewer to merge it for you.
+Backend, frontend, test ve belge değişikliklerini mümkün olduğunda ayrı commitlerde tutun. `git add .` yerine ilgili dosyaları açıkça stage edin.

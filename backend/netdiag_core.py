@@ -1448,12 +1448,17 @@ class NetworkDiagnostics:
 
     def get_security_analysis(self):
         analysis = {
-            "firewall_desc": "Sisteminize giren ve çıkan veri paketlerini belirli güvenlik kurallarına göre filtreleyen savunma mekanizmasıdır.",
-            "webfilter_desc": "Zararlı veya şirket politikalarına aykırı web sitelerine erişimi ağ seviyesinde engelleyen sistemdir.",
+            "firewall_desc": "Yerel güvenlik duvarı durumu ölçülüyor.",
+            "webfilter_desc": "Bu sürümde web filtresi veya proxy log entegrasyonu yok; durum ölçülmüyor.",
             "rules": []
         }
         firewall = self.get_firewall_status()
         fw_state = firewall.get("state", "unknown")
+        analysis["firewall_desc"] = {
+            "enabled": "Yerel güvenlik duvarı açık. İşletim sistemi profillerinden doğrulandı.",
+            "disabled": "Yerel güvenlik duvarı kapalı görünüyor. İşletim sistemi profillerinden doğrulandı.",
+        }.get(fw_state, "Yerel güvenlik duvarı durumu işletim sisteminden doğrulanamadı.")
+        analysis["capabilities"] = {"firewall_measured": fw_state in ("enabled", "disabled"), "web_filter_supported": False}
         analysis["rules"].append({
             "name": "Yerel Güvenlik Duvarı",
             "status": {"enabled": "Açık", "disabled": "Kapalı"}.get(fw_state, "Doğrulanamadı"),

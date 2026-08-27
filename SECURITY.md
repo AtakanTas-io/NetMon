@@ -1,25 +1,22 @@
-# Security Policy
+# Güvenlik
 
-## Supported Versions
+## Destek kapsamı
 
-We currently provide security updates for the latest major version of NetMon.
+Proje henüz kararlı bir sürüm yayımlamadı. Güvenlik düzeltmeleri güncel `main` dalına uygulanır; eski commitler için ayrı destek sözü verilmez.
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 2.6.x   | :white_check_mark: |
-| 2.5.x   | :white_check_mark: |
-| < 2.5   | :x:                |
+## Bildirim
 
-## Reporting a Vulnerability
+Bir güvenlik sorunu bulursanız ayrıntıları herkese açık issue içinde paylaşmayın. GitHub'ın özel güvenlik bildirimi özelliğini kullanın veya depo sahibiyle doğrudan iletişime geçin.
 
-Security is a core priority for NetMon. We take all security vulnerabilities seriously. 
+Bildirimde şunlar yeterlidir:
 
-If you discover a security vulnerability within NetMon, please DO NOT open a public issue. Instead, send an email to the project maintainers or use the private vulnerability reporting feature on GitHub.
+- Etkilenen dosya veya API
+- Sorunu tekrar etme adımları
+- Beklenen ve gerçekleşen davranış
+- Varsa kısa bir log veya ekran görüntüsü
 
-Please include the following in your report:
-- Type of issue
-- Full paths of file(s) where the vulnerability was discovered
-- Step-by-step instructions to reproduce the issue
-- Impact of the issue
+Gerçek parola, token, oturum anahtarı ya da kurum ağına ait hassas veri göndermeyin. Örnekleri anonimleştirin.
 
-We will acknowledge receipt of your vulnerability report within 48 hours.
+## Kullanım
+
+NetMon yalnızca sahibi olduğunuz veya inceleme yetkinizin bulunduğu ağlarda kullanılmalıdır. Ağ taraması, SNMP, WMI/WinRM ve SSH işlemleri hedef sistemlerin kayıtlarında görünebilir ve yönetici yetkisi gerektirebilir.

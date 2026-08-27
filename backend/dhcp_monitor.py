@@ -3,29 +3,34 @@ import struct
 import threading
 import time
 import logging
+from typing import Callable, Iterable, Optional
 
 logger = logging.getLogger("netmon.dhcp")
 
 _stop_event = threading.Event()
 _dhcp_thread = None
+_authorized_provider: Optional[Callable[[], Iterable[str]]] = None
+_monitor_state = {"running": False, "error": None, "last_event_ts": None, "last_source_ip": None}
+
+
+def configure_authorized_dhcp_provider(provider: Callable[[], Iterable[str]]):
+    """Server ayar katmanını bu modüle gevşek bağlı bir callback ile bağla."""
+    global _authorized_provider
+    _authorized_provider = provider
+
+
+def get_dhcp_monitor_status():
+    return {**_monitor_state, "thread_alive": bool(_dhcp_thread and _dhcp_thread.is_alive())}
 
 def get_authorized_dhcp():
+    if _authorized_provider is None:
+        return []
     try:
-        from server import _settings_cache
-        val = _settings_cache.get("authorized_dhcp")
-        if val:
-            return str(val).split(",")
-    except Exception:
-        pass
-    # If not configured, we just assume the default gateway is the only authorized DHCP
-    try:
-        from server import _last_status
-        gw = _last_status.get("gateway")
-        if gw:
-            return [gw]
-    except:
-        pass
-    return []
+        values = _authorized_provider() or []
+        return sorted({str(value).strip() for value in values if str(value).strip()})
+    except Exception as exc:
+        logger.warning("Yetkili DHCP listesi alınamadı: %s", exc)
+        return []
 
 def _dhcp_monitor_loop():
     # Bind to UDP 68 to listen for BOOTP replies
@@ -38,9 +43,11 @@ def _dhcp_monitor_loop():
         s.settimeout(2.0)
     except Exception as e:
         logger.error(f"Failed to bind DHCP monitor on UDP 68: {e}")
+        _monitor_state.update(running=False, error=str(e)[:300])
         return
 
     logger.info("DHCP monitor started on UDP 68")
+    _monitor_state.update(running=True, error=None)
     
     while not _stop_event.is_set():
         try:
@@ -51,6 +58,7 @@ def _dhcp_monitor_loop():
             if data and data[0] == 2:
                 # This is a DHCP offer / ACK from a server
                 auth_servers = get_authorized_dhcp()
+                _monitor_state.update(last_event_ts=time.time(), last_source_ip=source_ip)
                 
                 # We need to extract the actual server IP from the DHCP options (Option 54)
                 # But as a fallback we can use the source IP
@@ -81,6 +89,7 @@ def _dhcp_monitor_loop():
             time.sleep(1)
             
     s.close()
+    _monitor_state["running"] = False
 
 def start_dhcp_monitor():
     global _dhcp_thread
@@ -93,3 +102,4 @@ def stop_dhcp_monitor():
     _stop_event.set()
     if _dhcp_thread:
         _dhcp_thread.join(timeout=3)
+    _monitor_state["running"] = False

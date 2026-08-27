@@ -27,6 +27,7 @@ dist/
 # Testing, Coverage & Linters
 # ==============================================================================
 .pytest_cache/
+.pytest-*/
 .coverage
 .coverage.*
 .cache
@@ -77,3 +78,6 @@ initial_admin_password.txt
 
 # Antigravity Context & Memory
 GEMINI.md
+
+.cursorrules
+AGENTS.md
