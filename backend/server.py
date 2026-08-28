@@ -4447,18 +4447,21 @@ try:
     from .routers.discovery import create_discovery_router
     from .routers.inventory import create_inventory_router
     from .routers.ipam import create_ipam_router
+    from .routers.ncm import create_ncm_router
     from .routers.settings import create_settings_router
 except ImportError:
     from routers.auth import create_auth_router
     from routers.discovery import create_discovery_router
     from routers.inventory import create_inventory_router
     from routers.ipam import create_ipam_router
+    from routers.ncm import create_ncm_router
     from routers.settings import create_settings_router
 
 app.include_router(create_auth_router(sys.modules[__name__]))
 app.include_router(create_discovery_router(sys.modules[__name__]))
 app.include_router(create_inventory_router(sys.modules[__name__]))
 app.include_router(create_ipam_router(sys.modules[__name__]))
+app.include_router(create_ncm_router(sys.modules[__name__]))
 app.include_router(create_settings_router(sys.modules[__name__]))
 
 
@@ -4768,12 +4771,6 @@ def get_top_talkers(user: dict = Depends(get_current_user)):
 # ============================================================
 # NETWORK CONFIGURATION MANAGEMENT (NCM & DIFF)
 # ============================================================
-class NcmBackupRequest(BaseModel):
-    ip: str
-    version_label: str | None = None
-    manual_config: str | None = None
-
-
 def _fetch_running_config_ssh(ip: str) -> tuple[str, str]:
     """Bilinen host anahtarına sahip cihazdan salt-okuma yapılandırma al."""
     if not deep_discovery.HAS_PARAMIKO:
@@ -4857,146 +4854,6 @@ def ncm_backup_loop(stop_event: threading.Event):
                 errors.append(f"{ip}: {str(exc)[:180]}")
         _ncm_auto_state.update(last_run=time.time(), last_status="completed" if not errors else "completed_with_errors", checked=checked, changed=changed, errors=errors[:20])
         stop_event.wait(max(900, NCM_BACKUP_INTERVAL))
-
-
-@app.get("/api/ncm/status")
-def get_ncm_status(user: dict = Depends(get_current_user)):
-    return {
-        **_ncm_auto_state, "enabled": NCM_AUTO_BACKUP_ENABLED,
-        "interval_seconds": NCM_BACKUP_INTERVAL,
-        "ssh_account_configured": bool(SSH_USERNAME and SSH_PASSWORD),
-        "can_manage": _has_permission(user, "ncm.manage"),
-        "required_permission": "ncm.manage",
-        "least_privilege_note": "Hesap yalnızca running-config/show configuration okumalı; yapılandırma değiştirme yetkisi verilmemelidir.",
-    }
-
-@app.post("/api/ncm/backup")
-def post_ncm_backup(req: NcmBackupRequest, user: dict = Depends(require_permission("ncm.manage"))):
-    ip = req.ip.strip()
-    try:
-        parsed_ip = ipaddress.ip_address(ip)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Geçerli bir IP adresi gereklidir.")
-    if not _is_allowed_inventory_ip(parsed_ip):
-        raise HTTPException(status_code=400, detail="NCM yalnızca yerel/özel ağ cihazlarında kullanılabilir.")
-        
-    devices_list = _devices_cache.get("data", [])
-    dev = next((d for d in devices_list if d.get("ip") == ip), None)
-    hostname = (dev or {}).get("hostname") or (dev or {}).get("friendly_name") or ip
-    dev_type = (dev or {}).get("type") or "unknown"
-    
-    if req.manual_config:
-        config_text = req.manual_config
-        config_source = "manual"
-        source_command = None
-    else:
-        try:
-            config_text, source_command = _fetch_running_config_ssh(ip)
-            config_source = "ssh"
-        except Exception as exc:
-            _audit(user["username"], "ncm_backup", f"ip={ip} fetch_failed={str(exc)[:180]}", success=False)
-            raise HTTPException(status_code=503, detail=f"Gerçek cihaz konfigürasyonu alınamadı: {exc}")
-
-    if len(config_text.encode("utf-8")) > 2_000_000:
-        raise HTTPException(status_code=413, detail="Konfigürasyon 2 MB sınırını aşıyor.")
-
-    cfg_hash = hashlib.sha256(config_text.encode("utf-8")).hexdigest()
-    label = req.version_label or f"Backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-    created_at = time.time()
-    
-    conn = db_conn()
-    conn.execute(
-        "INSERT INTO device_configs (ip, hostname, device_type, config_text, config_hash, version_label, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (ip, hostname, dev_type, config_text, cfg_hash, label, created_at)
-    )
-    conn.commit()
-    cfg_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-    conn.close()
-    
-    _audit(user["username"], "ncm_backup", f"ip={ip} source={config_source} config_id={cfg_id} hash={cfg_hash[:8]}")
-    return {
-        "ok": True, "id": cfg_id, "ip": ip, "hostname": hostname,
-        "version_label": label, "hash": cfg_hash, "created_at": created_at,
-        "source": config_source, "source_command": source_command,
-    }
-
-@app.get("/api/ncm/configs")
-def get_ncm_configs(ip: str | None = None, user: dict = Depends(get_current_user)):
-    conn = db_conn()
-    if ip:
-        rows = conn.execute(
-            "SELECT id, ip, hostname, device_type, config_hash, version_label, created_at, LENGTH(config_text) as size_bytes FROM device_configs WHERE ip=? ORDER BY created_at DESC",
-            (ip,)
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT id, ip, hostname, device_type, config_hash, version_label, created_at, LENGTH(config_text) as size_bytes FROM device_configs ORDER BY created_at DESC LIMIT 100"
-        ).fetchall()
-    conn.close()
-    
-    configs = [
-        {
-            "id": r[0], "ip": r[1], "hostname": r[2], "device_type": r[3],
-            "hash": r[4], "version_label": r[5], "created_at": r[6],
-            "created_at_fmt": datetime.fromtimestamp(r[6]).strftime("%Y-%m-%d %H:%M:%S"),
-            "size_bytes": r[7]
-        }
-        for r in rows
-    ]
-    return {"configs": configs}
-
-@app.get("/api/ncm/diff")
-def get_ncm_diff(ip: str, v1_id: int, v2_id: int, user: dict = Depends(get_current_user)):
-    import difflib
-    conn = db_conn()
-    row1 = conn.execute("SELECT id, version_label, config_text, created_at FROM device_configs WHERE id=? AND ip=?", (v1_id, ip)).fetchone()
-    row2 = conn.execute("SELECT id, version_label, config_text, created_at FROM device_configs WHERE id=? AND ip=?", (v2_id, ip)).fetchone()
-    conn.close()
-    
-    if not row1 or not row2:
-        raise HTTPException(status_code=404, detail="Karşılaştırılacak konfigürasyon sürümleri bulunamadı.")
-        
-    text1 = row1[2].splitlines(keepends=True)
-    text2 = row2[2].splitlines(keepends=True)
-    
-    diff = list(difflib.unified_diff(
-        text1, text2,
-        fromfile=f"{row1[1]} ({datetime.fromtimestamp(row1[3]).strftime('%Y-%m-%d %H:%M')})",
-        tofile=f"{row2[1]} ({datetime.fromtimestamp(row2[3]).strftime('%Y-%m-%d %H:%M')})",
-        lineterm=""
-    ))
-    
-    parsed_lines = []
-    adds = 0
-    dels = 0
-    old_ln = 0
-    new_ln = 0
-    
-    for line in diff:
-        if line.startswith("---") or line.startswith("+++"):
-            parsed_lines.append({"type": "header", "content": line, "old_ln": None, "new_ln": None})
-        elif line.startswith("@@"):
-            parsed_lines.append({"type": "chunk_header", "content": line, "old_ln": None, "new_ln": None})
-        elif line.startswith("+"):
-            adds += 1
-            new_ln += 1
-            parsed_lines.append({"type": "add", "content": line[1:], "old_ln": None, "new_ln": new_ln})
-        elif line.startswith("-"):
-            dels += 1
-            old_ln += 1
-            parsed_lines.append({"type": "delete", "content": line[1:], "old_ln": old_ln, "new_ln": None})
-        else:
-            old_ln += 1
-            new_ln += 1
-            parsed_lines.append({"type": "context", "content": line[1:] if line.startswith(" ") else line, "old_ln": old_ln, "new_ln": new_ln})
-            
-    return {
-        "ip": ip,
-        "v1": {"id": row1[0], "label": row1[1], "date": datetime.fromtimestamp(row1[3]).strftime("%Y-%m-%d %H:%M:%S")},
-        "v2": {"id": row2[0], "label": row2[1], "date": datetime.fromtimestamp(row2[3]).strftime("%Y-%m-%d %H:%M:%S")},
-        "stats": {"additions": adds, "deletions": dels, "total_diff_lines": len(parsed_lines)},
-        "diff_lines": parsed_lines
-    }
 
 
 @app.get("/api/reports/operations")
