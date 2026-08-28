@@ -1,7 +1,7 @@
 import pytest
 from types import SimpleNamespace
-from fastapi.testclient import TestClient
 import server
+from conftest import persistent_test_client
 
 
 @pytest.fixture()
@@ -13,7 +13,8 @@ def isolated_server(tmp_path, monkeypatch):
     server._devices_cache.update({"ts": 0, "data": [], "error": None, "scan_status": "idle"})
     server._local_wmi_cache.update({"ts": 0, "data": None})
     server.init_db()
-    return TestClient(server.app), db_path, password_path
+    with persistent_test_client(server.app) as client:
+        yield client, db_path, password_path
 
 
 def _bootstrap_admin(client, password_path):

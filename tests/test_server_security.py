@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import server
+from conftest import persistent_test_client
 
 
 @pytest.fixture()
@@ -17,7 +18,8 @@ def isolated_server(tmp_path, monkeypatch):
     server._devices_cache.update({"ts": 0, "data": [], "error": None, "scan_status": "idle"})
     server._local_wmi_cache.update({"ts": 0, "data": None})
     server.init_db()
-    return TestClient(server.app), db_path, password_path
+    with persistent_test_client(server.app) as client:
+        yield client, db_path, password_path
 
 
 def _bootstrap_admin(client, password_path):
@@ -396,7 +398,7 @@ def test_snmp_identity_distinguishes_enterprise_network_devices():
 
 
 def test_application_lifespan_and_security_headers(isolated_server, monkeypatch):
-    client, _, _ = isolated_server
+    _, _, _ = isolated_server
 
     def idle_worker(stop_event):
         stop_event.wait(0.05)
@@ -405,8 +407,8 @@ def test_application_lifespan_and_security_headers(isolated_server, monkeypatch)
     monkeypatch.setattr(server, "device_scan_loop", idle_worker)
     monkeypatch.setattr(server, "traffic_sampler_loop", idle_worker)
     monkeypatch.setattr(server, "system_stats_loop", idle_worker)
-    with client:
-        response = client.get("/")
+    with TestClient(server.app) as lifespan_client:
+        response = lifespan_client.get("/")
         assert response.status_code == 200
         assert "NetMon" in response.text
         assert response.headers["x-frame-options"] == "DENY"
