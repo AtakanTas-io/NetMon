@@ -46,6 +46,7 @@ try:
     from . import netdiag_core as diag
     from . import deep_discovery
     from .core.access import ROLE_DEFINITIONS, has_permission, role_definition, role_permissions
+    from .core.config import RUNTIME_CONFIG
     from .core.database import connect_sqlite
     from .netdiag_core import NetworkDiagnostics, NetworkDiscoveryError
     from .wmi_scanner import WmiNetworkScanner
@@ -53,6 +54,7 @@ except ImportError:
     import netdiag_core as diag
     import deep_discovery
     from core.access import ROLE_DEFINITIONS, has_permission, role_definition, role_permissions
+    from core.config import RUNTIME_CONFIG
     from core.database import connect_sqlite
     from netdiag_core import NetworkDiagnostics, NetworkDiscoveryError
     from wmi_scanner import WmiNetworkScanner
@@ -197,30 +199,19 @@ def _hidden_subprocess_kwargs() -> dict:
 # ============================================================
 # AYARLAR VE VERİTABANI YOLU
 # ============================================================
-_configured_data_dir = os.environ.get("NETMON_DATA_DIR", "").strip()
-if _configured_data_dir:
-    base_dir = Path(_configured_data_dir).expanduser().resolve()
-    base_dir.mkdir(parents=True, exist_ok=True)
-    DB_PATH = base_dir / "netmon.db"
-elif getattr(sys, 'frozen', False):
-    base_dir = Path(os.path.expanduser("~")) / ".netmon"
-    base_dir.mkdir(exist_ok=True)
-    DB_PATH = base_dir / "netmon.db"
-else:
-    DB_PATH = Path(__file__).parent / "netmon.db"
-
-USER_DATA_DIR = base_dir if _configured_data_dir else Path(os.path.expanduser("~")) / ".netmon"
+DB_PATH = RUNTIME_CONFIG.db_path
+USER_DATA_DIR = RUNTIME_CONFIG.data_dir if os.environ.get("NETMON_DATA_DIR", "").strip() else Path(os.path.expanduser("~")) / ".netmon"
 USER_DATA_DIR.mkdir(exist_ok=True)
 INITIAL_PASSWORD_PATH = USER_DATA_DIR / "initial_admin_password.txt"
 
-TRAFFIC_SAMPLE_INTERVAL = 1
-DIAGNOSTICS_INTERVAL = 15
-RETENTION_HOURS = 48
-PING_TARGET = "8.8.8.8"
-DNS_DOMAIN = "google.com"
-PING_COUNT = 4
-SCAN_INTERVAL = 300
-SUBNET_OVERRIDE = ""
+TRAFFIC_SAMPLE_INTERVAL = RUNTIME_CONFIG.traffic_sample_interval
+DIAGNOSTICS_INTERVAL = RUNTIME_CONFIG.diagnostics_interval
+RETENTION_HOURS = RUNTIME_CONFIG.retention_hours
+PING_TARGET = RUNTIME_CONFIG.ping_target
+DNS_DOMAIN = RUNTIME_CONFIG.dns_domain
+PING_COUNT = RUNTIME_CONFIG.ping_count
+SCAN_INTERVAL = RUNTIME_CONFIG.scan_interval
+SUBNET_OVERRIDE = RUNTIME_CONFIG.subnet_override
 
 diag = NetworkDiagnostics()
 
@@ -244,11 +235,11 @@ _sim_tick = {"n": 0}
 import collections
 _traffic_window = collections.deque()
 _last_anomaly_ts = 0.0
-ANOMALY_WINDOW_SECONDS = 3600
-ANOMALY_MIN_SAMPLES = 30
-ANOMALY_MIN_BASELINE_BPS = 1_000_000
-ANOMALY_RATIO = 3.0
-ANOMALY_COOLDOWN_SECONDS = 300
+ANOMALY_WINDOW_SECONDS = RUNTIME_CONFIG.anomaly_window_seconds
+ANOMALY_MIN_SAMPLES = RUNTIME_CONFIG.anomaly_min_samples
+ANOMALY_MIN_BASELINE_BPS = RUNTIME_CONFIG.anomaly_min_baseline_bps
+ANOMALY_RATIO = RUNTIME_CONFIG.anomaly_ratio
+ANOMALY_COOLDOWN_SECONDS = RUNTIME_CONFIG.anomaly_cooldown_seconds
 
 def simulated_traffic_sample():
     _sim_tick["n"] += 1
@@ -1110,7 +1101,7 @@ async def _auth_error_handler(request, exc: _AuthError):
     return JSONResponse(status_code=exc.status_code, content={"error": exc.message})
 
 
-SESSION_TTL_SECONDS = 12 * 3600  # "Beni hatırla" seçilmezse 12 saat
+SESSION_TTL_SECONDS = RUNTIME_CONFIG.session_ttl_seconds
 
 CAPABILITY_CATALOG = (
     {
@@ -3158,7 +3149,7 @@ try:
 except ImportError:
     from routers.inventory import AuthorizedInventoryRequest
 
-WMI_AUTH_FAILURE_COOLDOWN_SECONDS = 15 * 60
+WMI_AUTH_FAILURE_COOLDOWN_SECONDS = RUNTIME_CONFIG.wmi_auth_failure_cooldown_seconds
 _wmi_auth_failure_cooldowns: dict[tuple[str, str], float] = {}
 
 
@@ -3961,8 +3952,8 @@ def apply_settings_to_runtime(s: dict):
 # ============================================================
 # BRUTE-FORCE KORUMASI VE DENETİM (AUDIT) KAYDI
 # ============================================================
-LOGIN_MAX_ATTEMPTS = 5
-LOGIN_LOCKOUT_SECONDS = 5 * 60  # 5 başarısız denemeden sonra 5 dakika kilit
+LOGIN_MAX_ATTEMPTS = RUNTIME_CONFIG.login_max_attempts
+LOGIN_LOCKOUT_SECONDS = RUNTIME_CONFIG.login_lockout_seconds
 
 
 def _audit(username: str | None, action: str, detail: str = "", success: bool = True):
