@@ -13,6 +13,7 @@ def isolated_server(tmp_path, monkeypatch):
     password_path = tmp_path / "initial-admin.txt"
     monkeypatch.setattr(server, "DB_PATH", db_path)
     monkeypatch.setattr(server, "INITIAL_PASSWORD_PATH", password_path)
+    monkeypatch.setattr(server, "USER_DATA_DIR", tmp_path)
     server._devices_cache.update({"ts": 0, "data": [], "error": None, "scan_status": "idle"})
     server._local_wmi_cache.update({"ts": 0, "data": None})
     server.init_db()
@@ -52,7 +53,6 @@ def test_first_login_forces_random_password_change(isolated_server):
     assert row == (0,)
 
 
-@pytest.mark.skipif(platform.system() != "Windows", reason="Windows DPAPI/pywin32 testi Windows ortamında çalıştırılmalıdır.")
 def test_management_secret_is_encrypted_and_never_returned(isolated_server):
     client, db_path, password_path = isolated_server
     headers = _bootstrap_admin(client, password_path)
@@ -67,7 +67,8 @@ def test_management_secret_is_encrypted_and_never_returned(isolated_server):
     assert response.json()["settings"]["wmi_password_configured"] is True
     with sqlite3.connect(db_path) as conn:
         stored = conn.execute("SELECT value FROM settings WHERE key='wmi_password'").fetchone()[0]
-    assert stored.startswith("dpapi:")
+    expected_prefix = "dpapi:" if platform.system() == "Windows" else "fernet:"
+    assert stored.startswith(expected_prefix)
     assert secret not in stored
     public = client.get("/api/settings", headers=headers).json()["settings"]
     assert "wmi_password" not in public
