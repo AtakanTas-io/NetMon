@@ -14,12 +14,16 @@ def test_ipam_grid_supports_real_multi_24_cidr_ranges():
 
 def test_active_sessions_use_network_engineer_table_contract():
     app_js = (ROOT / "frontend" / "app.js").read_text(encoding="utf-8")
-    assert "Aktif Ağ Oturumları" in app_js
-    assert "Yerel uygulama / PID" in app_js
-    assert "Yerel uç" in app_js
-    assert "Uzak uç" in app_js
+    assert "Bu Bilgisayarın Canlı Ağ Bağlantıları" in app_js
+    assert "Bilgisayarın anlık ağ kullanımı" in app_js
+    assert "Açık TCP bağlantısı" in app_js
+    assert "Bağlanılan hedef" in app_js
+    assert "Teknik ayrıntıları göster" in app_js
+    assert "trafficSessionSearch" in app_js
+    assert "trafficStateFilter" in app_js
+    assert "trafficScopeFilter" in app_js
     assert "runtime_visibility" in app_js
-    assert "Uç nokta başına bant genişliği tahmini yapılmaz" in app_js
+    assert "tek tek bağlantılara dağıtılmaz" in app_js
 
 
 def test_inventory_actions_are_device_protocol_aware():
