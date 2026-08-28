@@ -15,11 +15,11 @@ KULLANIM:
      (Giriş yaptığınızda sistem sizi yine "şifreyi değiştir" ekranına
      zorlayacak — bu normal ve NetMon'un güvenlik tasarımının bir parçası.)
 """
+
 import hashlib
 import secrets
 import sqlite3
 import sys
-import time
 from pathlib import Path
 
 
@@ -61,7 +61,7 @@ def main():
 
     print("=" * 60)
     print("Admin şifresi başarıyla sıfırlandı.")
-    print(f"Kullanıcı adı : admin")
+    print("Kullanıcı adı : admin")
     print(f"Geçici şifre  : {new_password}")
     print("Bu şifreyi not alın — bir daha gösterilmeyecek.")
     print("Giriş yaptıktan hemen sonra yeni bir şifre belirlemeniz istenecek.")

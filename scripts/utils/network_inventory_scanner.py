@@ -12,20 +12,18 @@
 ================================================================================
 """
 
-import sys
-import os
-import time
-import socket
-import ssl
-import json
 import csv
 import ipaddress
+import json
 import platform
-import subprocess
 import re
-from datetime import datetime
+import socket
+import ssl
+import subprocess
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, List, Any, Optional
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 COMMON_PORTS = {
     21: "FTP",
@@ -45,7 +43,7 @@ COMMON_PORTS = {
     5432: "PostgreSQL",
     8080: "HTTP-Proxy / Web Yonetim",
     8443: "HTTPS-Alt / Yonetim",
-    9100: "RAW JetDirect (Yazici)"
+    9100: "RAW JetDirect (Yazici)",
 }
 
 OUI_DATABASE = {
@@ -74,8 +72,9 @@ OUI_DATABASE = {
     "BC:54:51": "Dahua Technology (IP Camera)",
     "00:80:77": "Brother Industries (Printer)",
     "00:00:48": "Epson (Printer)",
-    "00:1B:A9": "Canon Inc. (Printer)"
+    "00:1B:A9": "Canon Inc. (Printer)",
 }
+
 
 def get_arp_table() -> Dict[str, str]:
     arp_map = {}
@@ -83,7 +82,9 @@ def get_arp_table() -> Dict[str, str]:
         is_win = platform.system().lower() == "windows"
         cmd = ["arp", "-a"] if is_win else ["arp", "-n"]
         output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=3).decode("latin-1", errors="ignore")
-        ip_mac_pattern = re.compile(r"(\d{1,3}(?:\.\d{1,3}){3})\s+([0-9a-fA-F]{2}[:-][0-9a-fA-F]{2}[:-][0-9a-fA-F]{2}[:-][0-9a-fA-F]{2}[:-][0-9a-fA-F]{2}[:-][0-9a-fA-F]{2})")
+        ip_mac_pattern = re.compile(
+            r"(\d{1,3}(?:\.\d{1,3}){3})\s+([0-9a-fA-F]{2}[:-][0-9a-fA-F]{2}[:-][0-9a-fA-F]{2}[:-][0-9a-fA-F]{2}[:-][0-9a-fA-F]{2}[:-][0-9a-fA-F]{2})"
+        )
         for line in output.splitlines():
             m = ip_mac_pattern.search(line)
             if m:
@@ -93,11 +94,13 @@ def get_arp_table() -> Dict[str, str]:
         pass
     return arp_map
 
+
 def lookup_vendor(mac: str) -> str:
     if not mac or len(mac) < 8:
         return "Bilinmeyen Uretici"
     prefix = mac.upper()[:8]
     return OUI_DATABASE.get(prefix, "Bilinmeyen / Ozel Uretici")
+
 
 def reverse_dns_lookup(ip: str) -> str:
     try:
@@ -105,6 +108,7 @@ def reverse_dns_lookup(ip: str) -> str:
         return host
     except Exception:
         return ""
+
 
 def get_ping_ttl(ip: str) -> Optional[int]:
     is_win = platform.system().lower() == "windows"
@@ -117,6 +121,7 @@ def get_ping_ttl(ip: str) -> Optional[int]:
         return None
     except Exception:
         return None
+
 
 def grab_http_banner(ip: str, port: int) -> Dict[str, str]:
     banner = {"server": "", "title": "", "tls_subject": ""}
@@ -155,6 +160,7 @@ def grab_http_banner(ip: str, port: int) -> Dict[str, str]:
         pass
     return banner
 
+
 def grab_tcp_banner(ip: str, port: int) -> str:
     try:
         with socket.create_connection((ip, port), timeout=0.8) as s:
@@ -164,18 +170,37 @@ def grab_tcp_banner(ip: str, port: int) -> str:
     except Exception:
         return ""
 
+
 def classify_device(ports: List[int], ttl: Optional[int], vendor: str, hostname: str, banners: Dict[str, Any]) -> str:
     h_lower = hostname.lower()
     v_lower = vendor.lower()
-    if 9100 in ports or 631 in ports or 515 in ports or "printer" in h_lower or any(p in v_lower for p in ("canon", "brother", "epson", "xerox")):
+    if (
+        9100 in ports
+        or 631 in ports
+        or 515 in ports
+        or "printer" in h_lower
+        or any(p in v_lower for p in ("canon", "brother", "epson", "xerox"))
+    ):
         return "Yazici (Network Printer)"
     if 554 in ports or "camera" in h_lower or "hikvision" in v_lower or "dahua" in v_lower:
         return "IP Kamera / NVR"
-    if (ttl and ttl > 200) or any(w in v_lower for w in ("cisco", "ubiquiti", "mikrotik", "juniper", "fortinet")) or "router" in h_lower or "switch" in h_lower:
+    if (
+        (ttl and ttl > 200)
+        or any(w in v_lower for w in ("cisco", "ubiquiti", "mikrotik", "juniper", "fortinet"))
+        or "router" in h_lower
+        or "switch" in h_lower
+    ):
         if "switch" in h_lower:
             return "Yonetilebilir Switch"
         return "Router / Ag Gecidi"
-    if (445 in ports and 3389 in ports and 135 in ports) or 1433 in ports or 5432 in ports or 3306 in ports or "srv" in h_lower or "server" in h_lower:
+    if (
+        (445 in ports and 3389 in ports and 135 in ports)
+        or 1433 in ports
+        or 5432 in ports
+        or 3306 in ports
+        or "srv" in h_lower
+        or "server" in h_lower
+    ):
         if ttl and ttl > 100:
             return "Windows Server"
         return "Linux / Veritabani Sunucusu"
@@ -187,13 +212,14 @@ def classify_device(ports: List[int], ttl: Optional[int], vendor: str, hostname:
         return "Linux / Unix / Mobil Istemci"
     return "Bilinmeyen Ag Varligi"
 
+
 def inspect_host(ip: str, arp_cache: Dict[str, str]) -> Optional[Dict[str, Any]]:
     ttl = get_ping_ttl(ip)
     mac = arp_cache.get(ip, "")
     open_ports = []
     port_banners = {}
 
-    for port, service_name in COMMON_PORTS.items():
+    for port, _service_name in COMMON_PORTS.items():
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.settimeout(0.25)
@@ -238,8 +264,9 @@ def inspect_host(ip: str, arp_cache: Dict[str, str]) -> Optional[Dict[str, Any]]
         "open_ports": open_ports,
         "services": [f"{p} ({COMMON_PORTS[p]})" for p in open_ports],
         "banners": port_banners,
-        "scanned_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        "scanned_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
+
 
 class NetworkInventoryScanner:
     def __init__(self, subnet_cidr: str, max_threads: int = 50):
@@ -269,7 +296,9 @@ class NetworkInventoryScanner:
                 res = future.result()
                 if res:
                     self.results.append(res)
-                    print(f" [+] Kesfedildi: {res['ip_address']} | {res['hostname']} | {res['device_type']} | Portlar: {res['open_ports']}")
+                    print(
+                        f" [+] Kesfedildi: {res['ip_address']} | {res['hostname']} | {res['device_type']} | Portlar: {res['open_ports']}"
+                    )
 
         elapsed = round(time.time() - start_time, 2)
         print(f"\n[?] Tarama Tamamlandi! Sure: {elapsed} saniye | Bulunan Aktif Cihaz: {len(self.results)}")
@@ -277,20 +306,35 @@ class NetworkInventoryScanner:
 
     def export_json(self, filename: str = "network_inventory.json"):
         with open(filename, "w", encoding="utf-8") as f:
-            json.dump({
-                "scan_metadata": {
-                    "subnet": self.subnet_cidr,
-                    "total_devices_found": len(self.results),
-                    "generated_at": datetime.now().isoformat()
+            json.dump(
+                {
+                    "scan_metadata": {
+                        "subnet": self.subnet_cidr,
+                        "total_devices_found": len(self.results),
+                        "generated_at": datetime.now().isoformat(),
+                    },
+                    "assets": self.results,
                 },
-                "assets": self.results
-            }, f, indent=2, ensure_ascii=False)
+                f,
+                indent=2,
+                ensure_ascii=False,
+            )
         print(f"[+] JSON Raporu Kaydedildi: {filename}")
 
     def export_csv(self, filename: str = "network_inventory.csv"):
         if not self.results:
             return
-        keys = ["ip_address", "mac_address", "vendor", "hostname", "device_type", "os_family_estimate", "icmp_ttl", "services", "scanned_at"]
+        keys = [
+            "ip_address",
+            "mac_address",
+            "vendor",
+            "hostname",
+            "device_type",
+            "os_family_estimate",
+            "icmp_ttl",
+            "services",
+            "scanned_at",
+        ]
         with open(filename, "w", newline="", encoding="utf-8-sig") as f:
             writer = csv.DictWriter(f, fieldnames=keys)
             writer.writeheader()
@@ -301,10 +345,14 @@ class NetworkInventoryScanner:
                 writer.writerow(row)
         print(f"[+] CSV Raporu Kaydedildi: {filename}")
 
+
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser(description="Kurumsal Ag Varlik Envanter Tarayicisi (NetMon)")
-    parser.add_argument("--subnet", "-s", type=str, default="192.168.1.0/24", help="Taranacak Subnet CIDR (Orn: 192.168.1.0/24)")
+    parser.add_argument(
+        "--subnet", "-s", type=str, default="192.168.1.0/24", help="Taranacak Subnet CIDR (Orn: 192.168.1.0/24)"
+    )
     parser.add_argument("--threads", "-t", type=int, default=50, help="Eszamanli is parcacigi sayisi")
     parser.add_argument("--json", "-j", type=str, default="network_inventory.json", help="JSON cikti dosyasi")
     parser.add_argument("--csv", "-c", type=str, default="network_inventory.csv", help="CSV cikti dosyasi")
