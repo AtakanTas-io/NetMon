@@ -44,3 +44,10 @@ exclude = [
     "backend/snmp_switch_mapper.py",
     "backend/wmi_scanner.py",
 ]
+
+[tool.bandit]
+exclude_dirs = ["tests", "backend/.buildenv", "backend/build", "backend/dist", "backend/__pycache__"]
+skips = [
+    "B101", # Test assertions are excluded already; keep the policy explicit.
+    "B104", # DHCP/Syslog listeners intentionally bind to configured network interfaces.
+]
