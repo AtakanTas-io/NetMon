@@ -2,6 +2,8 @@
 
 ## Henüz yayımlanmadı
 
+- Windows dışındaki sistemlerde gizli ayarlar için Fernet tabanlı yerel şifreleme eklendi.
+- Desteklenen işletim sistemi ve özellik gereksinimleri README'de açıklandı.
 - Trafik ekranına ölçüm kaynağı ve veri yaşı eklendi.
 - Sistem bileşenlerinin hazırlık durumunu döndüren API eklendi.
 - DHCP ve Active Directory ayarları kalıcı hale getirildi.

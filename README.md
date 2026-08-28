@@ -52,6 +52,34 @@ python backend\desktop_app.py
 
 İlk açılışta yönetici parolası otomatik oluşturulur ve `%USERPROFILE%\.netmon\initial_admin_password.txt` dosyasına yazılır. İlk girişte parola değişikliği istenir.
 
+## Platform desteği
+
+NetMon'un FastAPI sunucusu ve tarayıcı arayüzü Windows, Linux ve macOS üzerinde çalışabilir. İşletim sistemine veya harici araçlara bağlı özellikler aşağıdaki gibidir:
+
+| Özellik | Windows | Linux | macOS | Gereksinim / sınır |
+|---|:---:|:---:|:---:|---|
+| FastAPI sunucusu ve web arayüzü | Evet | Evet | Evet | Python 3.10–3.13 |
+| PyWebView masaüstü kabuğu | Evet | Koşullu | Koşullu | İşletim sisteminin desteklenen WebView çalışma zamanı gerekir |
+| ICMP, DNS, rota ve yerel ağ keşfi | Evet | Evet | Evet | Bazı komutlar için işletim sistemi aracı ve ek yetki gerekebilir |
+| Nmap keşfi ve servis taraması | Evet | Evet | Evet | `nmap` ayrıca kurulmalı ve `PATH` içinde bulunmalı |
+| WMI/DCOM envanteri | Evet | Hayır | Hayır | `wmi`, `pywin32` ve hedef Windows izinleri gerekir |
+| WinRM ile Windows envanteri | Evet | Hayır | Hayır | Mevcut kurulumda `pywinrm` Windows bağımlılığıdır |
+| SSH envanteri ve yapılandırma yedeği | Evet | Evet | Evet | Paramiko ve hedefte yetkili SSH hesabı gerekir |
+| SNMP keşfi ve switch port eşleştirmesi | Evet | Evet | Evet | Hedef cihazda SNMP ve geçerli community gerekir |
+| RDP başlatma | Evet | Hayır | Hayır | Windows Uzak Masaüstü istemcisi (`mstsc.exe`) kullanılır |
+| Gizli ayarların şifrelenmesi | DPAPI | Fernet | Fernet | Windows'ta kullanıcıya bağlı DPAPI; diğerlerinde yerel anahtar dosyası |
+
+Linux ve macOS kurulumu:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+python backend/server.py
+```
+
+Windows dışındaki sistemlerde WMI, SSH ve SNMP parolaları `~/.netmon/secret.key` anahtarıyla Fernet kullanılarak şifrelenir. Anahtar dosyasının izni her kullanımda `0600` yapılır. `netmon.db` yedekleniyorsa bu dosya da güvenli ve ayrı bir konumda yedeklenmelidir; anahtar kaybolursa `fernet:` ile saklanan değerler çözülemez. Windows'taki mevcut `dpapi:` kayıtları değişmeden korunur.
+
 ## Klasörler
 
 ```text
