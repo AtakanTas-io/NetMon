@@ -74,6 +74,37 @@ def test_management_secret_is_encrypted_and_never_returned(isolated_server):
     assert "wmi_password" not in public
 
 
+def test_ad_login_failure_logs_server_and_error_type_without_password(isolated_server, monkeypatch, caplog):
+    client, db_path, password_path = isolated_server
+    _bootstrap_admin(client, password_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            "INSERT INTO settings (key, value) VALUES (?, ?)",
+            [("ad_server", "broken-dc.corp.local"), ("ad_domain", "corp.local")],
+        )
+        conn.commit()
+
+    import ldap3
+
+    class AdConnectionFailure(Exception):
+        pass
+
+    def fail_connection(*args, **kwargs):
+        raise AdConnectionFailure("password=Loglara-Girmemeli-2026!")
+
+    monkeypatch.setattr(ldap3, "Connection", fail_connection)
+    with caplog.at_level("WARNING", logger="netmon.server"):
+        response = client.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": "New-Company-Pass-2026!"},
+        )
+
+    assert response.status_code == 200
+    assert "sunucu=broken-dc.corp.local" in caplog.text
+    assert "hata_türü=AdConnectionFailure" in caplog.text
+    assert "Loglara-Girmemeli-2026" not in caplog.text
+
+
 def test_wmi_username_rejects_forward_slash_domain_format(isolated_server):
     client, _, password_path = isolated_server
     headers = _bootstrap_admin(client, password_path)
