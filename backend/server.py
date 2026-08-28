@@ -2684,7 +2684,6 @@ def _take_analyst_snapshot():
     conn.execute("INSERT INTO analyst_snapshots(created_at,total,online,offline,unknown,health,completeness,security_review,payload) VALUES(?,?,?,?,?,?,?,?,?)",(time.time(),total,online,offline,unknown,max(0,round(health,1)),completeness,review,json.dumps({"by_type":{}})))
     conn.commit(); conn.close()
 
-@app.get("/api/analyst/correlation")
 def analyst_correlation(user: dict = Depends(get_current_user)):
     result=[]
     for d in (_devices_cache.get("data") or []):
@@ -2692,19 +2691,16 @@ def analyst_correlation(user: dict = Depends(get_current_user)):
     result.sort(key=lambda x:x["review_priority"]["score"], reverse=True)
     return {"devices":result}
 
-@app.get("/api/analyst/trends")
 def analyst_trends(limit:int=30, user:dict=Depends(get_current_user)):
     limit=max(1,min(limit,200)); conn=db_conn(); rows=conn.execute("SELECT created_at,total,online,offline,unknown,health,completeness,security_review FROM analyst_snapshots ORDER BY created_at DESC LIMIT ?",(limit,)).fetchall(); conn.close()
     keys=["created_at","total","online","offline","unknown","health","completeness","security_review"]
     return {"points":[dict(zip(keys,r)) for r in reversed(rows)]}
 
-@app.post("/api/analyst/snapshot")
 def analyst_snapshot(user:dict=Depends(get_current_user)):
     if user.get("role")!="admin": raise _AuthError(403,"Analiz snapshot için yönetici yetkisi gerekiyor.")
     _take_analyst_snapshot(); _audit(user["username"],"analyst_snapshot","Network intelligence snapshot")
     return {"ok":True}
 
-@app.get("/api/analyst/topology-evidence")
 def analyst_topology_evidence(user:dict=Depends(get_current_user)):
     edges=[]
     for d in (_devices_cache.get("data") or []):
@@ -2718,7 +2714,6 @@ def analyst_topology_evidence(user:dict=Depends(get_current_user)):
                 if peer: edges.append({"source":name,"target":str(peer),"port":n.get("local_port") or n.get("port"),"protocol":key.upper().replace("_NEIGHBORS","")})
     return {"edges":edges,"evidence_only":True}
 
-@app.get("/api/analyst/baseline")
 def analyst_baseline(user:dict=Depends(get_current_user)):
     out=[]
     for d in (_devices_cache.get("data") or []):
@@ -2731,7 +2726,6 @@ def analyst_baseline(user:dict=Depends(get_current_user)):
         passed=sum(x[1] for x in checks); out.append({"ip":a["ip"],"hostname":a["hostname"],"score":round(passed*100/len(checks)),"checks":[{"name":x[0],"ok":x[1]} for x in checks]})
     return {"devices":out}
 
-@app.get("/api/analyst/report")
 def analyst_report(user:dict=Depends(get_current_user)):
     from fastapi.responses import PlainTextResponse
     devices=[_analyst_device(d) for d in (_devices_cache.get("data") or [])]
@@ -2869,7 +2863,6 @@ def _analyst_device(dev):
     }
 
 
-@app.get("/api/analyst/summary")
 def analyst_summary(user: dict = Depends(get_current_user)):
     devices = list(_devices_cache.get("data") or [])
     analyzed = [_analyst_device(d) for d in devices]
@@ -2900,12 +2893,10 @@ def analyst_summary(user: dict = Depends(get_current_user)):
     }
 
 
-@app.get("/api/analyst/devices")
 def analyst_devices(user: dict = Depends(get_current_user)):
     return {"devices": [_analyst_device(d) for d in (_devices_cache.get("data") or [])]}
 
 
-@app.get("/api/analyst/device/{ip}")
 def analyst_device(ip: str, user: dict = Depends(get_current_user)):
     for dev in (_devices_cache.get("data") or []):
         if dev.get("ip") == ip:
@@ -2913,7 +2904,6 @@ def analyst_device(ip: str, user: dict = Depends(get_current_user)):
     raise HTTPException(status_code=404, detail="Cihaz bulunamadı")
 
 
-@app.get("/api/analyst/anomalies")
 def analyst_anomalies(user: dict = Depends(get_current_user)):
     """Saldırı iddiası üretmez; envanter/ağ değişikliklerini anomaliler olarak sunar."""
     rows = []
@@ -2928,7 +2918,6 @@ def analyst_anomalies(user: dict = Depends(get_current_user)):
     return {"anomalies": rows}
 
 
-@app.get("/api/analyst/exposure")
 def analyst_exposure(user: dict = Depends(get_current_user)):
     result = []
     for dev in (_devices_cache.get("data") or []):
@@ -2938,7 +2927,6 @@ def analyst_exposure(user: dict = Depends(get_current_user)):
     return {"devices": result}
 
 
-@app.get("/api/knowledge/network")
 def knowledge_network(user: dict = Depends(get_current_user)):
     return {"topics": [
         {"id":"discovery","title":"Ağ keşfi","text":"NetMon tek bir yönteme güvenmez; ARP/Neighbor, ICMP, DNS, Nmap, SNMP ve uygun olduğunda LLDP/CDP gibi kaynakları birleştirir."},
@@ -4502,6 +4490,7 @@ def assign_asset_location(req: LocationAssignmentRequest, user: dict = Depends(r
 
 try:
     from .routers.auth import create_auth_router
+    from .routers.analyst import create_analyst_router
     from .routers.diagnostics import create_diagnostics_router
     from .routers.discovery import create_discovery_router
     from .routers.inventory import create_inventory_router
@@ -4511,6 +4500,7 @@ try:
     from .routers.settings import create_settings_router
 except ImportError:
     from routers.auth import create_auth_router
+    from routers.analyst import create_analyst_router
     from routers.diagnostics import create_diagnostics_router
     from routers.discovery import create_discovery_router
     from routers.inventory import create_inventory_router
@@ -4520,6 +4510,7 @@ except ImportError:
     from routers.settings import create_settings_router
 
 app.include_router(create_auth_router(sys.modules[__name__]))
+app.include_router(create_analyst_router(sys.modules[__name__]))
 app.include_router(create_diagnostics_router(sys.modules[__name__]))
 app.include_router(create_discovery_router(sys.modules[__name__]))
 app.include_router(create_inventory_router(sys.modules[__name__]))
