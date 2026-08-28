@@ -6,6 +6,7 @@
 - Desteklenen işletim sistemi ve özellik gereksinimleri README'de açıklandı.
 - Active Directory giriş hataları parola içermeden sunucu ve hata türüyle loglanmaya başladı.
 - Windows'ta tam test paketinin kaynak tüketmeden tek seferde tamamlanması sağlandı.
+- Kimlik doğrulama, oturum ve kullanıcı yönetimi uçları ayrı bir FastAPI router'ına taşındı.
 - Trafik ekranına ölçüm kaynağı ve veri yaşı eklendi.
 - Sistem bileşenlerinin hazırlık durumunu döndüren API eklendi.
 - DHCP ve Active Directory ayarları kalıcı hale getirildi.
