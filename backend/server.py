@@ -4446,153 +4446,20 @@ try:
     from .routers.auth import create_auth_router
     from .routers.discovery import create_discovery_router
     from .routers.inventory import create_inventory_router
+    from .routers.ipam import create_ipam_router
     from .routers.settings import create_settings_router
 except ImportError:
     from routers.auth import create_auth_router
     from routers.discovery import create_discovery_router
     from routers.inventory import create_inventory_router
+    from routers.ipam import create_ipam_router
     from routers.settings import create_settings_router
 
 app.include_router(create_auth_router(sys.modules[__name__]))
 app.include_router(create_discovery_router(sys.modules[__name__]))
 app.include_router(create_inventory_router(sys.modules[__name__]))
+app.include_router(create_ipam_router(sys.modules[__name__]))
 app.include_router(create_settings_router(sys.modules[__name__]))
-
-
-# ============================================================
-# IPAM & IP CONFLICT DETECTION
-# ============================================================
-@app.get("/api/ipam")
-def get_ipam_data(user: dict = Depends(get_current_user)):
-    devices_list = _devices_cache.get("data", [])
-    gateway = _last_status.get("gateway") or ""
-
-    # 1. Aynı keşif anında aynı IP ile gözlenen farklı MAC adresleri.
-    ip_to_macs = {}
-    ip_to_devs = {}
-    for d in devices_list:
-        ip = d.get("ip")
-        mac = d.get("mac")
-        if ip and mac:
-            ip_to_macs.setdefault(ip, set()).add(mac)
-            ip_to_devs.setdefault(ip, []).append(d)
-            
-    conflicts = []
-    for ip, macs in ip_to_macs.items():
-        if len(macs) > 1:
-            devs = ip_to_devs.get(ip, [])
-            conflicts.append({
-                "ip": ip,
-                "macs": list(macs),
-                "hostnames": [d.get("hostname") or d.get("friendly_name") or "Bilinmeyen" for d in devs],
-                "severity": "critical",
-                "message": f"{ip} adresi {len(macs)} farklı MAC adresi ({', '.join(macs)}) tarafından aynı anda talep ediliyor!"
-            })
-            
-    # 2. Subnet görünümü. Sabit ağ, genel DNS veya DHCP aralığı üretmeyiz.
-    try:
-        network_ctx = diag.get_network_context() or {}
-    except Exception:
-        network_ctx = {}
-
-    observed_ips = []
-    for device in devices_list:
-        try:
-            candidate = ipaddress.ip_address(device.get("ip") or "")
-            if candidate.version == 4 and not candidate.is_loopback and not candidate.is_multicast:
-                observed_ips.append(candidate)
-        except ValueError:
-            continue
-
-    network = None
-    subnet_source = None
-    try:
-        ctx_network = ipaddress.ip_network(network_ctx.get("cidr") or "", strict=False)
-        if ctx_network.version == 4:
-            network = ctx_network
-            subnet_source = "local_interface"
-    except ValueError:
-        pass
-
-    if observed_ips and (network is None or not any(ip in network for ip in observed_ips)):
-        buckets = collections.Counter(
-            ipaddress.ip_network(f"{ip}/24", strict=False)
-            for ip in observed_ips if ip.is_private
-        )
-        if buckets:
-            network = buckets.most_common(1)[0][0]
-            subnet_source = "derived_from_observations"
-
-    if network is not None:
-        total_ips = max(0, network.num_addresses - (2 if network.prefixlen <= 30 else 0))
-        used_set = {
-            ip for ip in observed_ips
-            if ip in network and ip not in (network.network_address, network.broadcast_address)
-        }
-        effective_gateway = None
-        gateway_candidates = [gateway, network_ctx.get("gateway")]
-        gateway_candidates.extend(d.get("ip") for d in devices_list if d.get("is_gateway"))
-        for gateway_candidate in gateway_candidates:
-            try:
-                gateway_obj = ipaddress.ip_address(gateway_candidate or "")
-                if gateway_obj in network:
-                    effective_gateway = str(gateway_obj)
-                    used_set.add(gateway_obj)
-                    break
-            except ValueError:
-                continue
-        used_ips = len(used_set)
-        free_ips = max(0, total_ips - used_ips)
-        utilization_pct = round((used_ips / total_ips) * 100, 1) if total_ips else 0
-    else:
-        total_ips = used_ips = free_ips = 0
-        utilization_pct = 0.0
-        effective_gateway = None
-    
-    status = "normal"
-    if conflicts:
-        status = "conflict"
-    elif utilization_pct >= 90:
-        status = "critical"
-    elif utilization_pct >= 75:
-        status = "warning"
-
-    subnets = [] if network is None else [{
-        "cidr": str(network),
-        "source": subnet_source,
-        "gateway": effective_gateway,
-        "total_hosts": total_ips,
-        "used_hosts": used_ips,
-        "free_hosts": free_ips,
-        "free_hosts_are_observed": False,
-        "reserved_hosts": 2 if network.prefixlen <= 30 else 0,
-        "utilization_pct": utilization_pct,
-        "status": status,
-        "dhcp_range": None,
-        "dns_servers": network_ctx.get("dns_servers") or [],
-        "note": "Boş IP sayısı son keşifte gözlenmeyen adresleri gösterir; DHCP tahsis kaydı değildir.",
-    }]
-
-    allocations = []
-    for d in devices_list[:50]:
-        allocations.append({
-            "ip": d.get("ip"),
-            "mac": d.get("mac"),
-            "hostname": d.get("hostname") or d.get("friendly_name") or "İsimsiz Cihaz",
-            "type": d.get("type") or "unknown",
-            "status": d.get("status") or "unknown",
-            "allocation_type": "Infrastructure" if d.get("is_gateway") else "Observed",
-            "last_seen": d.get("last_seen"),
-            "discovery_sources": d.get("discovery_sources") or [],
-        })
-
-    return {
-        "subnets": subnets,
-        "conflicts": conflicts,
-        "total_devices_tracked": len(devices_list),
-        "total_conflicts": len(conflicts),
-        "allocations": allocations
-    }
 
 
 def _port_to_protocol(port: int) -> tuple[str, str]:
