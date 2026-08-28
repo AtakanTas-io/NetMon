@@ -15,6 +15,7 @@
 - Güvenlik duruşu, firewall ve kontrollü simülasyon uçları ayrı bir FastAPI router'ına taşındı.
 - Ping, traceroute, DNS, hız testi ve ağ komutu uçları ayrı bir FastAPI router'ına taşındı.
 - Analist korelasyonu, eğilim ve ağ bilgi tabanı uçları ayrı bir FastAPI router'ına taşındı.
+- Uygulama giriş noktası inceltildi; SQLite ve rol/yetki yardımcıları ortak çekirdek modüllerine taşındı.
 - Trafik ekranına ölçüm kaynağı ve veri yaşı eklendi.
 - Sistem bileşenlerinin hazırlık durumunu döndüren API eklendi.
 - DHCP ve Active Directory ayarları kalıcı hale getirildi.

@@ -6,7 +6,8 @@
 - SNMP, WMI/WinRM ve SSH ayarları için örnek laboratuvar kurulumu yazmak
 - DHCP ve switch port eşleştirmesi için entegrasyon testlerini genişletmek
 - En sık kullanılan API çağrılarına istek ve yanıt örnekleri eklemek
-- Büyük `server.py` ve `app.js` dosyalarını daha küçük modüllere ayırmak
+- `app.js` dosyasını tarayıcı ES modüllerine ayırmak
+- `application.py` içindeki arka plan ve envanter çalışma zamanı yardımcılarını servis modüllerine ayırmak
 
 ## Paketleme
 
