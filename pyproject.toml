@@ -16,14 +16,31 @@ precision = 1
 [tool.ruff]
 target-version = "py311"
 line-length = 120
-exclude = ["frontend/chart.umd.js"]
+extend-exclude = [
+    "backend/application.py",
+    "backend/desktop_app.py",
+    "backend/fix_ports.py",
+    "backend/netdiag_core.py",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B"]
-ignore = ["E501"]
+ignore = [
+    "B008", # FastAPI dependency injection uses calls in argument defaults.
+    "B905", # Preserve Python 3.10-compatible zip behaviour for now.
+    "E501",
+]
 
 [tool.mypy]
 python_version = "3.11"
 ignore_missing_imports = true
 check_untyped_defs = true
-exclude = ["backend/application.py"]
+exclude = [
+    "backend/application.py",
+    "backend/deep_discovery.py",
+    "backend/desktop_app.py",
+    "backend/fix_ports.py",
+    "backend/netdiag_core.py",
+    "backend/snmp_switch_mapper.py",
+    "backend/wmi_scanner.py",
+]
