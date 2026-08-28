@@ -1399,16 +1399,6 @@ def get_traffic(minutes: int = 15, user: dict = Depends(get_current_user)):
     conn.close()
     return [{"ts": r[0], "wifi_sent": r[1], "wifi_recv": r[2], "eth_sent": r[3], "eth_recv": r[4]} for r in rows]
 
-@app.get("/api/alerts")
-def get_alerts(limit: int = 20, user: dict = Depends(get_current_user)):
-    conn = db_conn()
-    rows = conn.execute(
-        "SELECT ts, level, message FROM alerts ORDER BY ts DESC LIMIT ?",
-        (limit,),
-    ).fetchall()
-    conn.close()
-    return [{"ts": r[0], "level": r[1], "message": r[2]} for r in rows]
-
 # ============================================================
 # AKTİF ARAÇLAR (Ping, Traceroute, Port Tarama, Hız Testi)
 # ============================================================
@@ -2543,12 +2533,6 @@ def list_known_devices(user: dict = Depends(get_current_user)):
     }
 
 
-@app.get("/api/firewall/status")
-def get_firewall_status(user: dict = Depends(get_current_user)):
-    """Sadece YEREL makine için gerçek durum. Uzak cihazlarda kesinlik iddia
-    edilmez (bkz. netdiag_core.get_firewall_status)."""
-    return _cached_firewall_status()
-
 _local_wmi_cache = {"ts": 0, "data": None}
 _mac_to_switch_port: dict[str, str] = {}
 
@@ -3578,13 +3562,6 @@ def open_downloads_folder(user: dict = Depends(get_current_user)):
                 return JSONResponse(status_code=500, content={"error": str(exc)})
     return {"ok": False}
 
-@app.get("/api/ssl-certs")
-def get_ssl_certs(user: dict = Depends(get_current_user)):
-    conn = db_conn()
-    rows = conn.execute("SELECT ip, hostname, issuer, valid_from, valid_to, days_left, last_checked FROM ssl_certificates ORDER BY days_left ASC").fetchall()
-    conn.close()
-    return {"certs": [{"ip": r[0], "hostname": r[1], "issuer": r[2], "valid_from": r[3], "valid_to": r[4], "days_left": r[5], "last_checked": r[6]} for r in rows]}
-
 try:
     from .routers.inventory import AuthorizedInventoryRequest
 except ImportError:
@@ -4071,13 +4048,6 @@ def get_diagnostics(user: dict = Depends(get_current_user)):
         return {"adapter": False, "gateway": False, "dns": False, "internet": False,
                 "issue": "Teşhis çalıştırılamadı", "recommendation": str(exc)}
 
-@app.get("/api/security")
-def get_security(user: dict = Depends(get_current_user)):
-    try:
-        return diag.get_security_analysis()
-    except Exception as exc:
-        return {"firewall_desc": "", "webfilter_desc": "", "rules": [], "error": str(exc)}
-
 @app.get("/api/flow")
 def get_flow(user: dict = Depends(get_current_user)):
     try:
@@ -4091,11 +4061,9 @@ def get_flow(user: dict = Depends(get_current_user)):
 class SimulateRequest(BaseModel):
     scenario: str
 
-@app.get("/api/simulate/scenarios")
 def list_scenarios(user: dict = Depends(get_current_user)):
     return [{"id": key, "label": val["label"]} for key, val in SCENARIOS.items()]
 
-@app.post("/api/simulate/start")
 def start_simulation(req: SimulateRequest, user: dict = Depends(require_permission("security.manage"))):
     if req.scenario not in SCENARIOS:
         return {"ok": False, "error": "Bilinmeyen senaryo"}
@@ -4105,7 +4073,6 @@ def start_simulation(req: SimulateRequest, user: dict = Depends(require_permissi
     _sim_tick["n"] = 0
     return {"ok": True, "scenario": req.scenario, "label": SCENARIOS[req.scenario]["label"]}
 
-@app.post("/api/simulate/stop")
 def stop_simulation(user: dict = Depends(require_permission("security.manage"))):
     simulation_state["active"] = False
     simulation_state["scenario"] = None
@@ -4126,7 +4093,6 @@ class DosSimulateRequest(BaseModel):
     target_ip: str
     intensity: str = "medium"
 
-@app.get("/api/admin/xoc/metrics")
 def get_admin_xoc_metrics(user: dict = Depends(require_permission("security.manage"))):
     """Ölçülebilen NOC metriklerini ve simülasyon yetenek durumunu döndürür."""
     cpu = ram = None
@@ -4198,7 +4164,6 @@ def get_admin_xoc_metrics(user: dict = Depends(require_permission("security.mana
         "active_simulations": _dos_simulations
     }
 
-@app.post("/api/admin/xoc/blacklist/add")
 def add_to_blacklist(req: BlacklistRequest, user: dict = Depends(require_permission("security.manage"))):
     """IP'yi yalnız oturum içi izleme listesine ekler; firewall kuralı yazmaz."""
     ip = req.ip.strip()
@@ -4211,7 +4176,6 @@ def add_to_blacklist(req: BlacklistRequest, user: dict = Depends(require_permiss
     _audit(user["username"], "watchlist_add", f"ip={ip} reason={req.reason}")
     return {"ok": True, "message": f"{ip} izleme listesine eklendi; firewall engeli uygulanmadı.", "blacklisted_ips": list(_blacklist_ips)}
 
-@app.post("/api/admin/xoc/blacklist/remove")
 def remove_from_blacklist(req: BlacklistRequest, user: dict = Depends(require_permission("security.manage"))):
     """IP'yi oturum içi izleme listesinden kaldırır."""
     ip = req.ip.strip()
@@ -4219,7 +4183,6 @@ def remove_from_blacklist(req: BlacklistRequest, user: dict = Depends(require_pe
     _audit(user["username"], "watchlist_remove", f"ip={ip}")
     return {"ok": True, "message": f"{ip} izleme listesinden kaldırıldı.", "blacklisted_ips": list(_blacklist_ips)}
 
-@app.post("/api/admin/xoc/simulate-dos")
 def start_dos_simulation(req: DosSimulateRequest, user: dict = Depends(require_permission("security.manage"))):
     """ADMIN KONTROLÜ: Belirli hedefe yönelik güvenli / simüle edilmiş DoS yük testi başlatır."""
     try:
@@ -4243,7 +4206,6 @@ def start_dos_simulation(req: DosSimulateRequest, user: dict = Depends(require_p
     logger.info("[XOC PENTEST SIMULATION] Admin target %s for DoS simulation", target)
     return {"ok": True, "simulation": _dos_simulations[sim_id]}
 
-@app.get("/api/simulate/state")
 def get_simulation_state(user: dict = Depends(get_current_user)):
     return simulation_state
 
@@ -4440,29 +4402,6 @@ def _audit(username: str | None, action: str, detail: str = "", success: bool = 
         conn.close()
     except Exception:
         pass
-
-
-try:
-    from .routers.auth import create_auth_router
-    from .routers.discovery import create_discovery_router
-    from .routers.inventory import create_inventory_router
-    from .routers.ipam import create_ipam_router
-    from .routers.ncm import create_ncm_router
-    from .routers.settings import create_settings_router
-except ImportError:
-    from routers.auth import create_auth_router
-    from routers.discovery import create_discovery_router
-    from routers.inventory import create_inventory_router
-    from routers.ipam import create_ipam_router
-    from routers.ncm import create_ncm_router
-    from routers.settings import create_settings_router
-
-app.include_router(create_auth_router(sys.modules[__name__]))
-app.include_router(create_discovery_router(sys.modules[__name__]))
-app.include_router(create_inventory_router(sys.modules[__name__]))
-app.include_router(create_ipam_router(sys.modules[__name__]))
-app.include_router(create_ncm_router(sys.modules[__name__]))
-app.include_router(create_settings_router(sys.modules[__name__]))
 
 
 def _port_to_protocol(port: int) -> tuple[str, str]:
@@ -4892,40 +4831,6 @@ def get_operations_report(user: dict = Depends(require_permission("reports.view"
     }
 
 
-@app.get("/api/security/posture")
-def get_security_posture(user: dict = Depends(require_permission("security.manage"))):
-    risky_ports = {21: "FTP düz metin", 23: "Telnet düz metin", 445: "SMB", 3389: "RDP", 5900: "VNC"}
-    findings = []
-    for dev in _devices_cache.get("data", []):
-        ports = (dev.get("classification") or {}).get("open_ports") or dev.get("open_ports") or []
-        if isinstance(ports, str):
-            try:
-                ports = json.loads(ports)
-            except (TypeError, ValueError):
-                ports = [int(x) for x in re.findall(r"\d+", ports)]
-        exposed = sorted({int(p) for p in ports if str(p).isdigit()} & set(risky_ports))
-        if exposed:
-            findings.append({
-                "severity": "high" if any(p in (23, 445, 3389) for p in exposed) else "medium",
-                "asset": dev.get("hostname") or dev.get("ip") or "Bilinmeyen cihaz", "ip": dev.get("ip"),
-                "title": "İncelenmesi gereken yönetim/legacy servisi",
-                "evidence": ", ".join(f"TCP/{p} {risky_ports[p]}" for p in exposed),
-                "recommendation": "Servisin iş gereksinimini doğrulayın; kaynak IP kısıtı, VPN veya güvenli alternatif uygulayın.",
-            })
-        if (dev.get("type") or "unknown") == "unknown":
-            findings.append({"severity": "medium", "asset": dev.get("hostname") or dev.get("ip") or "Bilinmeyen", "ip": dev.get("ip"),
-                             "title": "Kimliği doğrulanmamış cihaz", "evidence": "Cihaz tipi ve sahibi doğrulanmadı.",
-                             "recommendation": "Envanter yetki testi yapın ve varlık sahibini/lokasyonunu kaydedin."})
-    rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-    findings.sort(key=lambda item: rank.get(item["severity"], 9))
-    return {
-        "generated_at": time.time(), "assets_evaluated": len(_devices_cache.get("data", [])),
-        "findings": findings[:200],
-        "counts": {level: sum(1 for f in findings if f["severity"] == level) for level in ("critical", "high", "medium", "low")},
-        "scope_note": "Bulgular yalnızca keşfedilmiş gerçek port ve envanter kanıtlarından üretilir; zafiyet sömürüsü veya izinsiz saldırı testi yapılmaz.",
-    }
-
-
 class LocationAssignmentRequest(BaseModel):
     asset_id: int
     location: str
@@ -4973,6 +4878,32 @@ def assign_asset_location(req: LocationAssignmentRequest, user: dict = Depends(r
     conn.close()
     _audit(user["username"], "asset_location_update", f"asset_id={req.asset_id} location={location}")
     return {"ok": True, "asset_id": req.asset_id, "location": location}
+
+
+try:
+    from .routers.auth import create_auth_router
+    from .routers.discovery import create_discovery_router
+    from .routers.inventory import create_inventory_router
+    from .routers.ipam import create_ipam_router
+    from .routers.ncm import create_ncm_router
+    from .routers.security import create_security_router
+    from .routers.settings import create_settings_router
+except ImportError:
+    from routers.auth import create_auth_router
+    from routers.discovery import create_discovery_router
+    from routers.inventory import create_inventory_router
+    from routers.ipam import create_ipam_router
+    from routers.ncm import create_ncm_router
+    from routers.security import create_security_router
+    from routers.settings import create_settings_router
+
+app.include_router(create_auth_router(sys.modules[__name__]))
+app.include_router(create_discovery_router(sys.modules[__name__]))
+app.include_router(create_inventory_router(sys.modules[__name__]))
+app.include_router(create_ipam_router(sys.modules[__name__]))
+app.include_router(create_ncm_router(sys.modules[__name__]))
+app.include_router(create_security_router(sys.modules[__name__]))
+app.include_router(create_settings_router(sys.modules[__name__]))
 
 
 # ============================================================
