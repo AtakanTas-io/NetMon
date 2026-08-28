@@ -1,43 +1,41 @@
-name: Netmon CI/CD Pipeline
+name: Test
 
 on:
   push:
-    branches: [ "main", "master", "develop" ]
+    branches: [main, master, develop]
   pull_request:
-    branches: [ "main", "master", "develop" ]
+    branches: [main, master, develop]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: test-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: Test on Python ${{ matrix.python-version }} (Windows)
-    runs-on: windows-latest
+  pytest:
+    name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        os: [windows-latest, ubuntu-latest]
+        python-version: ["3.11", "3.13"]
 
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4
+      - name: Kaynak kodu al
+        uses: actions/checkout@v4
 
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
-        cache: 'pip'
+      - name: Python kur
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
 
-    - name: Install Dependencies
-      run: |
-        python -m pip install --upgrade pip
-        if (Test-Path requirements.txt) { pip install -r requirements.txt }
-        if (Test-Path backend/requirements.txt) { pip install -r backend/requirements.txt }
-        if (Test-Path requirements-dev.txt) { pip install -r requirements-dev.txt }
-        pip install pytest pytest-asyncio httpx
+      - name: Bağımlılıkları kur
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
 
-    - name: Run Test Suite
-      run: |
-        python -m pytest tests/ -v --basetemp="C:/Temp/pytest_netmon"
-
+      - name: Testleri çalıştır
+        env:
+          NETMON_SYSLOG_PORT: "0"
+        run: python -m pytest tests -v
