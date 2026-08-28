@@ -1916,7 +1916,6 @@ def _cached_firewall_status() -> dict:
     _firewall_cache["ts"] = now
     return data
 
-@app.get("/api/network-info")
 def get_network_info(user: dict = Depends(get_current_user)):
     """Stage 5: kullanıcıya ağın temel gerçeklerini ve öğrenme açıklamalarını verir."""
     try:
@@ -2032,7 +2031,6 @@ def get_overview(user: dict = Depends(get_current_user)):
         "simulation": simulation_state
     }
 
-@app.get("/api/topology")
 def get_topology(user: dict = Depends(get_current_user)):
     devices_list = _devices_cache.get("data", [])
     gateway = _last_status.get("gateway") or ""
@@ -2453,7 +2451,6 @@ class DeviceRenameRequest(BaseModel):
     device_type: str | None = None
 
 
-@app.get("/api/tools/nmap/status")
 def get_nmap_status(user: dict = Depends(get_current_user)):
     """Nmap kurulu mu diye bakar. Kurulu değilse uygulama çökmez; yerleşik
     ARP/ping tabanlı discovery kullanılmaya devam eder."""
@@ -3021,15 +3018,6 @@ def _enrich_device_inventory(dev: dict, allow_deep: bool = False):
         "fallback": dev.get("fallback_inventory"),
         "switch_port": dev.get("switch_port"),
     }
-
-@app.get("/api/network/scopes")
-def network_scopes(user: dict = Depends(get_current_user)):
-    """Return only locally attached private IPv4 scopes used by discovery."""
-    try:
-        scopes = [str(n) for n in diag._local_ipv4_networks()]
-    except Exception as exc:
-        return {"scopes": [], "error": str(exc)}
-    return {"scopes": scopes, "count": len(scopes), "policy": "local-private-networks-only"}
 
 # ---------- Network Intelligence / Analyst v10 ----------
 def _analyst_correlation(dev):
@@ -4075,19 +4063,6 @@ def device_scan_loop(stop_event: threading.Event):
         stop_event.wait(max(60, SCAN_INTERVAL))
 
 
-@app.get("/api/discovery/schedule")
-def get_discovery_schedule(user: dict = Depends(get_current_user)):
-    last_finished = _discovery_schedule_state.get("last_finished")
-    return {
-        **_discovery_schedule_state,
-        "enabled": True,
-        "interval_seconds": SCAN_INTERVAL,
-        "target_subnet": SUBNET_OVERRIDE or "Otomatik yerel ağ",
-        "next_run": (last_finished + max(60, SCAN_INTERVAL)) if last_finished else None,
-        "can_manage": _has_permission(user, "discovery.schedule.manage"),
-        "required_permission": "discovery.schedule.manage",
-    }
-
 @app.get("/api/diagnostics")
 def get_diagnostics(user: dict = Depends(get_current_user)):
     try:
@@ -4469,14 +4444,17 @@ def _audit(username: str | None, action: str, detail: str = "", success: bool = 
 
 try:
     from .routers.auth import create_auth_router
+    from .routers.discovery import create_discovery_router
     from .routers.inventory import create_inventory_router
     from .routers.settings import create_settings_router
 except ImportError:
     from routers.auth import create_auth_router
+    from routers.discovery import create_discovery_router
     from routers.inventory import create_inventory_router
     from routers.settings import create_settings_router
 
 app.include_router(create_auth_router(sys.modules[__name__]))
+app.include_router(create_discovery_router(sys.modules[__name__]))
 app.include_router(create_inventory_router(sys.modules[__name__]))
 app.include_router(create_settings_router(sys.modules[__name__]))
 
