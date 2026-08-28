@@ -2471,7 +2471,6 @@ def get_nmap_status(user: dict = Depends(get_current_user)):
     }
 
 
-@app.post("/api/devices/rename")
 def rename_device(body: DeviceRenameRequest, user: dict = Depends(require_permission("devices.manage"))):
     mac = _normalize_mac(body.mac)
     if not mac:
@@ -2529,7 +2528,6 @@ def rename_device(body: DeviceRenameRequest, user: dict = Depends(require_permis
     return {"ok": True}
 
 
-@app.get("/api/devices/known")
 def list_known_devices(user: dict = Depends(get_current_user)):
     conn = db_conn()
     rows = conn.execute(
@@ -3024,17 +3022,6 @@ def _enrich_device_inventory(dev: dict, allow_deep: bool = False):
         "switch_port": dev.get("switch_port"),
     }
 
-@app.get("/api/inventory/summary")
-def inventory_summary(user: dict = Depends(get_current_user)):
-    conn = db_conn()
-    total, online, offline, avg = conn.execute("""SELECT COUNT(*),
-        SUM(CASE WHEN status IN ('online','discovered') THEN 1 ELSE 0 END),
-        SUM(CASE WHEN status IN ('offline','stale') THEN 1 ELSE 0 END),
-        COALESCE(AVG(completeness),0) FROM inventory_assets""").fetchone()
-    conn.close()
-    return {"total": total or 0, "online": online or 0, "offline": offline or 0, "completeness": round(avg or 0, 1)}
-
-
 @app.get("/api/network/scopes")
 def network_scopes(user: dict = Depends(get_current_user)):
     """Return only locally attached private IPv4 scopes used by discovery."""
@@ -3043,42 +3030,6 @@ def network_scopes(user: dict = Depends(get_current_user)):
     except Exception as exc:
         return {"scopes": [], "error": str(exc)}
     return {"scopes": scopes, "count": len(scopes), "policy": "local-private-networks-only"}
-
-@app.get("/api/inventory/scans")
-def inventory_scan_runs(limit: int = 20, user: dict = Depends(get_current_user)):
-    limit = max(1, min(limit, 100))
-    conn = db_conn()
-    rows = conn.execute("SELECT id,started_at,finished_at,mode,requested_by,total,success,failed,error FROM inventory_scan_runs ORDER BY started_at DESC LIMIT ?", (limit,)).fetchall()
-    conn.close()
-    keys = ["id","started_at","finished_at","mode","requested_by","total","success","failed","error"]
-    return {"scans":[dict(zip(keys,r)) for r in rows]}
-
-@app.get("/api/inventory/assets")
-def inventory_assets(limit: int = 500, user: dict = Depends(get_current_user)):
-    limit = max(1, min(limit, 2000))
-    conn = db_conn()
-    rows = conn.execute("""SELECT asset_id,hostname,ip_address,mac_address,vendor,device_type,os_name,os_version,status,
-        first_seen,last_seen,inventory_source,completeness FROM inventory_assets ORDER BY last_seen DESC LIMIT ?""", (limit,)).fetchall()
-    conn.close()
-    keys = ["asset_id","hostname","ip_address","mac_address","vendor","device_type","os_name","os_version","status","first_seen","last_seen","inventory_source","completeness"]
-    return {"assets": [dict(zip(keys, row)) for row in rows]}
-
-
-@app.get("/api/inventory/assets/{asset_id}")
-def inventory_asset_detail(asset_id: int, user: dict = Depends(get_current_user)):
-    conn = db_conn()
-    asset = conn.execute("SELECT * FROM inventory_assets WHERE asset_id=?", (asset_id,)).fetchone()
-    if not asset:
-        conn.close(); raise HTTPException(status_code=404, detail="Varlık bulunamadı")
-    cols = [d[0] for d in conn.execute("SELECT * FROM inventory_assets LIMIT 0").description]
-    item = dict(zip(cols, asset))
-    hw = conn.execute("SELECT cpu,ram_gb,gpu,motherboard,disk_json,serial_number,collected_at FROM inventory_hardware WHERE asset_id=?", (asset_id,)).fetchone()
-    item["hardware"] = dict(zip(["cpu","ram_gb","gpu","motherboard","disk_json","serial_number","collected_at"], hw)) if hw else {}
-    item["interfaces"] = [dict(zip(["id","interface_name","ip_address","mac_address","gateway","subnet","collected_at"], r)) for r in conn.execute("SELECT id,interface_name,ip_address,mac_address,gateway,subnet,collected_at FROM inventory_interfaces WHERE asset_id=? ORDER BY id", (asset_id,)).fetchall()]
-    item["software"] = [dict(zip(["id","name","version","publisher","collected_at"], r)) for r in conn.execute("SELECT id,name,version,publisher,collected_at FROM inventory_software WHERE asset_id=? ORDER BY name", (asset_id,)).fetchall()]
-    item["history"] = [dict(zip(["id","event_type","field_name","old_value","new_value","source","created_at"], r)) for r in conn.execute("SELECT id,event_type,field_name,old_value,new_value,source,created_at FROM inventory_history WHERE asset_id=? ORDER BY created_at DESC LIMIT 100", (asset_id,)).fetchall()]
-    conn.close()
-    return item
 
 # ---------- Network Intelligence / Analyst v10 ----------
 def _analyst_correlation(dev):
@@ -3125,39 +3076,6 @@ def _take_analyst_snapshot():
     conn=db_conn()
     conn.execute("INSERT INTO analyst_snapshots(created_at,total,online,offline,unknown,health,completeness,security_review,payload) VALUES(?,?,?,?,?,?,?,?,?)",(time.time(),total,online,offline,unknown,max(0,round(health,1)),completeness,review,json.dumps({"by_type":{}})))
     conn.commit(); conn.close()
-
-class AssetMetadataRequest(BaseModel):
-    asset_tag: str | None = None
-    owner: str | None = None
-    department: str | None = None
-    location: str | None = None
-    status: str | None = None
-    warranty_until: str | None = None
-    notes: str | None = None
-
-@app.get("/api/inventory/assets/{asset_id}/metadata")
-def inventory_asset_metadata(asset_id:int, user:dict=Depends(get_current_user)):
-    conn=db_conn()
-    row=conn.execute("SELECT asset_id,asset_tag,owner,department,location,status,warranty_until,notes,updated_at FROM asset_metadata WHERE asset_id=?",(asset_id,)).fetchone()
-    exists=conn.execute("SELECT 1 FROM inventory_assets WHERE asset_id=?",(asset_id,)).fetchone()
-    conn.close()
-    if not exists: raise HTTPException(status_code=404, detail="Varlık bulunamadı")
-    keys=["asset_id","asset_tag","owner","department","location","status","warranty_until","notes","updated_at"]
-    return dict(zip(keys,row)) if row else {"asset_id":asset_id}
-
-@app.put("/api/inventory/assets/{asset_id}/metadata")
-def update_inventory_asset_metadata(asset_id:int, body:AssetMetadataRequest, user:dict=Depends(get_current_user)):
-    conn=db_conn(); exists=conn.execute("SELECT 1 FROM inventory_assets WHERE asset_id=?",(asset_id,)).fetchone()
-    if not exists: conn.close(); raise HTTPException(status_code=404, detail="Varlık bulunamadı")
-    now=time.time(); values=body.model_dump()
-    old=conn.execute("SELECT asset_tag,owner,department,location,status,warranty_until,notes FROM asset_metadata WHERE asset_id=?",(asset_id,)).fetchone()
-    if old is None:
-        conn.execute("INSERT INTO asset_metadata(asset_id,asset_tag,owner,department,location,status,warranty_until,notes,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",(asset_id,values.get("asset_tag"),values.get("owner"),values.get("department"),values.get("location"),values.get("status") or "managed",values.get("warranty_until"),values.get("notes"),now))
-    else:
-        current=dict(zip(["asset_tag","owner","department","location","status","warranty_until","notes"],old)); merged={k:(values[k] if values[k] is not None else current[k]) for k in current}
-        conn.execute("UPDATE asset_metadata SET asset_tag=?,owner=?,department=?,location=?,status=?,warranty_until=?,notes=?,updated_at=? WHERE asset_id=?",(merged["asset_tag"],merged["owner"],merged["department"],merged["location"],merged["status"],merged["warranty_until"],merged["notes"],now,asset_id))
-    conn.commit(); conn.close(); _audit(user["username"],"asset_metadata_update",f"asset_id={asset_id}")
-    return {"ok":True,"asset_id":asset_id,"updated_at":now}
 
 @app.get("/api/analyst/correlation")
 def analyst_correlation(user: dict = Depends(get_current_user)):
@@ -3679,122 +3597,10 @@ def get_ssl_certs(user: dict = Depends(get_current_user)):
     conn.close()
     return {"certs": [{"ip": r[0], "hostname": r[1], "issuer": r[2], "valid_from": r[3], "valid_to": r[4], "days_left": r[5], "last_checked": r[6]} for r in rows]}
 
-@app.get("/api/devices")
-def get_devices(force: bool = False, user: dict = Depends(get_current_user)):
-    if force and user.get("role") != "admin":
-        raise _AuthError(403, "Zorunlu ağ taraması için yönetici yetkisi gerekiyor.")
-    now = time.time()
-    if not force and _devices_cache["data"] and (now - _devices_cache["ts"] < DEVICES_CACHE_SECONDS):
-        devices = _devices_cache["data"]
-        for dev in devices:
-            _enrich_device_inventory(dev)
-        return {"devices": devices, "cached": True, "error": _devices_cache.get("error")}
-    if not _device_scan_lock.acquire(blocking=False):
-        return {
-            "devices": _devices_cache.get("data") or [],
-            "cached": True,
-            "scanning": True,
-            "error": _devices_cache.get("error"),
-        }
-    _devices_cache["scan_status"] = "running"
-    try:
-        try:
-            devices = _discover_configured_devices()
-            devices = enrich_devices(devices)
-            devices = merge_scan_into_inventory(devices)
-            _devices_cache["error"] = None
-        except NetworkDiscoveryError as exc:
-            logger.warning("[API] Device scan failed: %s", exc)
-            devices = []
-            _devices_cache["error"] = str(exc)
-        except Exception as exc:
-            logger.exception("[API] Unexpected error during device scan")
-            devices = []
-            _devices_cache["error"] = f"Beklenmeyen hata: {exc}"
-
-        if devices:
-            for dev in devices:
-                _enrich_device_inventory(dev)
-                # Agentless keşifte elde edilen ağ kanıtını da normalize edilmiş
-                # asset tablosuna kaydet. Derin inventory yoksa alanlar boş kalır.
-                _sync_normalized_inventory(dev, {
-                    "status": "Success",
-                    "ip_address": dev.get("ip"),
-                    "mac_address": dev.get("mac"),
-                    "computer_name": dev.get("hostname"),
-                    "inventory_source": "Agentless Discovery",
-                }, "Agentless Discovery")
-
-        _devices_cache["data"] = devices
-        _devices_cache["ts"] = now
-        return {"devices": devices, "cached": False, "error": _devices_cache["error"]}
-    finally:
-        _devices_cache["scan_status"] = "idle"
-        _device_scan_lock.release()
-
-class WmiScanRequest(BaseModel):
-    ip_list: list[str]
-    username: str = ""
-    password: str = ""
-    timeout: int = 20
-
-
-class AuthorizedInventoryRequest(BaseModel):
-    ip: str
-    protocol: str = "auto"  # auto | windows | ssh | snmp
-    username: str = ""
-    password: str = ""
-    snmp_community: str = ""
-    timeout: int = 20
-
-@app.post("/api/scan_wmi_inventory")
-def trigger_wmi_scan(req: WmiScanRequest, user: dict = Depends(require_permission("inventory.scan"))):
-    if not 5 <= req.timeout <= 60:
-        return JSONResponse(status_code=400, content={"error": "Zaman aşımı 5-60 saniye arasında olmalıdır."})
-    if not req.ip_list or len(req.ip_list) > 64:
-        return JSONResponse(status_code=400, content={"error": "Bir istekte 1-64 hedef IP gönderilebilir."})
-    targets = []
-    for raw in req.ip_list:
-        try:
-            parsed = ipaddress.ip_address(raw.strip())
-        except ValueError:
-            return JSONResponse(status_code=400, content={"error": f"Geçersiz IP adresi: {raw}"})
-        if not _is_allowed_inventory_ip(parsed):
-            return JSONResponse(status_code=400, content={"error": f"Yalnızca yerel/özel IPv4 hedefleri taranabilir: {raw}"})
-        targets.append(str(parsed))
-    u = req.username if req.username else WMI_USERNAME
-    p = req.password if req.password else WMI_PASSWORD
-    scanner = WmiNetworkScanner(
-        username=u if u else None,
-        password=p if p else None,
-        timeout=req.timeout,
-        verify_tls=WINRM_VERIFY_TLS,
-    )
-    results = scanner.scan_network(targets, max_workers=10)
-
-    # Immediately attach results into device cache
-    if _devices_cache.get("data") and results:
-        res_by_ip = {r.get("ip_address"): r for r in results}
-        for dev in _devices_cache["data"]:
-            if dev.get("ip") in res_by_ip:
-                result = res_by_ip[dev["ip"]]
-                if result.get("status") == "Success":
-                    dev["wmi_inventory"] = result
-                    dev.pop("inventory_error", None)
-                    _persist_device_inventory(dev, result, result.get("inventory_source") or "WMI/WinRM")
-                else:
-                    dev["inventory_error"] = {
-                        "code": result.get("error_code"),
-                        "message": result.get("error_message"),
-                        "ts": time.time(),
-                    }
-
-    _devices_cache["ts"] = time.time()
-    manager.broadcast_threadsafe({"type": "devices", "devices": _devices_cache.get("data", []), "ts": _devices_cache.get("ts", 0)})
-    succeeded = sum(1 for result in results if result.get("status") == "Success")
-    _audit(user["username"], "wmi_scan", f"targets={len(targets)} success={succeeded}")
-    return {"ok": True, "results": results, "summary": {"total": len(results), "success": succeeded, "failed": len(results) - succeeded}}
-
+try:
+    from .routers.inventory import AuthorizedInventoryRequest
+except ImportError:
+    from routers.inventory import AuthorizedInventoryRequest
 
 WMI_AUTH_FAILURE_COOLDOWN_SECONDS = 15 * 60
 _wmi_auth_failure_cooldowns: dict[tuple[str, str], float] = {}
@@ -3928,7 +3734,6 @@ def _run_windows_inventory_on_devices(devices: list[dict]):
     return results
 
 
-@app.post("/api/devices/inventory/preflight")
 def preflight_authorized_inventory(req: AuthorizedInventoryRequest, user: dict = Depends(require_permission("inventory.scan"))):
     """Check reachability, credentials and authorization without persisting inventory."""
     if not 5 <= req.timeout <= 60:
@@ -4045,7 +3850,6 @@ def preflight_authorized_inventory(req: AuthorizedInventoryRequest, user: dict =
     }
 
 
-@app.post("/api/devices/inventory")
 def scan_authorized_device_inventory(req: AuthorizedInventoryRequest, user: dict = Depends(require_permission("inventory.scan"))):
     if not 5 <= req.timeout <= 60:
         return JSONResponse(status_code=400, content={"error": "Zaman aşımı 5-60 saniye arasında olmalıdır."})
@@ -4219,76 +4023,6 @@ def scan_authorized_device_inventory(req: AuthorizedInventoryRequest, user: dict
         success=succeeded,
     )
     return {"ok": succeeded, "protocol": protocol, "result": result}
-
-class NetworkScanRequest(BaseModel):
-    mode: str = "agentless"  # "agentless" (şifresiz açık protokoller) veya "deep" (yetkili WMI/SSH)
-
-@app.post("/api/devices/scan")
-def trigger_network_scan(req: Optional[NetworkScanRequest] = None, user: dict = Depends(require_permission("inventory.scan"))):
-    if not _device_scan_lock.acquire(blocking=False):
-        return JSONResponse(status_code=409, content={"error": "Tarama zaten devam ediyor."})
-
-    scan_mode = req.mode if (req and req.mode in ("agentless", "deep")) else "agentless"
-    _devices_cache["scan_status"] = "running"
-    scan_started = time.time()
-    scan_run_id = None
-    try:
-        c = db_conn()
-        cur = c.execute("INSERT INTO inventory_scan_runs(started_at,mode,requested_by) VALUES(?,?,?)", (scan_started, scan_mode, user.get("username")))
-        scan_run_id = cur.lastrowid
-        c.commit(); c.close()
-    except Exception as exc:
-        logger.warning("[INVENTORY] scan run kaydı açılamadı: %s", exc)
-    manager.broadcast_threadsafe({"type": "scan", "status": "started", "mode": scan_mode})
-    manager.broadcast_threadsafe({"type": "scan_wave", "wave": 1, "label": "Wave 1: ARP & ICMP Sweep", "progress": 33})
-    try:
-        manager.broadcast_threadsafe({"type": "scan_wave", "wave": 2, "label": "Wave 2: DNS, mDNS, SSDP, SNMP, NetBIOS & LLDP", "progress": 66})
-        devices = _discover_configured_devices()
-        devices = enrich_devices(devices)
-        devices = merge_scan_into_inventory(devices)
-        manager.broadcast_threadsafe({"type": "scan_wave", "wave": 3, "label": "Wave 3: Service Probing & Unified Inventory", "progress": 100})
-        _update_switch_mac_tables(devices)
-        
-        if devices:
-            if scan_mode == "deep":
-                _run_windows_inventory_on_devices(devices)
-            for dev in devices:
-                _enrich_device_inventory(dev, allow_deep=(scan_mode == "deep"))
-
-        _devices_cache["data"] = devices
-        _devices_cache["ts"] = time.time()
-        _devices_cache["error"] = None
-        _devices_cache["scan_mode"] = scan_mode
-        if scan_run_id:
-            try:
-                c = db_conn(); c.execute("UPDATE inventory_scan_runs SET finished_at=?, total=?, success=?, failed=? WHERE id=?", (time.time(), len(devices), sum(1 for d in devices if d.get("wmi_inventory",{}).get("status") == "Success" or d.get("deep_inventory",{}).get("status") == "Success" or d.get("status") in {"online","discovered"}), 0, scan_run_id)); c.commit(); c.close()
-            except Exception as exc: logger.warning("[INVENTORY] scan run tamamlanamadı: %s", exc)
-        online_devices = [d for d in devices if d.get("status") == "online"]
-        discovered_devices = [d for d in devices if d.get("status") == "discovered"]
-        offline_devices = [d for d in devices if d.get("status") in {"offline", "stale"}]
-        by_type = {}
-        for d in devices:
-            t = d.get("type") or "unknown"
-            by_type[t] = by_type.get(t, 0) + 1
-        scan_result = {
-            "status": "done", "devices": devices, "online_devices": online_devices,
-            "discovered_devices": discovered_devices, "offline_devices": offline_devices,
-            "by_type": by_type, "ts": _devices_cache["ts"], "mode": scan_mode, "error": None
-        }
-        manager.broadcast_threadsafe({"type": "devices", **scan_result})
-        return scan_result
-    except NetworkDiscoveryError as exc:
-        logger.warning("[API] Manual scan failed: %s", exc)
-        _devices_cache["error"] = str(exc)
-        return JSONResponse(status_code=503, content={"status": "error", "devices": [], "error": str(exc)})
-    except Exception as exc:
-        logger.exception("[API] Unexpected error during manual scan")
-        _devices_cache["error"] = f"Beklenmeyen hata: {exc}"
-        return JSONResponse(status_code=500, content={"status": "error", "devices": [], "error": _devices_cache["error"]})
-    finally:
-        _devices_cache["scan_status"] = "idle"
-        manager.broadcast_threadsafe({"type": "scan", "status": "done"})
-        _device_scan_lock.release()
 
 # ------------------------------------------------------------
 # YENİ: Ayarlar panelindeki "Ağ tarama sıklığı" (scan_interval) alanı daha
@@ -4735,12 +4469,15 @@ def _audit(username: str | None, action: str, detail: str = "", success: bool = 
 
 try:
     from .routers.auth import create_auth_router
+    from .routers.inventory import create_inventory_router
     from .routers.settings import create_settings_router
 except ImportError:
     from routers.auth import create_auth_router
+    from routers.inventory import create_inventory_router
     from routers.settings import create_settings_router
 
 app.include_router(create_auth_router(sys.modules[__name__]))
+app.include_router(create_inventory_router(sys.modules[__name__]))
 app.include_router(create_settings_router(sys.modules[__name__]))
 
 
