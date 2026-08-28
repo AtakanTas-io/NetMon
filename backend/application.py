@@ -45,11 +45,15 @@ from cryptography.fernet import Fernet, InvalidToken
 try:
     from . import netdiag_core as diag
     from . import deep_discovery
+    from .core.access import ROLE_DEFINITIONS, has_permission, role_definition, role_permissions
+    from .core.database import connect_sqlite
     from .netdiag_core import NetworkDiagnostics, NetworkDiscoveryError
     from .wmi_scanner import WmiNetworkScanner
 except ImportError:
     import netdiag_core as diag
     import deep_discovery
+    from core.access import ROLE_DEFINITIONS, has_permission, role_definition, role_permissions
+    from core.database import connect_sqlite
     from netdiag_core import NetworkDiagnostics, NetworkDiscoveryError
     from wmi_scanner import WmiNetworkScanner
 
@@ -665,13 +669,7 @@ def init_db():
     conn.close()
 
 def db_conn():
-    # timeout=5.0: iki thread aynı anda yazmaya çalışırsa sqlite3 hemen
-    # "database is locked" fırlatmak yerine kilidin açılmasını 5 saniyeye
-    # kadar bekler (WAL modu ile birlikte pratikte bu bekleme neredeyse hiç
-    # gerekmez, ama ekstra güvenlik katmanı olarak kalsın).
-    conn = sqlite3.connect(DB_PATH, timeout=5.0)
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
+    return connect_sqlite(DB_PATH)
 
 
 def _prune_operational_data(conn: sqlite3.Connection, now: float | None = None):
@@ -1114,34 +1112,6 @@ async def _auth_error_handler(request, exc: _AuthError):
 
 SESSION_TTL_SECONDS = 12 * 3600  # "Beni hatırla" seçilmezse 12 saat
 
-ROLE_DEFINITIONS = {
-    "admin": {
-        "label": "Sistem Yöneticisi",
-        "permissions": {"*"},
-    },
-    "noc_operator": {
-        "label": "NOC Operatörü",
-        "permissions": {"inventory.scan", "discovery.schedule.manage", "devices.manage", "diagnostics.run", "logs.manage", "ncm.manage", "reports.view", "locations.view"},
-    },
-    "inventory_specialist": {
-        "label": "Envanter Uzmanı",
-        "permissions": {"inventory.scan", "devices.manage", "reports.view", "locations.view", "locations.manage"},
-    },
-    "security_analyst": {
-        "label": "Güvenlik Analisti",
-        "permissions": {"diagnostics.run", "security.manage", "reports.view", "locations.view"},
-    },
-    "viewer": {
-        "label": "Salt Okunur",
-        "permissions": set(),
-    },
-    # Eski kurulumlarla geriye dönük uyumluluk.
-    "user": {
-        "label": "Standart Kullanıcı",
-        "permissions": set(),
-    },
-}
-
 CAPABILITY_CATALOG = (
     {
         "id": "automatic_discovery", "title": "Otomatik Ağ Keşfi", "permission": "discovery.schedule.manage",
@@ -1195,17 +1165,15 @@ CAPABILITY_CATALOG = (
 
 
 def _role_definition(role: str) -> dict:
-    return ROLE_DEFINITIONS.get(role, ROLE_DEFINITIONS["viewer"])
+    return role_definition(role)
 
 
 def _role_permissions(role: str) -> list[str]:
-    permissions = _role_definition(role)["permissions"]
-    return ["*"] if "*" in permissions else sorted(permissions)
+    return role_permissions(role)
 
 
 def _has_permission(user: dict, permission: str) -> bool:
-    permissions = set(user.get("permissions") or _role_permissions(user.get("role", "viewer")))
-    return "*" in permissions or permission in permissions
+    return has_permission(user, permission)
 
 
 def _row_to_user(row) -> dict:
