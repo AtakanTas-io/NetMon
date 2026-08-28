@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture()
-def isolated_server(tmp_path, monkeypatch):
+def isolated_server(tmp_path, monkeypatch, test_portal):
     db_path = tmp_path / "netmon-readiness.db"
     password_path = tmp_path / "initial-admin.txt"
     monkeypatch.setattr(server, "DB_PATH", db_path)
@@ -17,7 +17,7 @@ def isolated_server(tmp_path, monkeypatch):
     server._devices_cache.update({"ts": 0, "data": [], "error": None, "scan_status": "idle"})
     server._local_wmi_cache.update({"ts": 0, "data": None})
     server.init_db()
-    with persistent_test_client(server.app) as client:
+    with persistent_test_client(server.app, test_portal) as client:
         yield client, db_path, password_path
 
 

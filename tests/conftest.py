@@ -3,6 +3,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import anyio
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -13,14 +14,20 @@ for path in (PROJECT_ROOT, BACKEND_DIR):
         sys.path.insert(0, str(path))
 
 
+@pytest.fixture(scope="session")
+def test_portal():
+    """Tüm test paketi boyunca tek AnyIO portalı kullan."""
+    with anyio.from_thread.start_blocking_portal() as portal:
+        yield portal
+
+
 @contextmanager
-def persistent_test_client(app):
-    """TestClient isteklerini tek portalda çalıştır, uygulama worker'larını başlatma."""
+def persistent_test_client(app, portal):
+    """TestClient isteklerini ortak portalda çalıştır, uygulama worker'larını başlatma."""
     client = TestClient(app)
-    with anyio.from_thread.start_blocking_portal(**client.async_backend) as portal:
-        client.portal = portal
-        try:
-            yield client
-        finally:
-            client.portal = None
-            client.close()
+    client.portal = portal
+    try:
+        yield client
+    finally:
+        client.portal = None
+        client.close()
