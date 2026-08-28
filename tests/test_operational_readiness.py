@@ -99,7 +99,8 @@ def test_readiness_contract_distinguishes_real_and_unavailable_features(isolated
 
 
 def test_frontend_uses_real_actions_and_page_scoped_refresh():
-    app_js = (ROOT / "frontend" / "app.js").read_text(encoding="utf-8")
+    frontend_files = [ROOT / "frontend" / "app.js", *sorted((ROOT / "frontend" / "js").glob("*.js"))]
+    app_js = "\n".join(path.read_text(encoding="utf-8") for path in frontend_files)
     assert 'owner: $("editDeviceOwner")' in app_js
     assert 'authorized_dhcp_servers: $("setAuthDhcp")' in app_js
     assert 'ad_server: $("setAdServer")' in app_js
