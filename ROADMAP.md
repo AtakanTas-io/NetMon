@@ -8,6 +8,7 @@
 - En sık kullanılan API çağrılarına istek ve yanıt örnekleri eklemek
 - `app.js` dosyasını tarayıcı ES modüllerine ayırmak
 - `application.py` içindeki arka plan ve envanter çalışma zamanı yardımcılarını servis modüllerine ayırmak
+- `application.py`, `netdiag_core.py` ve masaüstü girişlerini coverage kapsamına alıp başlangıçtaki yüzde 70 eşiğini kademeli yükseltmek
 
 ## Paketleme
 
