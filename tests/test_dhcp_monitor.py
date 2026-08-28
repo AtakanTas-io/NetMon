@@ -78,3 +78,48 @@ def test_stop_sets_event_and_running_false(monkeypatch):
     module.stop_dhcp_monitor()
     assert module._stop_event.is_set()
     assert module._monitor_state["running"] is False
+
+
+def test_rogue_offer_is_persisted_and_broadcast(monkeypatch):
+    class FakeSocket:
+        def setsockopt(self, *args): pass
+        def bind(self, *args): pass
+        def settimeout(self, *args): pass
+        def recvfrom(self, size):
+            module._stop_event.set()
+            return b"\x02offer", ("10.0.0.66", 67)
+        def close(self): pass
+
+    class FakeConnection:
+        def __init__(self): self.executed = []; self.committed = False
+        def execute(self, sql, params):
+            self.executed.append((sql, params))
+            return SimpleNamespace(fetchone=lambda: None)
+        def commit(self): self.committed = True
+        def close(self): pass
+
+    import server
+    connection = FakeConnection()
+    events = []
+    monkeypatch.setattr(server, "db_conn", lambda: connection)
+    monkeypatch.setattr(server.manager, "broadcast_threadsafe", events.append)
+    monkeypatch.setattr(module.socket, "socket", lambda *a: FakeSocket())
+    monkeypatch.setattr(module, "_authorized_provider", lambda: ["10.0.0.1"])
+    module._stop_event.clear()
+    module._dhcp_monitor_loop()
+    assert connection.committed is True
+    assert events[0]["level"] == "critical"
+
+
+def test_start_creates_daemon_thread(monkeypatch):
+    created = []
+    class FakeThread:
+        def __init__(self, target, daemon): created.append((target, daemon)); self.started = False
+        def is_alive(self): return False
+        def start(self): self.started = True
+
+    monkeypatch.setattr(module.threading, "Thread", FakeThread)
+    monkeypatch.setattr(module, "_dhcp_thread", None)
+    module.start_dhcp_monitor()
+    assert created[0][1] is True
+    assert module._dhcp_thread.started is True

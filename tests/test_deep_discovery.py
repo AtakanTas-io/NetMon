@@ -103,3 +103,61 @@ def test_parallel_flow_preserves_input_order(monkeypatch):
     devices = [{"ip": "10.0.0.2"}, {"ip": "10.0.0.1"}]
     results = module.parallel_integrate_discovery_flow(devices, max_workers=2)
     assert [item["ip"] for item in results] == ["10.0.0.2", "10.0.0.1"]
+
+
+def test_linux_inventory_parses_hardware_packages_and_storage(monkeypatch):
+    outputs = iter([
+        "Linux host 6.8", "Ubuntu 24.04", "Mock CPU", "16384", "8", "ACME", "Model X", "SERIAL1",
+        "host1", "x86_64", "alice", "Status: active",
+        "/dev/sda1 107374182400 53687091200 53687091200 50% /",
+        "curl 8.0\npython3 3.12",
+    ])
+    class Stream:
+        def __init__(self, value): self.value = value
+        def read(self): return self.value.encode()
+    class Client:
+        def load_system_host_keys(self): pass
+        def set_missing_host_key_policy(self, policy): pass
+        def connect(self, *a, **k): pass
+        def exec_command(self, command, timeout): return None, Stream(next(outputs)), Stream("")
+        def close(self): pass
+
+    monkeypatch.setattr(module, "HAS_PARAMIKO", True)
+    monkeypatch.setattr(module, "paramiko", SimpleNamespace(SSHClient=Client, RejectPolicy=lambda: object()))
+    result = module.scan_linux_deep("10.0.0.2", "user", "secret")
+    assert result["status"] == "Success"
+    assert result["hardware"]["ram_gb"] == 16
+    assert result["software"]["installed_programs"][0]["name"] == "curl"
+    assert result["storage"][0]["drive_letter"] == "/"
+
+
+def test_linux_inventory_connection_failure_is_safe(monkeypatch):
+    class Client:
+        def load_system_host_keys(self): pass
+        def set_missing_host_key_policy(self, policy): pass
+        def connect(self, *a, **k): raise RuntimeError("denied")
+        def close(self): pass
+
+    monkeypatch.setattr(module, "HAS_PARAMIKO", True)
+    monkeypatch.setattr(module, "paramiko", SimpleNamespace(SSHClient=Client, RejectPolicy=lambda: object()))
+    result = module.scan_linux_deep("10.0.0.2", "user", "secret")
+    assert result["status"] == "Failed"
+    assert result["error"] == "denied"
+
+
+def test_snmp_success_parses_observed_strings(monkeypatch):
+    responses = iter([b"\x04\x0bMock Router", b"\x04\x05edge1"])
+    class FakeSocket:
+        def settimeout(self, value): assert value == 0.5
+        def sendto(self, payload, target): assert target == ("10.0.0.2", 161)
+        def recvfrom(self, size): return next(responses), ("10.0.0.2", 161)
+        def close(self): pass
+
+    monkeypatch.setattr(module.socket, "socket", lambda *a: FakeSocket())
+    result = module.scan_snmp_deep("10.0.0.2", "public", timeout=1.0)
+    assert result["status"] == "Success"
+    assert result["system"]["sys_name"] == "edge1"
+
+
+def test_parallel_flow_returns_empty_for_empty_input():
+    assert module.parallel_integrate_discovery_flow([]) == []
