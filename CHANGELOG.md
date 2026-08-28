@@ -12,6 +12,7 @@
 - Ağ keşfi, topoloji ve tarama zamanlaması uçları ayrı bir FastAPI router'ına taşındı.
 - IP çakışması ve subnet kapasitesi uçları ayrı bir FastAPI router'ına taşındı.
 - Cihaz config yedekleme ve sürüm farkı uçları ayrı bir FastAPI router'ına taşındı.
+- Güvenlik duruşu, firewall ve kontrollü simülasyon uçları ayrı bir FastAPI router'ına taşındı.
 - Trafik ekranına ölçüm kaynağı ve veri yaşı eklendi.
 - Sistem bileşenlerinin hazırlık durumunu döndüren API eklendi.
 - DHCP ve Active Directory ayarları kalıcı hale getirildi.
