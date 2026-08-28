@@ -4913,12 +4913,13 @@ def api_login(body: LoginRequest):
     ).fetchone()
 
     ad_success = False
+    ad_server = None
     try:
-        from ldap3 import Server, Connection, ALL
         settings = dict(conn.execute("SELECT key, value FROM settings").fetchall())
         ad_server = settings.get("ad_server")
         ad_domain = settings.get("ad_domain")
         if ad_server and ad_domain:
+            from ldap3 import Server, Connection, ALL
             if "\\" in body.username:
                 u_clean = body.username.split("\\", 1)[1]
                 user_dn = f"{u_clean}@{ad_domain}"
@@ -4942,8 +4943,12 @@ def api_login(body: LoginRequest):
                     "SELECT id, username, password_hash, salt, role, active, must_change_password FROM users WHERE username=?",
                     (body.username,),
                 ).fetchone()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning(
+            "AD girişi denendi, başarısız; sunucu=%s hata_türü=%s",
+            ad_server or "yapılandırılmadı",
+            type(exc).__name__,
+        )
 
     if row is None:
         _register_login_failure(conn, body.username)
