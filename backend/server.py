@@ -40,6 +40,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, Header, Re
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
+from cryptography.fernet import Fernet, InvalidToken
 
 try:
     from . import netdiag_core as diag
@@ -59,23 +60,72 @@ except ImportError:
 
 SECRET_SETTING_KEYS = {"wmi_password", "ssh_password", "snmp_community"}
 DPAPI_PREFIX = "dpapi:"
+FERNET_PREFIX = "fernet:"
+FERNET_KEY_FILENAME = "secret.key"
+SECRET_PREFIXES = (DPAPI_PREFIX, FERNET_PREFIX)
+
+
+def _fernet_key_path() -> Path:
+    return USER_DATA_DIR / FERNET_KEY_FILENAME
+
+
+def _load_or_create_fernet_key() -> bytes:
+    """Kullanıcıya özel Fernet anahtarını yarış durumuna dayanıklı oluştur."""
+    key_path = _fernet_key_path()
+    key_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        key = key_path.read_bytes().strip()
+    except FileNotFoundError:
+        generated = Fernet.generate_key()
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        if hasattr(os, "O_BINARY"):
+            flags |= os.O_BINARY
+        try:
+            fd = os.open(key_path, flags, 0o600)
+        except FileExistsError:
+            # Başka bir süreç anahtarı aynı anda oluşturduysa onun ürettiğini kullan.
+            key = key_path.read_bytes().strip()
+        else:
+            with os.fdopen(fd, "wb") as key_file:
+                key_file.write(generated)
+            key = generated
+
+    if os.name != "nt":
+        key_path.chmod(0o600)
+    try:
+        Fernet(key)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"Fernet anahtar dosyası geçersiz: {key_path}") from exc
+    return key
 
 
 def _protect_secret(value: str) -> str:
-    """Parolaları Windows kullanıcısına/makinesine bağlı DPAPI ile şifrele."""
+    """Windows'ta DPAPI, diğer platformlarda kullanıcıya özel Fernet kullan."""
     if not value:
         return ""
-    if platform.system() != "Windows" or win32crypt is None:
-        raise RuntimeError("Güvenli parola saklama için Windows DPAPI/pywin32 gerekli.")
-    protected = win32crypt.CryptProtectData(value.encode("utf-8"), "NetMon secret", None, None, None, 0)
-    # pywin32'nin güncel sürümü doğrudan bytes, bazı eski sürümleri tuple döndürür.
-    encrypted = protected[-1] if isinstance(protected, tuple) else protected
-    return DPAPI_PREFIX + base64.b64encode(encrypted).decode("ascii")
+    if platform.system() == "Windows":
+        if win32crypt is None:
+            raise RuntimeError("Windows'ta güvenli parola saklama için DPAPI/pywin32 gerekli.")
+        protected = win32crypt.CryptProtectData(value.encode("utf-8"), "NetMon secret", None, None, None, 0)
+        # pywin32'nin güncel sürümü doğrudan bytes, bazı eski sürümleri tuple döndürür.
+        encrypted = protected[-1] if isinstance(protected, tuple) else protected
+        return DPAPI_PREFIX + base64.b64encode(encrypted).decode("ascii")
+
+    encrypted = Fernet(_load_or_create_fernet_key()).encrypt(value.encode("utf-8"))
+    return FERNET_PREFIX + encrypted.decode("ascii")
 
 
 def _unprotect_secret(value: str) -> str:
     if not value:
         return ""
+    if value.startswith(FERNET_PREFIX):
+        try:
+            token = value[len(FERNET_PREFIX):].encode("ascii")
+            return Fernet(_load_or_create_fernet_key()).decrypt(token).decode("utf-8")
+        except (InvalidToken, UnicodeError, ValueError, OSError, RuntimeError) as exc:
+            logger.warning("Fernet ile kayıtlı gizli ayar çözülemedi: %s", type(exc).__name__)
+            return ""
     if not value.startswith(DPAPI_PREFIX):
         # Eski sürümden kalan düz metin yalnızca bir defalık geçişte okunur.
         return value
@@ -600,10 +650,11 @@ def init_db():
         conn.commit()
         INITIAL_PASSWORD_PATH.write_text(f"Default admin password:\n{default_password}\n", encoding="utf-8")
 
-    # Eski sürümde düz metin tutulmuş gizli ayarları ilk açılışta DPAPI'ye taşı.
+    # Eski sürümde düz metin tutulmuş gizli ayarları ilk açılışta platformun
+    # güvenli deposuna taşı; mevcut dpapi:/fernet: kayıtlarını yeniden şifreleme.
     for secret_key in SECRET_SETTING_KEYS:
         secret_row = conn.execute("SELECT value FROM settings WHERE key=?", (secret_key,)).fetchone()
-        if secret_row and secret_row[0] and not secret_row[0].startswith(DPAPI_PREFIX):
+        if secret_row and secret_row[0] and not secret_row[0].startswith(SECRET_PREFIXES):
             try:
                 conn.execute("UPDATE settings SET value=? WHERE key=?", (_protect_secret(secret_row[0]), secret_key))
                 conn.commit()
