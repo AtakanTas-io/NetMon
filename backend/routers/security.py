@@ -35,8 +35,12 @@ def create_security_router(ctx) -> APIRouter:
         return {
             "certs": [
                 {
-                    "ip": row[0], "hostname": row[1], "issuer": row[2],
-                    "valid_from": row[3], "valid_to": row[4], "days_left": row[5],
+                    "ip": row[0],
+                    "hostname": row[1],
+                    "issuer": row[2],
+                    "valid_from": row[3],
+                    "valid_to": row[4],
+                    "days_left": row[5],
                     "last_checked": row[6],
                 }
                 for row in rows

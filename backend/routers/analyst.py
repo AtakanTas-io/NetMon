@@ -15,9 +15,7 @@ def _safe_float(value):
 
 def _device_status(device):
     return str(
-        device.get("status")
-        or device.get("connectivity_status")
-        or ("online" if device.get("online") else "unknown")
+        device.get("status") or device.get("connectivity_status") or ("online" if device.get("online") else "unknown")
     ).lower()
 
 
@@ -179,8 +177,15 @@ def create_analyst_router(ctx) -> APIRouter:
             "INSERT INTO analyst_snapshots(created_at,total,online,offline,unknown,health,completeness,security_review,payload) "
             "VALUES(?,?,?,?,?,?,?,?,?)",
             (
-                ctx.time.time(), total, online, offline, unknown, max(0, round(health, 1)),
-                completeness, review, json.dumps({"by_type": {}}),
+                ctx.time.time(),
+                total,
+                online,
+                offline,
+                unknown,
+                max(0, round(health, 1)),
+                completeness,
+                review,
+                json.dumps({"by_type": {}}),
             ),
         )
         conn.commit()
@@ -230,11 +235,17 @@ def create_analyst_router(ctx) -> APIRouter:
                 for neighbor in values:
                     if not isinstance(neighbor, dict):
                         continue
-                    peer = neighbor.get("ip") or neighbor.get("management_address") or neighbor.get("hostname") or neighbor.get("device_id")
+                    peer = (
+                        neighbor.get("ip")
+                        or neighbor.get("management_address")
+                        or neighbor.get("hostname")
+                        or neighbor.get("device_id")
+                    )
                     if peer:
                         edges.append(
                             {
-                                "source": name, "target": str(peer),
+                                "source": name,
+                                "target": str(peer),
                                 "port": neighbor.get("local_port") or neighbor.get("port"),
                                 "protocol": key.upper().replace("_NEIGHBORS", ""),
                             }
@@ -256,7 +267,8 @@ def create_analyst_router(ctx) -> APIRouter:
             passed = sum(item[1] for item in checks)
             result.append(
                 {
-                    "ip": analysis["ip"], "hostname": analysis["hostname"],
+                    "ip": analysis["ip"],
+                    "hostname": analysis["hostname"],
                     "score": round(passed * 100 / len(checks)),
                     "checks": [{"name": item[0], "ok": item[1]} for item in checks],
                 }
@@ -292,22 +304,30 @@ def create_analyst_router(ctx) -> APIRouter:
         unknown = [item for item in analyzed if item["device_type"] in {None, "", "unknown"}]
         review = [item for item in analyzed if item["exposure"]["risk"] == "medium"]
         latencies = [item["latency_ms"] for item in analyzed if item["latency_ms"] is not None]
-        losses = [item["packet_loss"] for item in analyzed if item["packet_loss"] is not None and item["status"] == "online"]
+        losses = [
+            item["packet_loss"] for item in analyzed if item["packet_loss"] is not None and item["status"] == "online"
+        ]
         completeness = round(sum(item["completeness"] for item in analyzed) / len(analyzed)) if analyzed else 0
         health = 100 - min(20, len(unknown) * 2) - min(25, len(review) * 3)
         if losses and sum(losses) / len(losses) > 2:
             health -= 10
         if offline and analyzed:
             health -= min(15, round(len(offline) * 15 / len(analyzed)))
-        by_type = {}
+        by_type: dict[str, int] = {}
         for item in analyzed:
             by_type[item["device_type"]] = by_type.get(item["device_type"], 0) + 1
         health = max(0, health)
         return {
-            "health": {"score": health, "label": "Sağlıklı" if health >= 85 else "İzlenmeli" if health >= 65 else "Sorunlu"},
+            "health": {
+                "score": health,
+                "label": "Sağlıklı" if health >= 85 else "İzlenmeli" if health >= 65 else "Sorunlu",
+            },
             "inventory": {
-                "total": len(analyzed), "online": len(online), "offline": len(offline),
-                "unknown_type": len(unknown), "completeness": completeness,
+                "total": len(analyzed),
+                "online": len(online),
+                "offline": len(offline),
+                "unknown_type": len(unknown),
+                "completeness": completeness,
             },
             "security": {
                 "review_items": len(review),
@@ -318,7 +338,9 @@ def create_analyst_router(ctx) -> APIRouter:
                 "average_packet_loss": round(sum(losses) / len(losses), 2) if losses else None,
             },
             "by_type": by_type,
-            "top_recommendations": list(dict.fromkeys(value for item in analyzed for value in item["recommendations"]))[:10],
+            "top_recommendations": list(dict.fromkeys(value for item in analyzed for value in item["recommendations"]))[
+                :10
+            ],
             "generated_at": ctx.time.time(),
         }
 
@@ -346,8 +368,14 @@ def create_analyst_router(ctx) -> APIRouter:
         return {
             "anomalies": [
                 {
-                    "asset_id": row[0], "event": row[1], "field": row[2], "old": row[3],
-                    "new": row[4], "source": row[5], "created_at": row[6], "severity": "info",
+                    "asset_id": row[0],
+                    "event": row[1],
+                    "field": row[2],
+                    "old": row[3],
+                    "new": row[4],
+                    "source": row[5],
+                    "created_at": row[6],
+                    "severity": "info",
                 }
                 for row in rows
             ]
@@ -364,15 +392,49 @@ def create_analyst_router(ctx) -> APIRouter:
 
     @router.get("/api/knowledge/network")
     def knowledge_network(user: dict = Depends(ctx.get_current_user)):
-        return {"topics": [
-            {"id": "discovery", "title": "Ağ keşfi", "text": "NetMon tek bir yönteme güvenmez; ARP/Neighbor, ICMP, DNS, Nmap, SNMP ve uygun olduğunda LLDP/CDP gibi kaynakları birleştirir."},
-            {"id": "identity", "title": "Cihaz kimliği", "text": "IP değişebilir. Bu nedenle MAC, hostname, vendor ve diğer fingerprint kanıtları birlikte değerlendirilir."},
-            {"id": "status", "title": "Durumlar", "text": "Çevrimiçi ağda doğrulanmış cihazı, görüldü keşfedilmiş ama ICMP ile doğrulanmamış cihazı, çevrimdışı önceki envanter kaydını, stale ise uzun süredir görülmeyen kaydı ifade eder."},
-            {"id": "snmp", "title": "SNMP", "text": "Yetkili salt-okuma SNMP; sistem kimliği, interface ve bazı ağ cihazı metrikleri sağlayabilir. Erişim yoksa NetMon tahmin yapmaz."},
-            {"id": "lldp", "title": "LLDP/CDP", "text": "Komşuluk protokolleri cihazlar arasındaki bağlantıyı kanıtlamaya yardımcı olur. Kanıt yoksa topolojide fiziksel bağlantı uydurulmaz."},
-            {"id": "inventory", "title": "Agentless ve yetkili envanter", "text": "Ağdan görülebilen bilgiler ile yetkili WMI/WinRM/SSH/SNMP/API bilgilerinin kapsamı farklıdır. Eksik alanlar UNKNOWN olarak tutulur."},
-            {"id": "security", "title": "Güvenlik görünürlüğü", "text": "Açık port veya servis görmek tek başına güvenlik açığı bulunduğunu kanıtlamaz. NetMon bunları inceleme gerektiren gözlemler olarak sunar."},
-            {"id": "anomaly", "title": "Anomali", "text": "Yeni cihaz, IP değişikliği, yeni port veya envanter değişikliği gibi olaylar analiste inceleme sinyali verir; otomatik saldırı hükmü verilmez."},
-        ]}
+        return {
+            "topics": [
+                {
+                    "id": "discovery",
+                    "title": "Ağ keşfi",
+                    "text": "NetMon tek bir yönteme güvenmez; ARP/Neighbor, ICMP, DNS, Nmap, SNMP ve uygun olduğunda LLDP/CDP gibi kaynakları birleştirir.",
+                },
+                {
+                    "id": "identity",
+                    "title": "Cihaz kimliği",
+                    "text": "IP değişebilir. Bu nedenle MAC, hostname, vendor ve diğer fingerprint kanıtları birlikte değerlendirilir.",
+                },
+                {
+                    "id": "status",
+                    "title": "Durumlar",
+                    "text": "Çevrimiçi ağda doğrulanmış cihazı, görüldü keşfedilmiş ama ICMP ile doğrulanmamış cihazı, çevrimdışı önceki envanter kaydını, stale ise uzun süredir görülmeyen kaydı ifade eder.",
+                },
+                {
+                    "id": "snmp",
+                    "title": "SNMP",
+                    "text": "Yetkili salt-okuma SNMP; sistem kimliği, interface ve bazı ağ cihazı metrikleri sağlayabilir. Erişim yoksa NetMon tahmin yapmaz.",
+                },
+                {
+                    "id": "lldp",
+                    "title": "LLDP/CDP",
+                    "text": "Komşuluk protokolleri cihazlar arasındaki bağlantıyı kanıtlamaya yardımcı olur. Kanıt yoksa topolojide fiziksel bağlantı uydurulmaz.",
+                },
+                {
+                    "id": "inventory",
+                    "title": "Agentless ve yetkili envanter",
+                    "text": "Ağdan görülebilen bilgiler ile yetkili WMI/WinRM/SSH/SNMP/API bilgilerinin kapsamı farklıdır. Eksik alanlar UNKNOWN olarak tutulur.",
+                },
+                {
+                    "id": "security",
+                    "title": "Güvenlik görünürlüğü",
+                    "text": "Açık port veya servis görmek tek başına güvenlik açığı bulunduğunu kanıtlamaz. NetMon bunları inceleme gerektiren gözlemler olarak sunar.",
+                },
+                {
+                    "id": "anomaly",
+                    "title": "Anomali",
+                    "text": "Yeni cihaz, IP değişikliği, yeni port veya envanter değişikliği gibi olaylar analiste inceleme sinyali verir; otomatik saldırı hükmü verilmez.",
+                },
+            ]
+        }
 
     return router

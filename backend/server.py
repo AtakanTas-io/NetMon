@@ -8,7 +8,6 @@ monkeypatch işlemlerinin aynı global duruma erişmesini sağlar.
 import importlib
 import sys
 
-
 if __package__:
     _application = importlib.import_module(".application", __package__)
 else:

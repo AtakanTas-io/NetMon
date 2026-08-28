@@ -38,9 +38,7 @@ def _valid_username(value: str) -> bool:
 
 
 def _check_login_lock(conn, username: str) -> float | None:
-    row = conn.execute(
-        "SELECT fail_count, locked_until FROM login_attempts WHERE username=?", (username,)
-    ).fetchone()
+    row = conn.execute("SELECT fail_count, locked_until FROM login_attempts WHERE username=?", (username,)).fetchone()
     if row is None:
         return None
     _, locked_until = row
@@ -50,9 +48,7 @@ def _check_login_lock(conn, username: str) -> float | None:
 
 
 def _register_login_failure(ctx, conn, username: str):
-    row = conn.execute(
-        "SELECT fail_count FROM login_attempts WHERE username=?", (username,)
-    ).fetchone()
+    row = conn.execute("SELECT fail_count FROM login_attempts WHERE username=?", (username,)).fetchone()
     fail_count = (row[0] if row else 0) + 1
     locked_until = time.time() + ctx.LOGIN_LOCKOUT_SECONDS if fail_count >= ctx.LOGIN_MAX_ATTEMPTS else None
     conn.execute(
@@ -86,7 +82,9 @@ def create_auth_router(ctx) -> APIRouter:
             ctx._audit(body.username, "login", "kilitli hesapla giriş denemesi", success=False)
             return JSONResponse(
                 status_code=429,
-                content={"error": f"Çok fazla başarısız deneme. {int(remaining // 60) + 1} dakika sonra tekrar deneyin."},
+                content={
+                    "error": f"Çok fazla başarısız deneme. {int(remaining // 60) + 1} dakika sonra tekrar deneyin."
+                },
             )
 
         row = conn.execute(
@@ -237,9 +235,7 @@ def create_auth_router(ctx) -> APIRouter:
     @router.get("/api/admin/users")
     def api_list_users(user: dict = Depends(ctx.require_permission("users.manage"))):
         conn = ctx.db_conn()
-        rows = conn.execute(
-            "SELECT id, username, role, active, must_change_password FROM users ORDER BY id"
-        ).fetchall()
+        rows = conn.execute("SELECT id, username, role, active, must_change_password FROM users ORDER BY id").fetchall()
         conn.close()
         return {"users": [ctx._row_to_user(row) for row in rows]}
 
@@ -247,7 +243,10 @@ def create_auth_router(ctx) -> APIRouter:
     def api_create_user(body: CreateUserRequest, user: dict = Depends(ctx.require_permission("users.manage"))):
         body.username = body.username.strip()
         if not _valid_username(body.username):
-            return JSONResponse(status_code=400, content={"error": "Kullanıcı adı 3-64 karakter olmalı; harf, sayı, nokta, @, _ veya - içerebilir."})
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Kullanıcı adı 3-64 karakter olmalı; harf, sayı, nokta, @, _ veya - içerebilir."},
+            )
         if body.role not in ctx.ROLE_DEFINITIONS:
             return JSONResponse(status_code=400, content={"error": "Geçersiz rol."})
         if not 12 <= len(body.password) <= 512:
@@ -270,17 +269,26 @@ def create_auth_router(ctx) -> APIRouter:
         return {"ok": True}
 
     @router.post("/api/admin/users/{user_id}")
-    def api_update_user(user_id: int, body: UpdateUserRequest, user: dict = Depends(ctx.require_permission("users.manage"))):
+    def api_update_user(
+        user_id: int, body: UpdateUserRequest, user: dict = Depends(ctx.require_permission("users.manage"))
+    ):
         conn = ctx.db_conn()
         target = conn.execute("SELECT id, role, active FROM users WHERE id=?", (user_id,)).fetchone()
         if target is None:
             conn.close()
             return JSONResponse(status_code=404, content={"error": "Kullanıcı bulunamadı."})
-        if ((body.role is not None and body.role != "admin") or body.active is False) and target[1] == "admin" and bool(target[2]):
+        if (
+            ((body.role is not None and body.role != "admin") or body.active is False)
+            and target[1] == "admin"
+            and bool(target[2])
+        ):
             admin_count = conn.execute("SELECT COUNT(*) FROM users WHERE role='admin' AND active=1").fetchone()[0]
             if admin_count <= 1:
                 conn.close()
-                return JSONResponse(status_code=400, content={"error": "Son admin hesabı devre dışı bırakılamaz veya rütbesi düşürülemez."})
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "Son admin hesabı devre dışı bırakılamaz veya rütbesi düşürülemez."},
+                )
         if body.role is not None:
             if body.role not in ctx.ROLE_DEFINITIONS:
                 conn.close()

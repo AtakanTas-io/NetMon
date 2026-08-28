@@ -1,20 +1,21 @@
 import concurrent.futures
+import datetime
+import gc
+import json
 import logging
 import math
-import datetime
 import socket
-import json
 import threading
 import time
-import gc
 
 # DÜZELTME: Bu modüller (wmi, pythoncom = pywin32) eksikse eskiden
 # import anında ServerException fırlatıp TÜM backend'in (server.py) açılışını
 # çökertiyordu — sadece WMI özelliği değil. Artık eksikse WMI taraması net bir
 # hata mesajıyla devre dışı kalır, uygulamanın geri kalanı çalışmaya devam eder.
 try:
-    import wmi
     import pythoncom
+    import wmi
+
     WMI_AVAILABLE = True
 except ImportError:
     wmi = None
@@ -23,6 +24,7 @@ except ImportError:
 
 try:
     import winrm
+
     WINRM_AVAILABLE = True
 except ImportError:
     winrm = None
@@ -31,7 +33,7 @@ except ImportError:
 # --- LOGGING YAPILANDIRMASI ---
 logger = logging.getLogger("WMIScanner")
 logger.setLevel(logging.INFO)
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 if not logger.handlers:
     ch = logging.StreamHandler()
     ch.setFormatter(formatter)
@@ -44,9 +46,15 @@ def classify_wmi_error(error: object) -> tuple[str, str]:
     """Normalize localized COM/WMI failures into stable diagnostic codes."""
     message = str(error)
     lowered = message.casefold()
-    if any(marker in lowered for marker in (
-        "access is denied", "erişim engellendi", "0x80070005", "-2147024891",
-    )):
+    if any(
+        marker in lowered
+        for marker in (
+            "access is denied",
+            "erişim engellendi",
+            "0x80070005",
+            "-2147024891",
+        )
+    ):
         return "access_denied", "Erişim Engellendi (Access Denied)"
     if "rpc" in lowered or "0x800706ba" in lowered or "-2147023174" in lowered:
         return "rpc_unavailable", "Sunucu Kullanılamıyor veya Kapalı (RPC Error)"
@@ -104,6 +112,7 @@ def _ensure_com_initialized():
         pythoncom.CoInitialize()
         _com_state.initialized = True
 
+
 def _local_ips() -> set:
     """Bu makinenin sahip olduğu tüm IPv4 adreslerini döndürür (localhost dahil)."""
     ips = {"127.0.0.1", "localhost", "::1"}
@@ -116,6 +125,7 @@ def _local_ips() -> set:
         pass
     try:
         import psutil
+
         for addrs in psutil.net_if_addrs().values():
             for a in addrs:
                 if a.family == socket.AF_INET:
@@ -129,6 +139,7 @@ class WmiNetworkScanner:
     """
     WMI/DCOM ve WinRM/CIM destekli paralel Windows envanter tarayıcısı.
     """
+
     MANAGEMENT_PORTS = (135, 445, 5985, 5986)
 
     def test_access(self, ip: str) -> dict:
@@ -147,10 +158,12 @@ class WmiNetworkScanner:
             },
         }
         if ip not in _local_ips() and not ports:
-            base.update({
-                "error_code": "management_ports_closed",
-                "error_message": "Windows yönetim portlarına erişilemiyor.",
-            })
+            base.update(
+                {
+                    "error_code": "management_ports_closed",
+                    "error_message": "Windows yönetim portlarına erişilemiyor.",
+                }
+            )
             return base
 
         if ip not in _local_ips() and (5985 in ports or 5986 in ports) and WINRM_AVAILABLE:
@@ -181,10 +194,12 @@ class WmiNetworkScanner:
                 base["diagnostics"]["winrm_failure"] = explain_wmi_error(exc, "winrm_auth_or_session")
 
         if not WMI_AVAILABLE:
-            base.update({
-                "error_code": "wmi_dependency_missing",
-                "error_message": "WinRM testi başarısız ve WMI bağımlılığı kurulu değil.",
-            })
+            base.update(
+                {
+                    "error_code": "wmi_dependency_missing",
+                    "error_message": "WinRM testi başarısız ve WMI bağımlılığı kurulu değil.",
+                }
+            )
             return base
 
         base["diagnostics"]["transport_attempts"].append("Local WMI" if ip in _local_ips() else "WMI/DCOM")
@@ -206,10 +221,12 @@ class WmiNetworkScanner:
             }
         except Exception as exc:
             failure = explain_wmi_error(exc, "wmi_dcom_authorization")
-            base.update({
-                "error_code": failure["error_code"],
-                "error_message": failure["summary"],
-            })
+            base.update(
+                {
+                    "error_code": failure["error_code"],
+                    "error_message": failure["summary"],
+                }
+            )
             base["diagnostics"]["failure"] = failure
             return base
 
@@ -254,7 +271,7 @@ class WmiNetworkScanner:
             operation_timeout_sec=max(5, self.timeout - 2),
             read_timeout_sec=self.timeout,
         )
-        script = r'''
+        script = r"""
 $ErrorActionPreference = 'Stop'
 $cs = Get-CimInstance Win32_ComputerSystem
 $os = Get-CimInstance Win32_OperatingSystem
@@ -321,18 +338,20 @@ try {
         antivirus = $antivirus
     }
 } | ConvertTo-Json -Depth 7 -Compress
-'''
+"""
         response = session.run_ps(script)
         if response.status_code != 0:
             error = (response.std_err or b"").decode("utf-8", "ignore").strip()
             raise RuntimeError(error or f"WinRM status {response.status_code}")
         payload = json.loads((response.std_out or b"").decode("utf-8-sig", "ignore"))
-        payload.update({
-            "ip_address": ip,
-            "status": "Success",
-            "inventory_source": "WinRM/CIM",
-            "last_scanned_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        })
+        payload.update(
+            {
+                "ip_address": ip,
+                "status": "Success",
+                "inventory_source": "WinRM/CIM",
+                "last_scanned_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            }
+        )
         return payload
 
     def _get_software_from_registry(self, c_wmi):
@@ -341,7 +360,7 @@ try {
         try:
             # StdRegProv üzerinden uzak kayıt defteri (HKLM) sorgusu
             registry = c_wmi.StdRegProv
-            hDefKey = 0x80000002 # HKEY_LOCAL_MACHINE
+            hDefKey = 0x80000002  # HKEY_LOCAL_MACHINE
             uninstall_paths = (
                 r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
                 r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
@@ -360,9 +379,7 @@ try {
                     if res_name != 0 or not normalized_name or normalized_name.casefold() in seen:
                         continue
                     seen.add(normalized_name.casefold())
-                    _, version = registry.GetStringValue(
-                        hDefKey=hDefKey, sSubKeyName=path, sValueName="DisplayVersion"
-                    )
+                    _, version = registry.GetStringValue(hDefKey=hDefKey, sSubKeyName=path, sValueName="DisplayVersion")
                     software_list.append({"name": normalized_name, "version": version or None})
         except Exception as e:
             logger.debug(f"Registry okuma hatası: {e}")
@@ -375,7 +392,7 @@ try {
             "status": "Failed",
             "error_message": "",
             "error_code": "",
-            "last_scanned_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
+            "last_scanned_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         }
 
         open_ports = self._probe_management_ports(ip)
@@ -398,7 +415,9 @@ try {
 
         if ip not in _local_ips() and (5985 in open_ports or 5986 in open_ports):
             try:
-                device_data["diagnostics"]["transport_attempts"].append("WinRM HTTPS" if 5986 in open_ports else "WinRM HTTP")
+                device_data["diagnostics"]["transport_attempts"].append(
+                    "WinRM HTTPS" if 5986 in open_ports else "WinRM HTTP"
+                )
                 winrm_data = self._scan_via_winrm(ip, open_ports)
                 if winrm_data:
                     winrm_data.setdefault("diagnostics", device_data["diagnostics"])["selected_transport"] = "WinRM"
@@ -413,8 +432,7 @@ try {
         if not WMI_AVAILABLE:
             device_data["error_code"] = "wmi_dependency_missing"
             device_data["error_message"] = (
-                "WinRM ile envanter alınamadı ve WMI desteği kurulu değil "
-                "(pywin32/wmi paketleri eksik)."
+                "WinRM ile envanter alınamadı ve WMI desteği kurulu değil (pywin32/wmi paketleri eksik)."
             )
             return device_data
 
@@ -443,7 +461,7 @@ try {
             cs = connection.Win32_ComputerSystem()[0]
             os_info = connection.Win32_OperatingSystem()[0]
             cpu = connection.Win32_Processor()[0]
-            
+
             try:
                 gpu_list = [g.Name for g in connection.Win32_VideoController()]
                 gpu_name = gpu_list[0] if gpu_list else "Bilinmiyor"
@@ -468,19 +486,23 @@ try {
             for disk in connection.Win32_LogicalDisk(DriveType=3):
                 total_gb = round(int(disk.Size) / (1024**3), 2) if disk.Size else 0
                 free_gb = round(int(disk.FreeSpace) / (1024**3), 2) if disk.FreeSpace else 0
-                disks.append({
-                    "drive_letter": disk.DeviceID,
-                    "total_gb": total_gb,
-                    "free_gb": free_gb,
-                    "used_gb": round(total_gb - free_gb, 2)
-                })
+                disks.append(
+                    {
+                        "drive_letter": disk.DeviceID,
+                        "total_gb": total_gb,
+                        "free_gb": free_gb,
+                        "used_gb": round(total_gb - free_gb, 2),
+                    }
+                )
 
             # --- YAZILIM BİLGİLERİ ---
             try:
                 if ip in _local_ips():
                     registry_connection = wmi.WMI(namespace=r"root\default")
                 elif self.username and self.password:
-                    registry_connection = wmi.WMI(ip, namespace=r"root\default", user=self.username, password=self.password)
+                    registry_connection = wmi.WMI(
+                        ip, namespace=r"root\default", user=self.username, password=self.password
+                    )
                 else:
                     registry_connection = wmi.WMI(ip, namespace=r"root\default")
                 software_list = self._get_software_from_registry(registry_connection)
@@ -489,17 +511,19 @@ try {
 
             # --- GÜVENLİK BİLGİLERİ ---
             active_user = cs.UserName or "Oturum Açılmamış"
-            
+
             # Antivirüs (ROOT\SecurityCenter2)
             av_name = "Bulunamadı"
             try:
                 if ip in _local_ips():
                     sec_conn = wmi.WMI(namespace=r"root\SecurityCenter2")
                 elif self.username and self.password:
-                    sec_conn = wmi.WMI(ip, namespace=r"root\SecurityCenter2", user=self.username, password=self.password)
+                    sec_conn = wmi.WMI(
+                        ip, namespace=r"root\SecurityCenter2", user=self.username, password=self.password
+                    )
                 else:
                     sec_conn = wmi.WMI(ip, namespace=r"root\SecurityCenter2")
-                
+
                 av_products = sec_conn.AntiVirusProduct()
                 if av_products:
                     av_name = ", ".join([av.displayName for av in av_products])
@@ -511,39 +535,39 @@ try {
             fw_status = "Bilinmiyor"
 
             # Verileri Topla
-            device_data.update({
-                "status": "Success",
-                "inventory_source": "WMI/DCOM" if ip not in _local_ips() else "Local WMI",
-                "computer_name": cs.Name,
-                "system": {
+            device_data.update(
+                {
+                    "status": "Success",
+                    "inventory_source": "WMI/DCOM" if ip not in _local_ips() else "Local WMI",
                     "computer_name": cs.Name,
-                    "pc_system_type": getattr(cs, "PCSystemType", None),
-                    "domain_role": getattr(cs, "DomainRole", None),
-                    "os_product_type": getattr(os_info, "ProductType", None),
-                    "chassis_types": chassis_types,
-                },
-                "hardware": {
-                    "motherboard_maker": mb_maker,
-                    "motherboard_model": mb_model,
-                    "cpu_model": cpu.Name.strip(),
-                    "cores": cpu.NumberOfLogicalProcessors or cpu.NumberOfCores,
-                    "ram_gb": math.ceil(int(cs.TotalPhysicalMemory) / (1024**3)),
-                    "gpu": gpu_name,
-                },
-                "storage": disks,
-                "software": {
-                    "os_name": os_info.Caption,
-                    "os_build": os_info.BuildNumber,
-                    "os_architecture": os_info.OSArchitecture,
-                    "installed_programs": software_list,
-                    "product_key": getattr(connection.SoftwareLicensingService()[0], "OA3xOriginalProductKey", None) if connection.SoftwareLicensingService() else None
-                },
-                "security": {
-                    "active_user": active_user,
-                    "firewall": fw_status,
-                    "antivirus": av_name
+                    "system": {
+                        "computer_name": cs.Name,
+                        "pc_system_type": getattr(cs, "PCSystemType", None),
+                        "domain_role": getattr(cs, "DomainRole", None),
+                        "os_product_type": getattr(os_info, "ProductType", None),
+                        "chassis_types": chassis_types,
+                    },
+                    "hardware": {
+                        "motherboard_maker": mb_maker,
+                        "motherboard_model": mb_model,
+                        "cpu_model": cpu.Name.strip(),
+                        "cores": cpu.NumberOfLogicalProcessors or cpu.NumberOfCores,
+                        "ram_gb": math.ceil(int(cs.TotalPhysicalMemory) / (1024**3)),
+                        "gpu": gpu_name,
+                    },
+                    "storage": disks,
+                    "software": {
+                        "os_name": os_info.Caption,
+                        "os_build": os_info.BuildNumber,
+                        "os_architecture": os_info.OSArchitecture,
+                        "installed_programs": software_list,
+                        "product_key": getattr(connection.SoftwareLicensingService()[0], "OA3xOriginalProductKey", None)
+                        if connection.SoftwareLicensingService()
+                        else None,
+                    },
+                    "security": {"active_user": active_user, "firewall": fw_status, "antivirus": av_name},
                 }
-            })
+            )
             device_data["diagnostics"]["selected_transport"] = "Local WMI" if ip in _local_ips() else "WMI/DCOM"
             logger.info(f"[{ip}] Tarama başarılı: {cs.Name}")
 
@@ -576,7 +600,12 @@ try {
                     slots[index] = self._scan_single_ip(ip)
                 except Exception as exc:
                     logger.error(f"[{ip}] Beklenmedik thread hatası: {exc}")
-                    slots[index] = {"ip_address": ip, "status": "Failed", "error_code": "thread_exception", "error_message": str(exc)}
+                    slots[index] = {
+                        "ip_address": ip,
+                        "status": "Failed",
+                        "error_code": "thread_exception",
+                        "error_message": str(exc),
+                    }
 
         threads = []
         for index, ip in enumerate(ip_list):
@@ -590,12 +619,15 @@ try {
 
         results = []
         for ip, data in zip(ip_list, slots):
-            results.append(data or {
-                "ip_address": ip,
-                "status": "Failed",
-                "error_code": "timeout",
-                "error_message": f"WMI/WinRM taraması {self.timeout} saniye içinde tamamlanmadı.",
-            })
-                    
+            results.append(
+                data
+                or {
+                    "ip_address": ip,
+                    "status": "Failed",
+                    "error_code": "timeout",
+                    "error_message": f"WMI/WinRM taraması {self.timeout} saniye içinde tamamlanmadı.",
+                }
+            )
+
         logger.info("Tarama işlemi tamamlandı.")
         return results

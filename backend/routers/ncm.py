@@ -42,8 +42,8 @@ def create_ncm_router(ctx) -> APIRouter:
         ip = req.ip.strip()
         try:
             parsed_ip = ipaddress.ip_address(ip)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Geçerli bir IP adresi gereklidir.")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Geçerli bir IP adresi gereklidir.") from exc
         if not ctx._is_allowed_inventory_ip(parsed_ip):
             raise HTTPException(status_code=400, detail="NCM yalnızca yerel/özel ağ cihazlarında kullanılabilir.")
 
@@ -65,7 +65,7 @@ def create_ncm_router(ctx) -> APIRouter:
                     f"ip={ip} fetch_failed={str(exc)[:180]}",
                     success=False,
                 )
-                raise HTTPException(status_code=503, detail=f"Gerçek cihaz konfigürasyonu alınamadı: {exc}")
+                raise HTTPException(status_code=503, detail=f"Gerçek cihaz konfigürasyonu alınamadı: {exc}") from exc
 
         if len(config_text.encode("utf-8")) > 2_000_000:
             raise HTTPException(status_code=413, detail="Konfigürasyon 2 MB sınırını aşıyor.")
@@ -157,7 +157,7 @@ def create_ncm_router(ctx) -> APIRouter:
                 lineterm="",
             )
         )
-        parsed_lines = []
+        parsed_lines: list[dict[str, object]] = []
         additions = deletions = old_line = new_line = 0
         for line in diff:
             if line.startswith(("---", "+++")):

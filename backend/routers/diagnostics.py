@@ -87,32 +87,52 @@ def create_diagnostics_router(ctx) -> APIRouter:
         lower_out = output.lower()
         if any(
             marker in lower_out
-            for marker in ("could not find host", "bilinen bir ana bilgisayar", "unknown host", "name or service not known")
+            for marker in (
+                "could not find host",
+                "bilinen bir ana bilgisayar",
+                "unknown host",
+                "name or service not known",
+            )
         ):
             return {"error": f"'{target}' adresi çözümlenemedi (DNS hatası). IP adresini veya alan adını kontrol edin."}
 
         times = [float(match) for match in _PING_TIME_RE.findall(output)]
         if not times:
             return {
-                "success": False, "alive": False, "received": 0, "sent": count,
-                "times": [], "average": None, "avg_rtt": None, "loss": 100,
+                "success": False,
+                "alive": False,
+                "received": 0,
+                "sent": count,
+                "times": [],
+                "average": None,
+                "avg_rtt": None,
+                "loss": 100,
                 "packet_loss": 100,
                 "error": f"'{target}' adresinden yanıt alınamadı (zaman aşımı / erişilemiyor).",
             }
         average = sum(times) / len(times)
         loss = max(0, int(round(((count - len(times)) / count) * 100)))
         return {
-            "success": True, "alive": True, "received": len(times), "sent": count,
-            "times": [round(value, 1) for value in times], "average": round(average, 1),
-            "avg_rtt": round(average, 1), "loss": loss, "packet_loss": loss,
+            "success": True,
+            "alive": True,
+            "received": len(times),
+            "sent": count,
+            "times": [round(value, 1) for value in times],
+            "average": round(average, 1),
+            "avg_rtt": round(average, 1),
+            "loss": loss,
+            "packet_loss": loss,
             "quality": "cok_iyi" if average < 30 else "iyi" if average < 80 else "orta" if average < 150 else "kotu",
-            "min": round(min(times), 1), "max": round(max(times), 1),
+            "min": round(min(times), 1),
+            "max": round(max(times), 1),
         }
 
     @router.post("/api/tools/speedtest")
     def run_speedtest_api(user: dict = Depends(ctx.get_current_user)):
         if ctx.speedtest is None:
-            return {"error": "Sunucuda 'speedtest-cli' kurulu değil. Lütfen terminalden 'pip install speedtest-cli' çalıştırın."}
+            return {
+                "error": "Sunucuda 'speedtest-cli' kurulu değil. Lütfen terminalden 'pip install speedtest-cli' çalıştırın."
+            }
         try:
             test = ctx.speedtest.Speedtest()
             test.get_best_server()
@@ -129,8 +149,11 @@ def create_diagnostics_router(ctx) -> APIRouter:
             conn.commit()
             conn.close()
             return {
-                "download": round(download, 2), "upload": round(upload, 2),
-                "ping": round(ping, 2), "server": server_name, "ts": timestamp,
+                "download": round(download, 2),
+                "upload": round(upload, 2),
+                "ping": round(ping, 2),
+                "server": server_name,
+                "ts": timestamp,
             }
         except Exception as exc:
             return {"error": f"Hız testi başarısız: {exc}"}
@@ -143,10 +166,7 @@ def create_diagnostics_router(ctx) -> APIRouter:
             (limit,),
         ).fetchall()
         conn.close()
-        return [
-            {"ts": row[0], "download": row[1], "upload": row[2], "ping": row[3], "server": row[4]}
-            for row in rows
-        ]
+        return [{"ts": row[0], "download": row[1], "upload": row[2], "ping": row[3], "server": row[4]} for row in rows]
 
     @router.post("/api/tools/portscan")
     def run_portscan(req: PortScanRequest, user: dict = Depends(ctx.require_permission("diagnostics.run"))):
@@ -159,7 +179,10 @@ def create_diagnostics_router(ctx) -> APIRouter:
         except (OSError, ValueError):
             return JSONResponse(status_code=400, content={"error": "Hedef çözümlenemedi."})
         if not ctx._is_allowed_inventory_ip(parsed_target):
-            return JSONResponse(status_code=400, content={"error": "Port taraması yalnızca yerel/özel IPv4 hedeflerinde kullanılabilir."})
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Port taraması yalnızca yerel/özel IPv4 hedeflerinde kullanılabilir."},
+            )
 
         ports = [21, 22, 23, 25, 53, 80, 110, 135, 139, 143, 443, 445, 993, 995, 3306, 3389, 8080]
         if req.preset == "web":
@@ -186,14 +209,19 @@ def create_diagnostics_router(ctx) -> APIRouter:
             open_ports = [result for result in executor.map(scan_port, ports) if result]
         ctx._audit(user["username"], "portscan", f"target={resolved_target} preset={req.preset} open={len(open_ports)}")
         return {
-            "target": target, "ip": resolved_target, "open": open_ports,
-            "closed": len(ports) - len(open_ports), "scanned": len(ports),
+            "target": target,
+            "ip": resolved_target,
+            "open": open_ports,
+            "closed": len(ports) - len(open_ports),
+            "scanned": len(ports),
         }
 
     @router.post("/api/tools/deep-scan")
     def run_deep_scan(user: dict = Depends(ctx.require_permission("diagnostics.run"))):
         devices = ctx._devices_cache.get("data") or []
-        targets = [device for device in devices if device.get("ip") and device.get("status") in ("online", "discovered")]
+        targets = [
+            device for device in devices if device.get("ip") and device.get("status") in ("online", "discovered")
+        ]
 
         def scan_one(device):
             ip = device["ip"]
@@ -215,9 +243,11 @@ def create_diagnostics_router(ctx) -> APIRouter:
             with ctx.concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
                 open_ports = [result for result in executor.map(scan_port, COMMON_TOP_PORTS) if result]
             return {
-                "ip": ip, "mac": device.get("mac"),
+                "ip": ip,
+                "mac": device.get("mac"),
                 "hostname": device.get("hostname") or device.get("friendly_name"),
-                "device_type": device.get("device_type"), "open_ports": open_ports,
+                "device_type": device.get("device_type"),
+                "open_ports": open_ports,
             }
 
         with ctx.concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
@@ -250,8 +280,10 @@ def create_diagnostics_router(ctx) -> APIRouter:
                     ms_match = re.findall(r"(\d+)\s*ms", line)
                     hops.append(
                         {
-                            "hop": int(parts[0]), "ip": ip_match.group() if ip_match else None,
-                            "ms": int(ms_match[0]) if ms_match else None, "timeout": "*" in line,
+                            "hop": int(parts[0]),
+                            "ip": ip_match.group() if ip_match else None,
+                            "ms": int(ms_match[0]) if ms_match else None,
+                            "timeout": "*" in line,
                         }
                     )
             return {"hops": hops}
@@ -262,7 +294,10 @@ def create_diagnostics_router(ctx) -> APIRouter:
     def run_network_cmd_api(req: NetworkCmdRequest, user: dict = Depends(ctx.get_current_user)):
         key = req.action.strip().lower()
         if key in {"release", "renew", "flushdns"} and user.get("role") != "admin":
-            return JSONResponse(status_code=403, content={"error": "Ağ yapılandırmasını değiştiren komutlar için yönetici yetkisi gerekir."})
+            return JSONResponse(
+                status_code=403,
+                content={"error": "Ağ yapılandırmasını değiştiren komutlar için yönetici yetkisi gerekir."},
+            )
         if key == "nslookup":
             target = req.target.strip() or "google.com"
             record_type = req.record_type.strip().upper()
@@ -297,8 +332,12 @@ def create_diagnostics_router(ctx) -> APIRouter:
             output = (result.stdout or "") + ("\n" + result.stderr if result.stderr else "")
             ctx._audit(user["username"], "network_cmd", f"action={key} target={req.target}")
             return {
-                "action": key, "label": label, "command": " ".join(cmd),
-                "output": output.strip(), "returncode": result.returncode, "ts": ctx.time.time(),
+                "action": key,
+                "label": label,
+                "command": " ".join(cmd),
+                "output": output.strip(),
+                "returncode": result.returncode,
+                "ts": ctx.time.time(),
             }
         except Exception as exc:
             return {"error": f"Komut çalıştırılamadı: {exc}"}
@@ -309,8 +348,12 @@ def create_diagnostics_router(ctx) -> APIRouter:
             return ctx.diag.run_troubleshooting_wizard(ctx.PING_TARGET, ctx.DNS_DOMAIN, ctx.PING_COUNT)
         except Exception as exc:
             return {
-                "adapter": False, "gateway": False, "dns": False, "internet": False,
-                "issue": "Teşhis çalıştırılamadı", "recommendation": str(exc),
+                "adapter": False,
+                "gateway": False,
+                "dns": False,
+                "internet": False,
+                "issue": "Teşhis çalıştırılamadı",
+                "recommendation": str(exc),
             }
 
     @router.get("/api/flow")

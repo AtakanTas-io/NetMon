@@ -5,16 +5,24 @@ ROLE_DEFINITIONS = {
     "noc_operator": {
         "label": "NOC Operatörü",
         "permissions": {
-            "inventory.scan", "discovery.schedule.manage", "devices.manage",
-            "diagnostics.run", "logs.manage", "ncm.manage", "reports.view",
+            "inventory.scan",
+            "discovery.schedule.manage",
+            "devices.manage",
+            "diagnostics.run",
+            "logs.manage",
+            "ncm.manage",
+            "reports.view",
             "locations.view",
         },
     },
     "inventory_specialist": {
         "label": "Envanter Uzmanı",
         "permissions": {
-            "inventory.scan", "devices.manage", "reports.view",
-            "locations.view", "locations.manage",
+            "inventory.scan",
+            "devices.manage",
+            "reports.view",
+            "locations.view",
+            "locations.manage",
         },
     },
     "security_analyst": {

@@ -50,20 +50,24 @@ def create_ipam_router(ctx) -> APIRouter:
         except Exception:
             network_context = {}
 
-        observed_ips = []
+        observed_ips: list[ipaddress.IPv4Address] = []
         for device in devices:
             try:
-                candidate = ipaddress.ip_address(device.get("ip") or "")
-                if candidate.version == 4 and not candidate.is_loopback and not candidate.is_multicast:
-                    observed_ips.append(candidate)
+                observed_ip = ipaddress.ip_address(device.get("ip") or "")
+                if (
+                    isinstance(observed_ip, ipaddress.IPv4Address)
+                    and not observed_ip.is_loopback
+                    and not observed_ip.is_multicast
+                ):
+                    observed_ips.append(observed_ip)
             except ValueError:
                 continue
 
-        network = None
+        network: ipaddress.IPv4Network | None = None
         subnet_source = None
         try:
             context_network = ipaddress.ip_network(network_context.get("cidr") or "", strict=False)
-            if context_network.version == 4:
+            if isinstance(context_network, ipaddress.IPv4Network):
                 network = context_network
                 subnet_source = "local_interface"
         except ValueError:
@@ -71,9 +75,7 @@ def create_ipam_router(ctx) -> APIRouter:
 
         if observed_ips and (network is None or not any(ip in network for ip in observed_ips)):
             buckets = collections.Counter(
-                ipaddress.ip_network(f"{ip}/24", strict=False)
-                for ip in observed_ips
-                if ip.is_private
+                ipaddress.IPv4Network(f"{ip}/24", strict=False) for ip in observed_ips if ip.is_private
             )
             if buckets:
                 network = buckets.most_common(1)[0][0]
@@ -90,9 +92,9 @@ def create_ipam_router(ctx) -> APIRouter:
             effective_gateway = None
             gateway_candidates = [gateway, network_context.get("gateway")]
             gateway_candidates.extend(device.get("ip") for device in devices if device.get("is_gateway"))
-            for candidate in gateway_candidates:
+            for gateway_candidate in gateway_candidates:
                 try:
-                    gateway_ip = ipaddress.ip_address(candidate or "")
+                    gateway_ip = ipaddress.IPv4Address(gateway_candidate or "")
                     if gateway_ip in network:
                         effective_gateway = str(gateway_ip)
                         used_set.add(gateway_ip)
@@ -116,23 +118,27 @@ def create_ipam_router(ctx) -> APIRouter:
         elif utilization_pct >= 75:
             status = "warning"
 
-        subnets = [] if network is None else [
-            {
-                "cidr": str(network),
-                "source": subnet_source,
-                "gateway": effective_gateway,
-                "total_hosts": total_ips,
-                "used_hosts": used_ips,
-                "free_hosts": free_ips,
-                "free_hosts_are_observed": False,
-                "reserved_hosts": reserved_hosts,
-                "utilization_pct": utilization_pct,
-                "status": status,
-                "dhcp_range": None,
-                "dns_servers": network_context.get("dns_servers") or [],
-                "note": "Boş IP sayısı son keşifte gözlenmeyen adresleri gösterir; DHCP tahsis kaydı değildir.",
-            }
-        ]
+        subnets = (
+            []
+            if network is None
+            else [
+                {
+                    "cidr": str(network),
+                    "source": subnet_source,
+                    "gateway": effective_gateway,
+                    "total_hosts": total_ips,
+                    "used_hosts": used_ips,
+                    "free_hosts": free_ips,
+                    "free_hosts_are_observed": False,
+                    "reserved_hosts": reserved_hosts,
+                    "utilization_pct": utilization_pct,
+                    "status": status,
+                    "dhcp_range": None,
+                    "dns_servers": network_context.get("dns_servers") or [],
+                    "note": "Boş IP sayısı son keşifte gözlenmeyen adresleri gösterir; DHCP tahsis kaydı değildir.",
+                }
+            ]
+        )
 
         allocations = [
             {

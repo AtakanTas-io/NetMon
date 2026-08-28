@@ -179,13 +179,23 @@ def create_inventory_router(ctx) -> APIRouter:
         )
         try:
             ctx.manager.broadcast_threadsafe(
-                {"type": "scan_wave", "wave": 2, "label": "Wave 2: DNS, mDNS, SSDP, SNMP, NetBIOS & LLDP", "progress": 66}
+                {
+                    "type": "scan_wave",
+                    "wave": 2,
+                    "label": "Wave 2: DNS, mDNS, SSDP, SNMP, NetBIOS & LLDP",
+                    "progress": 66,
+                }
             )
             devices = ctx._discover_configured_devices()
             devices = ctx.enrich_devices(devices)
             devices = ctx.merge_scan_into_inventory(devices)
             ctx.manager.broadcast_threadsafe(
-                {"type": "scan_wave", "wave": 3, "label": "Wave 3: Service Probing & Unified Inventory", "progress": 100}
+                {
+                    "type": "scan_wave",
+                    "wave": 3,
+                    "label": "Wave 3: Service Probing & Unified Inventory",
+                    "progress": 100,
+                }
             )
             ctx._update_switch_mac_tables(devices)
             if devices:
@@ -220,7 +230,7 @@ def create_inventory_router(ctx) -> APIRouter:
             online_devices = [device for device in devices if device.get("status") == "online"]
             discovered_devices = [device for device in devices if device.get("status") == "discovered"]
             offline_devices = [device for device in devices if device.get("status") in {"offline", "stale"}]
-            by_type = {}
+            by_type: dict[str, int] = {}
             for device in devices:
                 device_type = device.get("type") or "unknown"
                 by_type[device_type] = by_type.get(device_type, 0) + 1
@@ -295,8 +305,19 @@ def create_inventory_router(ctx) -> APIRouter:
         ).fetchall()
         conn.close()
         keys = [
-            "asset_id", "hostname", "ip_address", "mac_address", "vendor", "device_type", "os_name",
-            "os_version", "status", "first_seen", "last_seen", "inventory_source", "completeness",
+            "asset_id",
+            "hostname",
+            "ip_address",
+            "mac_address",
+            "vendor",
+            "device_type",
+            "os_name",
+            "os_version",
+            "status",
+            "first_seen",
+            "last_seen",
+            "inventory_source",
+            "completeness",
         ]
         return {"assets": [dict(zip(keys, row)) for row in rows]}
 
@@ -327,8 +348,7 @@ def create_inventory_router(ctx) -> APIRouter:
         item["software"] = [
             dict(zip(["id", "name", "version", "publisher", "collected_at"], row))
             for row in conn.execute(
-                "SELECT id,name,version,publisher,collected_at FROM inventory_software "
-                "WHERE asset_id=? ORDER BY name",
+                "SELECT id,name,version,publisher,collected_at FROM inventory_software WHERE asset_id=? ORDER BY name",
                 (asset_id,),
             ).fetchall()
         ]
@@ -355,7 +375,17 @@ def create_inventory_router(ctx) -> APIRouter:
         conn.close()
         if not exists:
             raise HTTPException(status_code=404, detail="Varlık bulunamadı")
-        keys = ["asset_id", "asset_tag", "owner", "department", "location", "status", "warranty_until", "notes", "updated_at"]
+        keys = [
+            "asset_id",
+            "asset_tag",
+            "owner",
+            "department",
+            "location",
+            "status",
+            "warranty_until",
+            "notes",
+            "updated_at",
+        ]
         return dict(zip(keys, row)) if row else {"asset_id": asset_id}
 
     @router.put("/api/inventory/assets/{asset_id}/metadata")
@@ -381,9 +411,17 @@ def create_inventory_router(ctx) -> APIRouter:
             conn.execute(
                 "INSERT INTO asset_metadata(asset_id,asset_tag,owner,department,location,status,warranty_until,notes,updated_at) "
                 "VALUES(?,?,?,?,?,?,?,?,?)",
-                (asset_id, values.get("asset_tag"), values.get("owner"), values.get("department"),
-                 values.get("location"), values.get("status") or "managed", values.get("warranty_until"),
-                 values.get("notes"), now),
+                (
+                    asset_id,
+                    values.get("asset_tag"),
+                    values.get("owner"),
+                    values.get("department"),
+                    values.get("location"),
+                    values.get("status") or "managed",
+                    values.get("warranty_until"),
+                    values.get("notes"),
+                    now,
+                ),
             )
         else:
             current = dict(zip(fields, old))
@@ -391,8 +429,17 @@ def create_inventory_router(ctx) -> APIRouter:
             conn.execute(
                 "UPDATE asset_metadata SET asset_tag=?,owner=?,department=?,location=?,status=?,warranty_until=?,notes=?,updated_at=? "
                 "WHERE asset_id=?",
-                (merged["asset_tag"], merged["owner"], merged["department"], merged["location"],
-                 merged["status"], merged["warranty_until"], merged["notes"], now, asset_id),
+                (
+                    merged["asset_tag"],
+                    merged["owner"],
+                    merged["department"],
+                    merged["location"],
+                    merged["status"],
+                    merged["warranty_until"],
+                    merged["notes"],
+                    now,
+                    asset_id,
+                ),
             )
         conn.commit()
         conn.close()
