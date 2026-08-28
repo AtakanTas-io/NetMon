@@ -9,6 +9,7 @@
 - Kimlik doğrulama, oturum ve kullanıcı yönetimi uçları ayrı bir FastAPI router'ına taşındı.
 - Ayar doğrulama ve gizli değer yönetimi uçları ayrı bir FastAPI router'ına taşındı.
 - Envanter, cihaz tarama ve WMI/WinRM uçları ayrı bir FastAPI router'ına taşındı.
+- Ağ keşfi, topoloji ve tarama zamanlaması uçları ayrı bir FastAPI router'ına taşındı.
 - Trafik ekranına ölçüm kaynağı ve veri yaşı eklendi.
 - Sistem bileşenlerinin hazırlık durumunu döndüren API eklendi.
 - DHCP ve Active Directory ayarları kalıcı hale getirildi.
