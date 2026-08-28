@@ -32,13 +32,21 @@ def test_bind_failure_sets_monitor_error(monkeypatch):
 
 def test_non_bootreply_packet_is_ignored(monkeypatch):
     class FakeSocket:
-        def setsockopt(self, *args): pass
-        def bind(self, *args): pass
-        def settimeout(self, *args): pass
+        def setsockopt(self, *args):
+            pass
+
+        def bind(self, *args):
+            pass
+
+        def settimeout(self, *args):
+            pass
+
         def recvfrom(self, size):
             module._stop_event.set()
             return b"\x01ignored", ("10.0.0.3", 67)
-        def close(self): pass
+
+        def close(self):
+            pass
 
     module._stop_event.clear()
     monkeypatch.setattr(module.socket, "socket", lambda *a: FakeSocket())
@@ -48,13 +56,21 @@ def test_non_bootreply_packet_is_ignored(monkeypatch):
 
 def test_authorized_bootreply_updates_last_source_without_alert(monkeypatch):
     class FakeSocket:
-        def setsockopt(self, *args): pass
-        def bind(self, *args): pass
-        def settimeout(self, *args): pass
+        def setsockopt(self, *args):
+            pass
+
+        def bind(self, *args):
+            pass
+
+        def settimeout(self, *args):
+            pass
+
         def recvfrom(self, size):
             module._stop_event.set()
             return b"\x02offer", ("10.0.0.1", 67)
-        def close(self): pass
+
+        def close(self):
+            pass
 
     module._stop_event.clear()
     monkeypatch.setattr(module.socket, "socket", lambda *a: FakeSocket())
@@ -82,23 +98,39 @@ def test_stop_sets_event_and_running_false(monkeypatch):
 
 def test_rogue_offer_is_persisted_and_broadcast(monkeypatch):
     class FakeSocket:
-        def setsockopt(self, *args): pass
-        def bind(self, *args): pass
-        def settimeout(self, *args): pass
+        def setsockopt(self, *args):
+            pass
+
+        def bind(self, *args):
+            pass
+
+        def settimeout(self, *args):
+            pass
+
         def recvfrom(self, size):
             module._stop_event.set()
             return b"\x02offer", ("10.0.0.66", 67)
-        def close(self): pass
+
+        def close(self):
+            pass
 
     class FakeConnection:
-        def __init__(self): self.executed = []; self.committed = False
+        def __init__(self):
+            self.executed = []
+            self.committed = False
+
         def execute(self, sql, params):
             self.executed.append((sql, params))
             return SimpleNamespace(fetchone=lambda: None)
-        def commit(self): self.committed = True
-        def close(self): pass
+
+        def commit(self):
+            self.committed = True
+
+        def close(self):
+            pass
 
     import server
+
     connection = FakeConnection()
     events = []
     monkeypatch.setattr(server, "db_conn", lambda: connection)
@@ -113,10 +145,17 @@ def test_rogue_offer_is_persisted_and_broadcast(monkeypatch):
 
 def test_start_creates_daemon_thread(monkeypatch):
     created = []
+
     class FakeThread:
-        def __init__(self, target, daemon): created.append((target, daemon)); self.started = False
-        def is_alive(self): return False
-        def start(self): self.started = True
+        def __init__(self, target, daemon):
+            created.append((target, daemon))
+            self.started = False
+
+        def is_alive(self):
+            return False
+
+        def start(self):
+            self.started = True
 
     monkeypatch.setattr(module.threading, "Thread", FakeThread)
     monkeypatch.setattr(module, "_dhcp_thread", None)

@@ -1,5 +1,6 @@
-import pytest
 from types import SimpleNamespace
+
+import pytest
 import server
 from conftest import persistent_test_client
 
@@ -42,7 +43,11 @@ def test_operations_modules_expose_real_data_and_permission_guidance(isolated_se
     assert access.status_code == 200
     assert access.json()["is_admin"] is True
     assert {item["id"] for item in access.json()["capabilities"]} == {
-        "automatic_discovery", "reports", "configuration_backup", "security_posture", "locations"
+        "automatic_discovery",
+        "reports",
+        "configuration_backup",
+        "security_posture",
+        "locations",
     }
 
     report = client.get("/api/reports/operations", headers=headers)
@@ -69,7 +74,11 @@ def test_location_assignment_roundtrip(isolated_server):
         asset_id = conn.execute("SELECT asset_id FROM inventory_assets WHERE identity_key='mac:aa'").fetchone()[0]
         conn.commit()
 
-    saved = client.post("/api/locations/assign", headers=headers, json={"asset_id": asset_id, "location": "İstanbul > A Blok > Kat 3 > Kabinet 3A"})
+    saved = client.post(
+        "/api/locations/assign",
+        headers=headers,
+        json={"asset_id": asset_id, "location": "İstanbul > A Blok > Kat 3 > Kabinet 3A"},
+    )
     assert saved.status_code == 200
     summary = client.get("/api/locations/summary", headers=headers).json()
     assert summary["sites"][0]["location"] == "İstanbul > A Blok > Kat 3 > Kabinet 3A"
@@ -82,16 +91,41 @@ def test_ipam_calculates_subnets_and_detects_conflicts(isolated_server):
 
     # Seed devices with an IP conflict (2 distinct MACs on same IP 192.168.1.50)
     server._devices_cache["data"] = [
-        {"ip": "192.168.1.1", "mac": "00:11:22:33:44:01", "hostname": "Gateway-Router", "type": "router", "status": "online", "is_gateway": True},
-        {"ip": "192.168.1.50", "mac": "AA:BB:CC:DD:EE:50", "hostname": "WS-FINANCE-01", "type": "pc", "status": "online"},
-        {"ip": "192.168.1.50", "mac": "FF:EE:DD:CC:BB:AA", "hostname": "ROGUE-CLONE", "type": "unknown", "status": "online"},
-        {"ip": "192.168.1.100", "mac": "AA:BB:CC:DD:EE:60", "hostname": "SRV-DB-01", "type": "server", "status": "online"},
+        {
+            "ip": "192.168.1.1",
+            "mac": "00:11:22:33:44:01",
+            "hostname": "Gateway-Router",
+            "type": "router",
+            "status": "online",
+            "is_gateway": True,
+        },
+        {
+            "ip": "192.168.1.50",
+            "mac": "AA:BB:CC:DD:EE:50",
+            "hostname": "WS-FINANCE-01",
+            "type": "pc",
+            "status": "online",
+        },
+        {
+            "ip": "192.168.1.50",
+            "mac": "FF:EE:DD:CC:BB:AA",
+            "hostname": "ROGUE-CLONE",
+            "type": "unknown",
+            "status": "online",
+        },
+        {
+            "ip": "192.168.1.100",
+            "mac": "AA:BB:CC:DD:EE:60",
+            "hostname": "SRV-DB-01",
+            "type": "server",
+            "status": "online",
+        },
     ]
 
     res = client.get("/api/ipam", headers=headers)
     assert res.status_code == 200
     data = res.json()
-    
+
     assert "subnets" in data
     assert len(data["subnets"]) >= 1
     subnet = data["subnets"][0]
@@ -112,9 +146,15 @@ def test_ipam_does_not_invent_network_dns_or_dhcp(isolated_server, monkeypatch):
     client, _, password_path = isolated_server
     headers = _bootstrap_admin(client, password_path)
     server._devices_cache["data"] = []
-    monkeypatch.setattr(server.diag, "get_network_context", lambda: {
-        "cidr": None, "gateway": None, "dns_servers": [],
-    })
+    monkeypatch.setattr(
+        server.diag,
+        "get_network_context",
+        lambda: {
+            "cidr": None,
+            "gateway": None,
+            "dns_servers": [],
+        },
+    )
     monkeypatch.setitem(server._last_status, "gateway", None)
 
     data = client.get("/api/ipam", headers=headers).json()
@@ -125,9 +165,15 @@ def test_ipam_does_not_invent_network_dns_or_dhcp(isolated_server, monkeypatch):
 def test_ipam_preserves_real_23_network_capacity(isolated_server, monkeypatch):
     client, _, password_path = isolated_server
     headers = _bootstrap_admin(client, password_path)
-    monkeypatch.setattr(server.diag, "get_network_context", lambda: {
-        "cidr": "10.33.214.0/23", "gateway": "10.33.215.254", "dns_servers": ["10.33.214.10"],
-    })
+    monkeypatch.setattr(
+        server.diag,
+        "get_network_context",
+        lambda: {
+            "cidr": "10.33.214.0/23",
+            "gateway": "10.33.215.254",
+            "dns_servers": ["10.33.214.10"],
+        },
+    )
     server._devices_cache["data"] = [
         {"ip": "10.33.214.20", "mac": "00:11:22:33:44:20", "hostname": "first-half", "status": "online"},
         {"ip": "10.33.215.20", "mac": "00:11:22:33:44:21", "hostname": "second-half", "status": "online"},
@@ -147,7 +193,8 @@ def test_ping_contract_contains_ui_and_diagnostics_fields(isolated_server, monke
     headers = _bootstrap_admin(client, password_path)
     completed = SimpleNamespace(
         stdout="Reply from 1.1.1.1: bytes=32 time=12ms TTL=57\nReply from 1.1.1.1: bytes=32 time=18ms TTL=57",
-        stderr="", returncode=0,
+        stderr="",
+        returncode=0,
     )
     monkeypatch.setattr(server.subprocess, "run", lambda *args, **kwargs: completed)
 
@@ -176,10 +223,15 @@ def test_top_talkers_returns_only_measured_traffic_and_real_sockets(isolated_ser
     client, _, password_path = isolated_server
     headers = _bootstrap_admin(client, password_path)
 
-    server._devices_cache["data"] = [{
-        "ip": "192.168.1.10", "mac": "11:22:33:44:55:66",
-        "hostname": "SRV-BACKUP", "type": "server", "status": "online",
-    }]
+    server._devices_cache["data"] = [
+        {
+            "ip": "192.168.1.10",
+            "mac": "11:22:33:44:55:66",
+            "hostname": "SRV-BACKUP",
+            "type": "server",
+            "status": "online",
+        }
+    ]
     conn = server.db_conn()
     conn.execute(
         "INSERT INTO traffic (ts, wifi_sent, wifi_recv, eth_sent, eth_recv) VALUES (?, ?, ?, ?, ?)",
@@ -189,8 +241,10 @@ def test_top_talkers_returns_only_measured_traffic_and_real_sockets(isolated_ser
     conn.close()
 
     fake_conn = SimpleNamespace(
-        status="ESTABLISHED", raddr=SimpleNamespace(ip="192.168.1.10", port=445),
-        laddr=SimpleNamespace(ip="192.168.1.5", port=50123), pid=123,
+        status="ESTABLISHED",
+        raddr=SimpleNamespace(ip="192.168.1.10", port=445),
+        laddr=SimpleNamespace(ip="192.168.1.5", port=50123),
+        pid=123,
     )
     monkeypatch.setattr(server.psutil, "net_connections", lambda kind="inet": [fake_conn])
     monkeypatch.setattr(server.psutil, "Process", lambda pid: SimpleNamespace(name=lambda: "sync-client.exe"))
@@ -286,7 +340,8 @@ def test_ncm_never_fabricates_config_when_ssh_is_unconfigured(isolated_server, m
     monkeypatch.setattr(server, "SSH_USERNAME", "")
 
     response = client.post(
-        "/api/ncm/backup", headers=headers,
+        "/api/ncm/backup",
+        headers=headers,
         json={"ip": "192.168.1.254"},
     )
     assert response.status_code == 503

@@ -64,7 +64,9 @@ def test_winrm_success_is_used_when_wmi_dependency_is_missing(monkeypatch):
     monkeypatch.setattr(module, "_local_ips", lambda: {"127.0.0.1"})
     monkeypatch.setattr(scanner, "_probe_management_ports", lambda ip: {5985})
     response = SimpleNamespace(status_code=0, std_out=b"HOST01", std_err=b"")
-    monkeypatch.setattr(module, "winrm", SimpleNamespace(Session=lambda *a, **k: SimpleNamespace(run_ps=lambda script: response)))
+    monkeypatch.setattr(
+        module, "winrm", SimpleNamespace(Session=lambda *a, **k: SimpleNamespace(run_ps=lambda script: response))
+    )
     result = scanner.test_access("10.0.0.9")
     assert result["status"] == "Success"
     assert result["computer_name"] == "HOST01"
@@ -75,7 +77,9 @@ def test_winrm_inventory_payload_is_parsed(monkeypatch):
     payload = b'{"computer_name":"PC1","hardware":{"ram_gb":16},"software":{"os_name":"Windows"}}'
     response = SimpleNamespace(status_code=0, std_out=payload, std_err=b"")
     monkeypatch.setattr(module, "WINRM_AVAILABLE", True)
-    monkeypatch.setattr(module, "winrm", SimpleNamespace(Session=lambda *a, **k: SimpleNamespace(run_ps=lambda script: response)))
+    monkeypatch.setattr(
+        module, "winrm", SimpleNamespace(Session=lambda *a, **k: SimpleNamespace(run_ps=lambda script: response))
+    )
     result = scanner._scan_via_winrm("10.0.0.9", {5985})
     assert result["status"] == "Success"
     assert result["inventory_source"] == "WinRM/CIM"
@@ -83,7 +87,9 @@ def test_winrm_inventory_payload_is_parsed(monkeypatch):
 
 def test_registry_software_is_deduplicated():
     class Registry:
-        def EnumKey(self, **kwargs): return 0, ["one", "two"]
+        def EnumKey(self, **kwargs):
+            return 0, ["one", "two"]
+
         def GetStringValue(self, sValueName, **kwargs):
             return (0, "App") if sValueName == "DisplayName" else (0, "1.0")
 
@@ -92,10 +98,13 @@ def test_registry_software_is_deduplicated():
 
 
 def test_local_wmi_inventory_success(monkeypatch):
-    gib = 1024 ** 3
+    gib = 1024**3
     computer = SimpleNamespace(
-        Name="PC1", UserName="DOMAIN\\user", TotalPhysicalMemory=str(16 * gib),
-        PCSystemType=2, DomainRole=1,
+        Name="PC1",
+        UserName="DOMAIN\\user",
+        TotalPhysicalMemory=str(16 * gib),
+        PCSystemType=2,
+        DomainRole=1,
     )
     os_info = SimpleNamespace(Caption="Windows 11", BuildNumber="26100", OSArchitecture="64-bit", ProductType=1)
     cpu = SimpleNamespace(Name=" Mock CPU ", NumberOfLogicalProcessors=8, NumberOfCores=4)
@@ -106,19 +115,36 @@ def test_local_wmi_inventory_success(monkeypatch):
     license_item = SimpleNamespace(OA3xOriginalProductKey=None)
 
     class Connection:
-        def Win32_ComputerSystem(self): return [computer]
-        def Win32_OperatingSystem(self): return [os_info]
-        def Win32_Processor(self): return [cpu]
-        def Win32_VideoController(self): return [gpu]
-        def Win32_BaseBoard(self): return [board]
-        def Win32_SystemEnclosure(self): return [enclosure]
-        def Win32_LogicalDisk(self, **kwargs): return [disk]
-        def SoftwareLicensingService(self): return [license_item]
+        def Win32_ComputerSystem(self):
+            return [computer]
+
+        def Win32_OperatingSystem(self):
+            return [os_info]
+
+        def Win32_Processor(self):
+            return [cpu]
+
+        def Win32_VideoController(self):
+            return [gpu]
+
+        def Win32_BaseBoard(self):
+            return [board]
+
+        def Win32_SystemEnclosure(self):
+            return [enclosure]
+
+        def Win32_LogicalDisk(self, **kwargs):
+            return [disk]
+
+        def SoftwareLicensingService(self):
+            return [license_item]
 
     class SecurityConnection:
-        def AntiVirusProduct(self): return [SimpleNamespace(displayName="Mock AV")]
+        def AntiVirusProduct(self):
+            return [SimpleNamespace(displayName="Mock AV")]
 
     calls = []
+
     def wmi_factory(*args, **kwargs):
         calls.append(kwargs.get("namespace"))
         if kwargs.get("namespace") == r"root\SecurityCenter2":
@@ -144,16 +170,16 @@ def test_wmi_access_failure_is_classified(monkeypatch):
     monkeypatch.setattr(module, "WMI_AVAILABLE", True)
     monkeypatch.setattr(module, "_local_ips", lambda: {"127.0.0.1"})
     monkeypatch.setattr(module, "_ensure_com_initialized", lambda: None)
-    monkeypatch.setattr(module, "wmi", SimpleNamespace(WMI=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("Access is denied"))))
+    monkeypatch.setattr(
+        module, "wmi", SimpleNamespace(WMI=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("Access is denied")))
+    )
     result = scanner.test_access("127.0.0.1")
     assert result["error_code"] == "access_denied"
 
 
 def test_local_wmi_access_test_succeeds(monkeypatch):
     scanner = module.WmiNetworkScanner()
-    connection = SimpleNamespace(
-        Win32_OperatingSystem=lambda fields: [SimpleNamespace(Caption="Windows 11")]
-    )
+    connection = SimpleNamespace(Win32_OperatingSystem=lambda fields: [SimpleNamespace(Caption="Windows 11")])
     monkeypatch.setattr(module, "WMI_AVAILABLE", True)
     monkeypatch.setattr(module, "_local_ips", lambda: {"127.0.0.1"})
     monkeypatch.setattr(module, "_ensure_com_initialized", lambda: None)
@@ -168,8 +194,11 @@ def test_management_port_probe_returns_only_open_ports(monkeypatch):
     monkeypatch.setattr(module, "_local_ips", lambda: {"127.0.0.1"})
 
     class Connection:
-        def __enter__(self): return self
-        def __exit__(self, *args): pass
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
 
     def create_connection(target, timeout):
         if target[1] in {135, 5985}:

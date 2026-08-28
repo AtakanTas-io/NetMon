@@ -1,5 +1,5 @@
-import socket
 import ipaddress
+import socket
 from types import SimpleNamespace
 
 import deep_discovery
@@ -8,9 +8,7 @@ import wmi_scanner
 
 
 def test_localized_wmi_access_denied_is_classified_correctly():
-    code, message = wmi_scanner.classify_wmi_error(
-        "SWbemLocator: Erişim engellendi. (-2147024891)"
-    )
+    code, message = wmi_scanner.classify_wmi_error("SWbemLocator: Erişim engellendi. (-2147024891)")
     assert code == "access_denied"
     assert message == "Erişim Engellendi (Access Denied)"
 
@@ -41,7 +39,9 @@ def test_winrm_still_runs_when_python_wmi_dependency_is_missing(monkeypatch):
 
 def test_quick_snapshot_honors_configured_ping_count(monkeypatch):
     diagnostics = netdiag_core.NetworkDiagnostics()
-    monkeypatch.setattr(diagnostics, "get_network_configuration", lambda: ("192.168.1.10", "192.168.1.1", ["192.168.1.1"]))
+    monkeypatch.setattr(
+        diagnostics, "get_network_configuration", lambda: ("192.168.1.10", "192.168.1.1", ["192.168.1.1"])
+    )
     calls = []
 
     def fake_ping(target, count=2):
@@ -86,6 +86,7 @@ def test_hostname_classification_keeps_specific_enterprise_types():
 
 
 # ---------- Cihaz tarama hızı ve doğruluğu ----------
+
 
 def test_run_command_uses_default_timeout_when_not_overridden(monkeypatch):
     diagnostics = netdiag_core.NetworkDiagnostics(command_timeout=5)

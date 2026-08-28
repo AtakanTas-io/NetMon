@@ -17,7 +17,9 @@ def test_windows_winrm_success_returns_measured_inventory(monkeypatch):
     payload = b'{"ComputerName":"PC1","Manufacturer":"ACME","Model":"M1","SerialNumber":"S1","OS":"Windows","OSVersion":"11","RAM_GB":16,"CPU":"CPU","Cores":8}'
     response = SimpleNamespace(status_code=0, std_out=payload)
     monkeypatch.setattr(module, "HAS_WINRM", True)
-    monkeypatch.setattr(module, "winrm", SimpleNamespace(Session=lambda *a, **k: SimpleNamespace(run_ps=lambda script: response)))
+    monkeypatch.setattr(
+        module, "winrm", SimpleNamespace(Session=lambda *a, **k: SimpleNamespace(run_ps=lambda script: response))
+    )
     result = module.scan_windows_deep("10.0.0.2", "user", "secret")
     assert result["status"] == "Success"
     assert result["hardware"]["ram_gb"] == 16
@@ -43,10 +45,17 @@ def test_ssh_username_is_required(monkeypatch):
 )
 def test_ssh_errors_are_classified(monkeypatch, message, code):
     class Client:
-        def load_system_host_keys(self): pass
-        def set_missing_host_key_policy(self, policy): pass
-        def connect(self, *a, **k): raise RuntimeError(message)
-        def close(self): pass
+        def load_system_host_keys(self):
+            pass
+
+        def set_missing_host_key_policy(self, policy):
+            pass
+
+        def connect(self, *a, **k):
+            raise RuntimeError(message)
+
+        def close(self):
+            pass
 
     monkeypatch.setattr(module, "HAS_PARAMIKO", True)
     monkeypatch.setattr(module, "paramiko", SimpleNamespace(SSHClient=Client, RejectPolicy=lambda: object()))
@@ -55,11 +64,20 @@ def test_ssh_errors_are_classified(monkeypatch, message, code):
 
 def test_ssh_success_reports_server_version(monkeypatch):
     class Client:
-        def load_system_host_keys(self): pass
-        def set_missing_host_key_policy(self, policy): pass
-        def connect(self, *a, **k): pass
-        def get_transport(self): return SimpleNamespace(remote_version="SSH-2.0-Mock")
-        def close(self): pass
+        def load_system_host_keys(self):
+            pass
+
+        def set_missing_host_key_policy(self, policy):
+            pass
+
+        def connect(self, *a, **k):
+            pass
+
+        def get_transport(self):
+            return SimpleNamespace(remote_version="SSH-2.0-Mock")
+
+        def close(self):
+            pass
 
     monkeypatch.setattr(module, "HAS_PARAMIKO", True)
     monkeypatch.setattr(module, "paramiko", SimpleNamespace(SSHClient=Client, RejectPolicy=lambda: object()))
@@ -77,9 +95,21 @@ def test_snmp_requires_explicit_community():
 @pytest.mark.parametrize(("ports", "scanner"), [([135], "windows"), ([22], "linux"), ([161], "snmp")])
 def test_decision_engine_selects_observed_protocol(monkeypatch, ports, scanner):
     called = []
-    monkeypatch.setattr(module, "scan_windows_deep", lambda *a, **k: called.append("windows") or {"status": "Success", "hardware": {"cpu": "x"}})
-    monkeypatch.setattr(module, "scan_linux_deep", lambda *a, **k: called.append("linux") or {"status": "Success", "hardware": {"cpu": "x"}})
-    monkeypatch.setattr(module, "scan_snmp_deep", lambda *a, **k: called.append("snmp") or {"status": "Success", "hardware": {"model": "x"}})
+    monkeypatch.setattr(
+        module,
+        "scan_windows_deep",
+        lambda *a, **k: called.append("windows") or {"status": "Success", "hardware": {"cpu": "x"}},
+    )
+    monkeypatch.setattr(
+        module,
+        "scan_linux_deep",
+        lambda *a, **k: called.append("linux") or {"status": "Success", "hardware": {"cpu": "x"}},
+    )
+    monkeypatch.setattr(
+        module,
+        "scan_snmp_deep",
+        lambda *a, **k: called.append("snmp") or {"status": "Success", "hardware": {"model": "x"}},
+    )
     result = module.integrate_discovery_flow({"ip": "10.0.0.2", "open_ports": ports})
     assert called == [scanner]
     assert result["deep_inventory"]["status"] == "Success"
@@ -106,21 +136,47 @@ def test_parallel_flow_preserves_input_order(monkeypatch):
 
 
 def test_linux_inventory_parses_hardware_packages_and_storage(monkeypatch):
-    outputs = iter([
-        "Linux host 6.8", "Ubuntu 24.04", "Mock CPU", "16384", "8", "ACME", "Model X", "SERIAL1",
-        "host1", "x86_64", "alice", "Status: active",
-        "/dev/sda1 107374182400 53687091200 53687091200 50% /",
-        "curl 8.0\npython3 3.12",
-    ])
+    outputs = iter(
+        [
+            "Linux host 6.8",
+            "Ubuntu 24.04",
+            "Mock CPU",
+            "16384",
+            "8",
+            "ACME",
+            "Model X",
+            "SERIAL1",
+            "host1",
+            "x86_64",
+            "alice",
+            "Status: active",
+            "/dev/sda1 107374182400 53687091200 53687091200 50% /",
+            "curl 8.0\npython3 3.12",
+        ]
+    )
+
     class Stream:
-        def __init__(self, value): self.value = value
-        def read(self): return self.value.encode()
+        def __init__(self, value):
+            self.value = value
+
+        def read(self):
+            return self.value.encode()
+
     class Client:
-        def load_system_host_keys(self): pass
-        def set_missing_host_key_policy(self, policy): pass
-        def connect(self, *a, **k): pass
-        def exec_command(self, command, timeout): return None, Stream(next(outputs)), Stream("")
-        def close(self): pass
+        def load_system_host_keys(self):
+            pass
+
+        def set_missing_host_key_policy(self, policy):
+            pass
+
+        def connect(self, *a, **k):
+            pass
+
+        def exec_command(self, command, timeout):
+            return None, Stream(next(outputs)), Stream("")
+
+        def close(self):
+            pass
 
     monkeypatch.setattr(module, "HAS_PARAMIKO", True)
     monkeypatch.setattr(module, "paramiko", SimpleNamespace(SSHClient=Client, RejectPolicy=lambda: object()))
@@ -133,10 +189,17 @@ def test_linux_inventory_parses_hardware_packages_and_storage(monkeypatch):
 
 def test_linux_inventory_connection_failure_is_safe(monkeypatch):
     class Client:
-        def load_system_host_keys(self): pass
-        def set_missing_host_key_policy(self, policy): pass
-        def connect(self, *a, **k): raise RuntimeError("denied")
-        def close(self): pass
+        def load_system_host_keys(self):
+            pass
+
+        def set_missing_host_key_policy(self, policy):
+            pass
+
+        def connect(self, *a, **k):
+            raise RuntimeError("denied")
+
+        def close(self):
+            pass
 
     monkeypatch.setattr(module, "HAS_PARAMIKO", True)
     monkeypatch.setattr(module, "paramiko", SimpleNamespace(SSHClient=Client, RejectPolicy=lambda: object()))
@@ -147,11 +210,19 @@ def test_linux_inventory_connection_failure_is_safe(monkeypatch):
 
 def test_snmp_success_parses_observed_strings(monkeypatch):
     responses = iter([b"\x04\x0bMock Router", b"\x04\x05edge1"])
+
     class FakeSocket:
-        def settimeout(self, value): assert value == 0.5
-        def sendto(self, payload, target): assert target == ("10.0.0.2", 161)
-        def recvfrom(self, size): return next(responses), ("10.0.0.2", 161)
-        def close(self): pass
+        def settimeout(self, value):
+            assert value == 0.5
+
+        def sendto(self, payload, target):
+            assert target == ("10.0.0.2", 161)
+
+        def recvfrom(self, size):
+            return next(responses), ("10.0.0.2", 161)
+
+        def close(self):
+            pass
 
     monkeypatch.setattr(module.socket, "socket", lambda *a: FakeSocket())
     result = module.scan_snmp_deep("10.0.0.2", "public", timeout=1.0)

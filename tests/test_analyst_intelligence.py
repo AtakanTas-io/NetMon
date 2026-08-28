@@ -1,13 +1,20 @@
-from server import _analyst_device, _exposure_for_device, _inventory_completeness
+from server import _analyst_device, _exposure_for_device
 
 
 def test_analyst_device_explains_classification_and_exposure():
     dev = {
-        "ip": "192.168.1.20", "mac": "AA:BB:CC:DD:EE:20", "hostname": "printer-01",
-        "vendor": "Example", "status": "online", "type": "printer",
+        "ip": "192.168.1.20",
+        "mac": "AA:BB:CC:DD:EE:20",
+        "hostname": "printer-01",
+        "vendor": "Example",
+        "status": "online",
+        "type": "printer",
         "classification_source": "auto",
-        "classification": {"confidence": 0.92, "open_ports": [80, 9100],
-                           "evidence": [{"text": "hostname printer", "source": "dns"}]},
+        "classification": {
+            "confidence": 0.92,
+            "open_ports": [80, 9100],
+            "evidence": [{"text": "hostname printer", "source": "dns"}],
+        },
         "discovery_sources": ["arp", "dns", "nmap"],
     }
     a = _analyst_device(dev)

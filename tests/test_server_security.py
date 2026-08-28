@@ -1,11 +1,10 @@
-import sqlite3
 import platform
+import sqlite3
 
 import pytest
-from fastapi.testclient import TestClient
-
 import server
 from conftest import persistent_test_client
+from fastapi.testclient import TestClient
 
 
 @pytest.fixture()
@@ -31,11 +30,14 @@ def _bootstrap_admin(client, password_path):
     token = login.json()["token"]
     headers = {"Authorization": f"Bearer {token}"}
     assert client.get("/api/status", headers=headers).status_code == 428
-    assert client.post(
-        "/api/auth/change-password",
-        headers=headers,
-        json={"current_password": initial_password, "new_password": "short"},
-    ).status_code == 400
+    assert (
+        client.post(
+            "/api/auth/change-password",
+            headers=headers,
+            json={"current_password": initial_password, "new_password": "short"},
+        ).status_code
+        == 400
+    )
     changed = client.post(
         "/api/auth/change-password",
         headers=headers,
@@ -171,16 +173,18 @@ def test_verified_inventory_is_persisted(isolated_server, monkeypatch):
             self.kwargs = kwargs
 
         def scan_network(self, targets, max_workers=1):
-            return [{
-                "ip_address": targets[0],
-                "status": "Success",
-                "inventory_source": "WinRM/CIM",
-                "computer_name": "REMOTE-PC",
-                "hardware": {"cpu_model": "Verified CPU", "ram_gb": 16},
-                "software": {"os_name": "Windows 11", "installed_programs": []},
-                "storage": [],
-                "security": {"firewall": "Açık", "antivirus": "Defender"},
-            }]
+            return [
+                {
+                    "ip_address": targets[0],
+                    "status": "Success",
+                    "inventory_source": "WinRM/CIM",
+                    "computer_name": "REMOTE-PC",
+                    "hardware": {"cpu_model": "Verified CPU", "ram_gb": 16},
+                    "software": {"os_name": "Windows 11", "installed_programs": []},
+                    "storage": [],
+                    "security": {"firewall": "Açık", "antivirus": "Defender"},
+                }
+            ]
 
     monkeypatch.setattr(server, "WmiNetworkScanner", FakeScanner)
     response = client.post(
@@ -191,7 +195,9 @@ def test_verified_inventory_is_persisted(isolated_server, monkeypatch):
     assert response.status_code == 200
     assert response.json()["ok"] is True
     with sqlite3.connect(db_path) as conn:
-        row = conn.execute("SELECT status, source, payload FROM device_inventory WHERE ip=?", ("192.168.50.25",)).fetchone()
+        row = conn.execute(
+            "SELECT status, source, payload FROM device_inventory WHERE ip=?", ("192.168.50.25",)
+        ).fetchone()
     assert row is not None
     assert row[0:2] == ("Success", "WinRM/CIM")
     assert "Verified CPU" in row[2]
@@ -204,29 +210,35 @@ def test_verified_inventory_is_persisted(isolated_server, monkeypatch):
 def test_failed_authorized_inventory_is_audited_as_failure(isolated_server, monkeypatch):
     client, db_path, password_path = isolated_server
     headers = _bootstrap_admin(client, password_path)
-    server._devices_cache.update({
-        "ts": 0,
-        "data": [{
-            "ip": "192.168.50.26",
-            "type": "computer",
-            "classification": {"open_ports": [135]},
-            "discovery_sources": ["test"],
-        }],
-        "error": None,
-        "scan_status": "idle",
-    })
+    server._devices_cache.update(
+        {
+            "ts": 0,
+            "data": [
+                {
+                    "ip": "192.168.50.26",
+                    "type": "computer",
+                    "classification": {"open_ports": [135]},
+                    "discovery_sources": ["test"],
+                }
+            ],
+            "error": None,
+            "scan_status": "idle",
+        }
+    )
 
     class FailingScanner:
         def __init__(self, **kwargs):
             pass
 
         def scan_network(self, targets, max_workers=1):
-            return [{
-                "ip_address": targets[0],
-                "status": "Failed",
-                "error_code": "access_denied",
-                "error_message": "Yetki reddedildi.",
-            }]
+            return [
+                {
+                    "ip_address": targets[0],
+                    "status": "Failed",
+                    "error_code": "access_denied",
+                    "error_message": "Yetki reddedildi.",
+                }
+            ]
 
     monkeypatch.setattr(server, "WmiNetworkScanner", FailingScanner)
     response = client.post(
@@ -269,7 +281,13 @@ def test_inventory_preflight_reports_steps_without_persisting_secrets(isolated_s
             }
 
     monkeypatch.setattr(server, "WmiNetworkScanner", ReadyScanner)
-    monkeypatch.setattr(server.socket, "create_connection", lambda *args, **kwargs: type("Connection", (), {"__enter__": lambda self: self, "__exit__": lambda self, *exc: None})())
+    monkeypatch.setattr(
+        server.socket,
+        "create_connection",
+        lambda *args, **kwargs: type(
+            "Connection", (), {"__enter__": lambda self: self, "__exit__": lambda self, *exc: None}
+        )(),
+    )
     response = client.post(
         "/api/devices/inventory/preflight",
         headers=headers,
@@ -287,14 +305,19 @@ def test_inventory_preflight_reports_steps_without_persisting_secrets(isolated_s
 def test_remote_windows_inventory_requires_credentials(isolated_server, monkeypatch):
     client, _, password_path = isolated_server
     headers = _bootstrap_admin(client, password_path)
-    server._devices_cache["data"] = [{
-        "ip": "192.168.50.74", "type": "computer", "classification": {"open_ports": [135]},
-    }]
+    server._devices_cache["data"] = [
+        {
+            "ip": "192.168.50.74",
+            "type": "computer",
+            "classification": {"open_ports": [135]},
+        }
+    ]
     monkeypatch.setattr(server, "WMI_USERNAME", "")
     monkeypatch.setattr(server, "WMI_PASSWORD", "")
 
     response = client.post(
-        "/api/devices/inventory", headers=headers,
+        "/api/devices/inventory",
+        headers=headers,
         json={"ip": "192.168.50.74", "protocol": "windows"},
     )
     result = response.json()["result"]
@@ -306,12 +329,17 @@ def test_remote_windows_inventory_requires_credentials(isolated_server, monkeypa
 def test_firewall_rejects_windows_inventory_protocol(isolated_server):
     client, _, password_path = isolated_server
     headers = _bootstrap_admin(client, password_path)
-    server._devices_cache["data"] = [{
-        "ip": "192.168.50.254", "type": "firewall", "classification": {"open_ports": []},
-    }]
+    server._devices_cache["data"] = [
+        {
+            "ip": "192.168.50.254",
+            "type": "firewall",
+            "classification": {"open_ports": []},
+        }
+    ]
 
     response = client.post(
-        "/api/devices/inventory", headers=headers,
+        "/api/devices/inventory",
+        headers=headers,
         json={"ip": "192.168.50.254", "protocol": "windows", "username": "DOMAIN\\reader", "password": "secret"},
     )
     result = response.json()["result"]
@@ -324,9 +352,13 @@ def test_repeated_wmi_access_denied_is_rate_limited(isolated_server, monkeypatch
     client, _, password_path = isolated_server
     headers = _bootstrap_admin(client, password_path)
     server._wmi_auth_failure_cooldowns.clear()
-    server._devices_cache["data"] = [{
-        "ip": "192.168.50.75", "type": "computer", "classification": {"open_ports": [135]},
-    }]
+    server._devices_cache["data"] = [
+        {
+            "ip": "192.168.50.75",
+            "type": "computer",
+            "classification": {"open_ports": [135]},
+        }
+    ]
     calls = []
 
     class DeniedScanner:
@@ -335,10 +367,14 @@ def test_repeated_wmi_access_denied_is_rate_limited(isolated_server, monkeypatch
 
         def scan_network(self, targets, max_workers=1):
             calls.append(targets[0])
-            return [{
-                "ip_address": targets[0], "status": "Failed",
-                "error_code": "access_denied", "error_message": "Erişim Engellendi",
-            }]
+            return [
+                {
+                    "ip_address": targets[0],
+                    "status": "Failed",
+                    "error_code": "access_denied",
+                    "error_message": "Erişim Engellendi",
+                }
+            ]
 
     monkeypatch.setattr(server, "WmiNetworkScanner", DeniedScanner)
     payload = {"ip": "192.168.50.75", "protocol": "windows", "username": "PC\\reader", "password": "wrong"}
@@ -417,8 +453,21 @@ def test_application_lifespan_and_security_headers(isolated_server, monkeypatch)
 
 def test_normalized_inventory_deduplicates_by_mac_and_updates_ip(isolated_server):
     _, db_path, _ = isolated_server
-    d1 = {"ip": "192.168.10.20", "mac": "AA:BB:CC:DD:EE:FF", "hostname": "PC-01", "type": "computer", "status": "online", "vendor": "Test"}
-    inv = {"status": "Success", "ip_address": d1["ip"], "mac_address": d1["mac"], "computer_name": d1["hostname"], "inventory_source": "Agentless Discovery"}
+    d1 = {
+        "ip": "192.168.10.20",
+        "mac": "AA:BB:CC:DD:EE:FF",
+        "hostname": "PC-01",
+        "type": "computer",
+        "status": "online",
+        "vendor": "Test",
+    }
+    inv = {
+        "status": "Success",
+        "ip_address": d1["ip"],
+        "mac_address": d1["mac"],
+        "computer_name": d1["hostname"],
+        "inventory_source": "Agentless Discovery",
+    }
     server._sync_normalized_inventory(d1, inv, "Agentless Discovery")
     d2 = dict(d1, ip="192.168.10.99")
     inv2 = dict(inv, ip_address=d2["ip"])
@@ -482,6 +531,7 @@ def test_device_scan_failure_does_not_crash_finally_block(isolated_server, monke
 
 
 # ---------- Kimlik doğrulama / yetkilendirme ----------
+
 
 def test_missing_token_is_rejected(isolated_server):
     client, _, _ = isolated_server
@@ -601,9 +651,14 @@ def test_regular_user_cannot_access_admin_only_endpoints(isolated_server):
 
     assert client.get("/api/admin/users", headers=user_headers).status_code == 403
     assert client.get("/api/admin/audit-log", headers=user_headers).status_code == 403
-    assert client.post("/api/admin/users", headers=user_headers, json={
-        "username": "should.fail", "password": "Another-Pass-2026!", "role": "user"
-    }).status_code == 403
+    assert (
+        client.post(
+            "/api/admin/users",
+            headers=user_headers,
+            json={"username": "should.fail", "password": "Another-Pass-2026!", "role": "user"},
+        ).status_code
+        == 403
+    )
     assert client.post("/api/devices/scan", headers=user_headers).status_code == 403
 
 
@@ -672,7 +727,9 @@ def test_password_reset_by_admin_revokes_existing_sessions(isolated_server):
 
     users = client.get("/api/admin/users", headers=admin_headers).json()["users"]
     target_id = next(u["id"] for u in users if u["username"] == username)
-    reset = client.post(f"/api/admin/users/{target_id}", headers=admin_headers, json={"new_password": "Brand-New-Pass-2026!"})
+    reset = client.post(
+        f"/api/admin/users/{target_id}", headers=admin_headers, json={"new_password": "Brand-New-Pass-2026!"}
+    )
     assert reset.status_code == 200
 
     assert client.get("/api/status", headers=user_headers).status_code == 401
@@ -681,13 +738,15 @@ def test_password_reset_by_admin_revokes_existing_sessions(isolated_server):
 def test_create_user_rejects_weak_password_and_invalid_role(isolated_server):
     client, _, password_path = isolated_server
     headers = _bootstrap_admin(client, password_path)
-    weak = client.post("/api/admin/users", headers=headers, json={
-        "username": "weak.pass", "password": "short", "role": "user"
-    })
+    weak = client.post(
+        "/api/admin/users", headers=headers, json={"username": "weak.pass", "password": "short", "role": "user"}
+    )
     assert weak.status_code == 400
-    bad_role = client.post("/api/admin/users", headers=headers, json={
-        "username": "bad.role", "password": "Perfectly-Fine-Pass-2026!", "role": "superadmin"
-    })
+    bad_role = client.post(
+        "/api/admin/users",
+        headers=headers,
+        json={"username": "bad.role", "password": "Perfectly-Fine-Pass-2026!", "role": "superadmin"},
+    )
     assert bad_role.status_code == 400
 
 
@@ -695,9 +754,11 @@ def test_create_user_rejects_duplicate_username(isolated_server):
     client, _, password_path = isolated_server
     headers = _bootstrap_admin(client, password_path)
     _create_regular_user(client, headers, username="dupe.user")
-    dupe = client.post("/api/admin/users", headers=headers, json={
-        "username": "dupe.user", "password": "Another-Pass-2026!", "role": "user"
-    })
+    dupe = client.post(
+        "/api/admin/users",
+        headers=headers,
+        json={"username": "dupe.user", "password": "Another-Pass-2026!", "role": "user"},
+    )
     assert dupe.status_code == 409
 
 

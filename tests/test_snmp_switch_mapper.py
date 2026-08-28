@@ -28,7 +28,9 @@ def test_fetch_stops_on_error_indication(monkeypatch):
 
 def test_fetch_handles_iterator_exception(monkeypatch):
     monkeypatch.setattr(module, "HAS_PYSNMP", True)
-    monkeypatch.setattr(module, "nextCmd", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("bad response")), raising=False)
+    monkeypatch.setattr(
+        module, "nextCmd", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("bad response")), raising=False
+    )
     monkeypatch.setattr(module, "SnmpEngine", lambda: object(), raising=False)
     assert module.fetch_switch_mac_table("10.0.0.2", "public") == {}
 
@@ -53,6 +55,7 @@ def test_port_161_marks_candidate_as_switch(monkeypatch):
     monkeypatch.setattr(module, "_mac_to_switch_port", {})
     fake_conn = SimpleNamespace(execute=lambda *a: None, commit=lambda: None, close=lambda: None)
     import server
+
     monkeypatch.setattr(server, "db_conn", lambda: fake_conn)
     devices = [
         {"ip": "10.0.0.2", "type": "unknown", "classification": {"open_ports": [161]}},

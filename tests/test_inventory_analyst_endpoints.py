@@ -1,7 +1,7 @@
 import sqlite3
+from types import SimpleNamespace
 
 import pytest
-
 import server
 from conftest import persistent_test_client
 
@@ -34,17 +34,25 @@ def _bootstrap_admin(client, password_path):
 
 def _seed_asset(dev=None, inv=None, source="Agentless Discovery"):
     dev = dev or {
-        "ip": "192.168.1.20", "mac": "AA:BB:CC:DD:EE:20", "hostname": "printer-01",
-        "vendor": "Example", "status": "online", "type": "printer",
+        "ip": "192.168.1.20",
+        "mac": "AA:BB:CC:DD:EE:20",
+        "hostname": "printer-01",
+        "vendor": "Example",
+        "status": "online",
+        "type": "printer",
     }
     inv = inv or {
-        "status": "Success", "ip_address": dev["ip"], "mac_address": dev["mac"],
-        "computer_name": dev["hostname"], "inventory_source": source,
+        "status": "Success",
+        "ip_address": dev["ip"],
+        "mac_address": dev["mac"],
+        "computer_name": dev["hostname"],
+        "inventory_source": source,
     }
     server._sync_normalized_inventory(dev, inv, source)
 
 
 # ---------- Envanter (inventory) uçları ----------
+
 
 def test_inventory_summary_reflects_seeded_assets(isolated_server):
     client, _, password_path = isolated_server
@@ -123,6 +131,7 @@ def test_network_scopes_only_lists_private_ranges(isolated_server, monkeypatch):
     client, _, password_path = isolated_server
     headers = _bootstrap_admin(client, password_path)
     import ipaddress
+
     monkeypatch.setattr(server.diag, "_local_ipv4_networks", lambda: [ipaddress.ip_network("192.168.1.0/24")])
     response = client.get("/api/network/scopes", headers=headers)
     assert response.status_code == 200
@@ -154,6 +163,7 @@ def test_inventory_scan_runs_empty_when_none_recorded(isolated_server):
 
 # ---------- Analyst raporlama uçları ----------
 
+
 def test_analyst_summary_with_no_devices_does_not_crash(isolated_server):
     client, _, password_path = isolated_server
     headers = _bootstrap_admin(client, password_path)
@@ -166,16 +176,25 @@ def test_analyst_summary_with_no_devices_does_not_crash(isolated_server):
 def test_analyst_devices_and_correlation_reflect_cache(isolated_server):
     client, _, password_path = isolated_server
     headers = _bootstrap_admin(client, password_path)
-    server._devices_cache.update({
-        "ts": 0,
-        "data": [{
-            "ip": "192.168.1.30", "mac": "AA:BB:CC:DD:EE:30", "hostname": "srv-db-01",
-            "status": "online", "type": "server", "classification_source": "auto",
-            "classification": {"confidence": 0.8, "open_ports": [3306], "evidence": []},
-            "discovery_sources": ["arp", "dns"],
-        }],
-        "error": None, "scan_status": "idle",
-    })
+    server._devices_cache.update(
+        {
+            "ts": 0,
+            "data": [
+                {
+                    "ip": "192.168.1.30",
+                    "mac": "AA:BB:CC:DD:EE:30",
+                    "hostname": "srv-db-01",
+                    "status": "online",
+                    "type": "server",
+                    "classification_source": "auto",
+                    "classification": {"confidence": 0.8, "open_ports": [3306], "evidence": []},
+                    "discovery_sources": ["arp", "dns"],
+                }
+            ],
+            "error": None,
+            "scan_status": "idle",
+        }
+    )
     devices = client.get("/api/analyst/devices", headers=headers)
     assert devices.status_code == 200
     assert len(devices.json()["devices"]) == 1
@@ -189,12 +208,21 @@ def test_analyst_devices_and_correlation_reflect_cache(isolated_server):
 def test_analyst_exposure_does_not_fabricate_vulnerability_claims(isolated_server):
     client, _, password_path = isolated_server
     headers = _bootstrap_admin(client, password_path)
-    server._devices_cache.update({
-        "ts": 0,
-        "data": [{"ip": "192.168.1.40", "status": "online", "type": "server",
-                   "classification": {"open_ports": [445, 3389]}}],
-        "error": None, "scan_status": "idle",
-    })
+    server._devices_cache.update(
+        {
+            "ts": 0,
+            "data": [
+                {
+                    "ip": "192.168.1.40",
+                    "status": "online",
+                    "type": "server",
+                    "classification": {"open_ports": [445, 3389]},
+                }
+            ],
+            "error": None,
+            "scan_status": "idle",
+        }
+    )
     response = client.get("/api/analyst/exposure", headers=headers)
     assert response.status_code == 200
 
@@ -202,13 +230,16 @@ def test_analyst_exposure_does_not_fabricate_vulnerability_claims(isolated_serve
 def test_analyst_snapshot_requires_admin_role(isolated_server):
     client, _, password_path = isolated_server
     admin_headers = _bootstrap_admin(client, password_path)
-    client.post("/api/admin/users", headers=admin_headers, json={
-        "username": "viewer.user", "password": "Temporary-Pass-2026!", "role": "user"
-    })
+    client.post(
+        "/api/admin/users",
+        headers=admin_headers,
+        json={"username": "viewer.user", "password": "Temporary-Pass-2026!", "role": "user"},
+    )
     login = client.post("/api/auth/login", json={"username": "viewer.user", "password": "Temporary-Pass-2026!"})
     user_headers = {"Authorization": f"Bearer {login.json()['token']}"}
     client.post(
-        "/api/auth/change-password", headers=user_headers,
+        "/api/auth/change-password",
+        headers=user_headers,
         json={"current_password": "Temporary-Pass-2026!", "new_password": "Viewer-New-Pass-2026!"},
     )
     denied = client.post("/api/analyst/snapshot", headers=user_headers)
@@ -243,14 +274,21 @@ def test_analyst_report_is_plain_text_attachment(isolated_server):
 def test_analyst_topology_evidence_only_uses_real_neighbor_data(isolated_server):
     client, _, password_path = isolated_server
     headers = _bootstrap_admin(client, password_path)
-    server._devices_cache.update({
-        "ts": 0,
-        "data": [{
-            "ip": "192.168.1.1", "hostname": "core-switch-01", "status": "online",
-            "lldp_neighbors": [{"ip": "192.168.1.2", "local_port": "Gi0/1"}],
-        }],
-        "error": None, "scan_status": "idle",
-    })
+    server._devices_cache.update(
+        {
+            "ts": 0,
+            "data": [
+                {
+                    "ip": "192.168.1.1",
+                    "hostname": "core-switch-01",
+                    "status": "online",
+                    "lldp_neighbors": [{"ip": "192.168.1.2", "local_port": "Gi0/1"}],
+                }
+            ],
+            "error": None,
+            "scan_status": "idle",
+        }
+    )
     response = client.get("/api/analyst/topology-evidence", headers=headers)
     assert response.status_code == 200
     body = response.json()
@@ -261,16 +299,29 @@ def test_analyst_topology_evidence_only_uses_real_neighbor_data(isolated_server)
 def test_analyst_baseline_scores_missing_hostname_lower(isolated_server):
     client, _, password_path = isolated_server
     headers = _bootstrap_admin(client, password_path)
-    server._devices_cache.update({
-        "ts": 0,
-        "data": [
-            {"ip": "192.168.1.50", "hostname": "known-pc", "status": "online",
-             "classification": {"confidence": 0.9}, "type": "computer"},
-            {"ip": "192.168.1.51", "hostname": None, "status": "unknown",
-             "classification": {"confidence": 0.1}, "type": "unknown"},
-        ],
-        "error": None, "scan_status": "idle",
-    })
+    server._devices_cache.update(
+        {
+            "ts": 0,
+            "data": [
+                {
+                    "ip": "192.168.1.50",
+                    "hostname": "known-pc",
+                    "status": "online",
+                    "classification": {"confidence": 0.9},
+                    "type": "computer",
+                },
+                {
+                    "ip": "192.168.1.51",
+                    "hostname": None,
+                    "status": "unknown",
+                    "classification": {"confidence": 0.1},
+                    "type": "unknown",
+                },
+            ],
+            "error": None,
+            "scan_status": "idle",
+        }
+    )
     response = client.get("/api/analyst/baseline", headers=headers)
     assert response.status_code == 200
     devices = {d["ip"]: d["score"] for d in response.json()["devices"]}
@@ -301,6 +352,7 @@ def test_academy_modules_and_quiz_flow(isolated_server):
 
 
 # ---------- Başlangıçta "sıfırdan" görünme sorunu ----------
+
 
 def test_startup_loads_last_known_devices_from_db_not_empty(isolated_server):
     """Regresyon: uygulama her açılışta _devices_cache'i boş başlatıyordu,
@@ -337,6 +389,7 @@ def test_startup_cache_load_failure_does_not_crash(isolated_server, monkeypatch)
 
 # ---------- /api/tools/network-cmd: yeni eklenen komutlar ----------
 
+
 def _fake_subprocess_run(monkeypatch, stdout="ok", returncode=0):
     calls = []
 
@@ -367,7 +420,9 @@ def test_nbtstat_a_and_pathping_require_valid_target(isolated_server, monkeypatc
     headers = _bootstrap_admin(client, password_path)
     calls = _fake_subprocess_run(monkeypatch)
 
-    nbtstat_a = client.post("/api/tools/network-cmd", headers=headers, json={"action": "nbtstat_a", "target": "192.168.1.5"})
+    nbtstat_a = client.post(
+        "/api/tools/network-cmd", headers=headers, json={"action": "nbtstat_a", "target": "192.168.1.5"}
+    )
     assert nbtstat_a.status_code == 200
     assert calls[-1] == ["nbtstat", "-A", "192.168.1.5"]
 
@@ -386,7 +441,9 @@ def test_target_required_commands_reject_shell_metacharacters(isolated_server, m
     _fake_subprocess_run(monkeypatch)
 
     for bad_target in ("; rm -rf /", "8.8.8.8 && whoami", "-n 999", "$(id)"):
-        response = client.post("/api/tools/network-cmd", headers=headers, json={"action": "pathping", "target": bad_target})
+        response = client.post(
+            "/api/tools/network-cmd", headers=headers, json={"action": "pathping", "target": bad_target}
+        )
         assert response.status_code == 400, f"beklenmedik kabul: {bad_target!r}"
 
 
@@ -395,9 +452,11 @@ def test_nslookup_with_record_type_builds_correct_command(isolated_server, monke
     headers = _bootstrap_admin(client, password_path)
     calls = _fake_subprocess_run(monkeypatch)
 
-    response = client.post("/api/tools/network-cmd", headers=headers, json={
-        "action": "nslookup", "target": "example.com", "record_type": "mx"
-    })
+    response = client.post(
+        "/api/tools/network-cmd",
+        headers=headers,
+        json={"action": "nslookup", "target": "example.com", "record_type": "mx"},
+    )
     assert response.status_code == 200
     assert calls[-1] == ["nslookup", "-type=MX", "example.com"]
 
@@ -407,9 +466,11 @@ def test_nslookup_rejects_unknown_record_type(isolated_server, monkeypatch):
     headers = _bootstrap_admin(client, password_path)
     _fake_subprocess_run(monkeypatch)
 
-    response = client.post("/api/tools/network-cmd", headers=headers, json={
-        "action": "nslookup", "target": "example.com", "record_type": "DROP"
-    })
+    response = client.post(
+        "/api/tools/network-cmd",
+        headers=headers,
+        json={"action": "nslookup", "target": "example.com", "record_type": "DROP"},
+    )
     assert response.status_code == 400
 
 
@@ -419,7 +480,9 @@ def test_nslookup_without_record_type_still_works_as_before(isolated_server, mon
     headers = _bootstrap_admin(client, password_path)
     calls = _fake_subprocess_run(monkeypatch)
 
-    response = client.post("/api/tools/network-cmd", headers=headers, json={"action": "nslookup", "target": "example.com"})
+    response = client.post(
+        "/api/tools/network-cmd", headers=headers, json={"action": "nslookup", "target": "example.com"}
+    )
     assert response.status_code == 200
     assert calls[-1] == ["nslookup", "example.com"]
 
@@ -428,16 +491,22 @@ def test_route_print_and_nbtstat_do_not_require_admin_role(isolated_server, monk
     """Bunlar salt-okunur teşhis komutları; sadece ipconfig release/renew/flushdns admin-only olmalı."""
     client, _, password_path = isolated_server
     admin_headers = _bootstrap_admin(client, password_path)
-    created = client.post("/api/admin/users", headers=admin_headers, json={
-        "username": "readonly.viewer", "password": "Temporary-Pass-2026!", "role": "user"
-    })
+    created = client.post(
+        "/api/admin/users",
+        headers=admin_headers,
+        json={"username": "readonly.viewer", "password": "Temporary-Pass-2026!", "role": "user"},
+    )
     assert created.status_code == 200
     login = client.post("/api/auth/login", json={"username": "readonly.viewer", "password": "Temporary-Pass-2026!"})
     user_headers = {"Authorization": f"Bearer {login.json()['token']}"}
-    client.post("/api/auth/change-password", headers=user_headers, json={
-        "current_password": "Temporary-Pass-2026!", "new_password": "Viewer-New-Pass-2026!"
-    })
+    client.post(
+        "/api/auth/change-password",
+        headers=user_headers,
+        json={"current_password": "Temporary-Pass-2026!", "new_password": "Viewer-New-Pass-2026!"},
+    )
     _fake_subprocess_run(monkeypatch)
-    assert client.post("/api/tools/network-cmd", headers=user_headers, json={"action": "route_print"}).status_code == 200
+    assert (
+        client.post("/api/tools/network-cmd", headers=user_headers, json={"action": "route_print"}).status_code == 200
+    )
     assert client.post("/api/tools/network-cmd", headers=user_headers, json={"action": "nbtstat_n"}).status_code == 200
     assert client.post("/api/tools/network-cmd", headers=user_headers, json={"action": "flushdns"}).status_code == 403

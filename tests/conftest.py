@@ -6,7 +6,6 @@ import anyio
 import pytest
 from fastapi.testclient import TestClient
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BACKEND_DIR = PROJECT_ROOT / "backend"
 for path in (PROJECT_ROOT, BACKEND_DIR):

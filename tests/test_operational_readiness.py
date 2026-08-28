@@ -4,7 +4,6 @@ import pytest
 import server
 from conftest import persistent_test_client
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -47,7 +46,8 @@ def test_device_owner_is_persisted_and_reflected_in_cache(isolated_server):
     server._devices_cache["data"] = [{"mac": mac, "ip": "10.0.0.10", "type": "unknown"}]
 
     response = client.post(
-        "/api/devices/rename", headers=headers,
+        "/api/devices/rename",
+        headers=headers,
         json={"mac": mac, "friendly_name": "Muhasebe PC", "owner": "Muhasebe", "notes": "Kat 2"},
     )
 
@@ -62,7 +62,8 @@ def test_ad_and_authorized_dhcp_settings_roundtrip(isolated_server):
     headers = _bootstrap_admin(client, password_path)
 
     saved = client.post(
-        "/api/settings", headers=headers,
+        "/api/settings",
+        headers=headers,
         json={
             "authorized_dhcp_servers": "10.0.0.2, 10.0.0.1, 10.0.0.2",
             "ad_server": "dc.corp.local",
@@ -75,7 +76,9 @@ def test_ad_and_authorized_dhcp_settings_roundtrip(isolated_server):
     assert settings["authorized_dhcp_servers"] == "10.0.0.1,10.0.0.2"
     assert settings["ad_server"] == "dc.corp.local"
     assert settings["ad_domain"] == "corp.local"
-    assert client.post("/api/settings", headers=headers, json={"authorized_dhcp_servers": "not-an-ip"}).status_code == 400
+    assert (
+        client.post("/api/settings", headers=headers, json={"authorized_dhcp_servers": "not-an-ip"}).status_code == 400
+    )
 
 
 def test_readiness_contract_distinguishes_real_and_unavailable_features(isolated_server, monkeypatch):

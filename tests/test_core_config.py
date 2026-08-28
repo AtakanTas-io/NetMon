@@ -3,7 +3,9 @@ from backend.core.config import load_config
 
 def test_config_uses_defaults_without_env(monkeypatch):
     for name in (
-        "NETMON_PING_COUNT", "NETMON_SCAN_INTERVAL", "NETMON_SESSION_TTL_SECONDS",
+        "NETMON_PING_COUNT",
+        "NETMON_SCAN_INTERVAL",
+        "NETMON_SESSION_TTL_SECONDS",
         "NETMON_ANOMALY_RATIO",
     ):
         monkeypatch.delenv(name, raising=False)
