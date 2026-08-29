@@ -6,16 +6,13 @@
 - SNMP, WMI/WinRM ve SSH ayarları için örnek laboratuvar kurulumu yazmak
 - DHCP ve switch port eşleştirmesi için entegrasyon testlerini genişletmek
 - En sık kullanılan API çağrılarına istek ve yanıt örnekleri eklemek
-- `app.js` dosyasını tarayıcı ES modüllerine ayırmak
 - `application.py` içindeki arka plan ve envanter çalışma zamanı yardımcılarını servis modüllerine ayırmak
 - `application.py`, `netdiag_core.py` ve masaüstü girişlerini coverage kapsamına alıp başlangıçtaki yüzde 70 eşiğini kademeli yükseltmek
+- Eski çalışma zamanı modüllerini tiplendirip Mypy denetimini kademeli olarak strict moda taşımak
 
 ## Paketleme
 
-- Windows derlemesini GitHub Actions üzerinden tekrar üretilebilir hale getirmek
-- Sürüm kontrol listesi hazırlamak
-- Bağımlılık güvenliği taraması eklemek
-- Kod biçimlendirme ve statik kontrol adımlarını CI'a eklemek
+- Windows derlemesini temiz bir `v*` etiketiyle doğrulayıp ilk GitHub sürümünü yayımlamak
 
 ## Daha sonra
 

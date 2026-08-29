@@ -3,8 +3,10 @@
 Yerel ağdaki cihazları keşfetmek, envanterini tutmak ve temel ağ sorunlarını tek ekrandan incelemek için geliştirdiğim bir ağ yönetim uygulaması.
 
 [![CI](https://github.com/AtakanTas-io/NetMon/actions/workflows/ci.yml/badge.svg)](https://github.com/AtakanTas-io/NetMon/actions/workflows/ci.yml)
-![Python](https://img.shields.io/badge/Python-3.10--3.13-3776AB?logo=python&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-105%20passed-brightgreen?logo=pytest)
+[![Lint](https://github.com/AtakanTas-io/NetMon/actions/workflows/lint.yml/badge.svg)](https://github.com/AtakanTas-io/NetMon/actions/workflows/lint.yml)
+[![Security](https://github.com/AtakanTas-io/NetMon/actions/workflows/security.yml/badge.svg)](https://github.com/AtakanTas-io/NetMon/actions/workflows/security.yml)
+[![codecov](https://codecov.io/gh/AtakanTas-io/NetMon/branch/main/graph/badge.svg)](https://codecov.io/gh/AtakanTas-io/NetMon)
+![Python](https://img.shields.io/badge/Python-3.11--3.13-3776AB?logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 ## Neler var?
@@ -21,6 +23,39 @@ Yerel ağdaki cihazları keşfetmek, envanterini tutmak ve temel ağ sorunların
 - Kullanıcı rolleri, oturum kontrolü ve işlem kayıtları
 - Web arayüzü ve PyWebView masaüstü çalıştırma seçeneği
 
+## Ekran görüntüsü
+
+Aktif oturumlar ekranı, işletim sisteminin bildirdiği gerçek soketleri uygulama ve uzak uç bilgileriyle gösterir. Yerel uçlar dokümantasyon için anonimleştirilmiştir.
+
+![NetMon aktif ağ oturumları](docs/screenshots/aktif-oturumlar.png)
+
+## Neden NetMon?
+
+Bu tablo ürünlerin tüm yeteneklerini değil, NetMon'un kullanım sınırını açıkça göstermek için hazırlanmıştır.
+
+| Başlık | NetMon | PRTG / SolarWinds / Domotz / Auvik |
+|---|---|---|
+| Lisans ve çalışma yeri | MIT lisanslı, yerelde çalışır | Ürüne göre ticari lisans ve bulut/sunucu kurulumu |
+| Cihaz keşfi ve temel envanter | Var; erişilebilen protokol verileriyle sınırlı | Genellikle daha geniş cihaz şablonu ve üretici desteği |
+| WMI, WinRM, SSH ve SNMP | Var; kullanıcı yapılandırması gerekir | Genellikle sihirbazlar ve hazır kimlik bilgisi kasaları bulunur |
+| IPAM ve config farkı | Temel yerel görünüm var | Daha kapsamlı iş akışı, onay ve saklama seçenekleri bulunabilir |
+| Bildirim ve uzun dönem geçmiş | Geliştirme aşamasında | Yerleşik bildirim, eskalasyon ve uzun dönem raporlama yaygındır |
+| Destek modeli | Topluluk ve kaynak kod | Ücretli üretici desteği ve SLA seçenekleri |
+
+NetMon; küçük ağlarda verinin kaynağını görebilmek, yerel çalışmak ve kodu ihtiyaçlara göre uyarlamak isteyen kullanıcılar içindir. Üretici destekli SLA, çok geniş cihaz kataloğu veya hazır MSP iş akışları gerekiyorsa ticari ürünler daha uygun olabilir.
+
+## Mimari
+
+```mermaid
+flowchart LR
+    UI[Tarayıcı ES modülleri] -->|HTTP / WebSocket| API[FastAPI ve APIRouter katmanı]
+    DESKTOP[PyWebView masaüstü kabuğu] --> UI
+    API --> DB[(SQLite)]
+    API --> DISCOVERY[ARP / ICMP / Nmap / mDNS / SSDP]
+    API --> INVENTORY[WMI / WinRM / SSH / SNMP]
+    API --> OS[İşletim sistemi sayaçları ve soketleri]
+```
+
 ## Veri sınırları
 
 NetMon erişemediği bilgiyi tahmin etmez. Donanım ve yazılım envanteri için hedef sistemde yetkili WMI, WinRM, SSH veya SNMP erişimi gerekir. Yerel ağ kartı sayaçları cihaz başına paket yakalama verisi sağlamaz. Açık bir port da tek başına güvenlik açığı olarak değerlendirilmez.
@@ -31,7 +66,7 @@ Bu ayrım arayüzde `ölçüldü`, `keşfedildi`, `yapılandırıldı` ve `kulla
 
 Gerekenler:
 
-- Python 3.10–3.13
+- Python 3.11–3.13
 - Windows masaüstü kullanımı için WebView2
 - Kullanılacak özelliğe göre Nmap, SNMP, WMI/WinRM veya SSH erişimi
 
@@ -58,7 +93,7 @@ NetMon'un FastAPI sunucusu ve tarayıcı arayüzü Windows, Linux ve macOS üzer
 
 | Özellik | Windows | Linux | macOS | Gereksinim / sınır |
 |---|:---:|:---:|:---:|---|
-| FastAPI sunucusu ve web arayüzü | Evet | Evet | Evet | Python 3.10–3.13 |
+| FastAPI sunucusu ve web arayüzü | Evet | Evet | Evet | Python 3.11–3.13 |
 | PyWebView masaüstü kabuğu | Evet | Koşullu | Koşullu | İşletim sisteminin desteklenen WebView çalışma zamanı gerekir |
 | ICMP, DNS, rota ve yerel ağ keşfi | Evet | Evet | Evet | Bazı komutlar için işletim sistemi aracı ve ek yetki gerekebilir |
 | Nmap keşfi ve servis taraması | Evet | Evet | Evet | `nmap` ayrıca kurulmalı ve `PATH` içinde bulunmalı |
@@ -99,7 +134,7 @@ Kökteki `calistir.bat`, `build.bat` ve `auto-push.ps1` dosyaları `scripts/wind
 python -m pytest tests -v
 ```
 
-Mevcut test paketi 105 senaryodan oluşuyor. GitHub Actions aynı paketi Windows üzerinde Python 3.10, 3.11, 3.12 ve 3.13 ile çalıştırıyor.
+Mevcut test paketi 174 senaryodan oluşuyor ve toplam ölçülen backend kapsamı için yüzde 70 alt sınırı uyguluyor. GitHub Actions paketi Windows ve Ubuntu üzerinde Python 3.11 ve 3.13 ile çalıştırıyor; Ruff, Mypy, Bandit ve `pip-audit` ayrı iş akışlarında denetleniyor.
 
 ## Notlar
 
@@ -107,5 +142,6 @@ Mevcut test paketi 105 senaryodan oluşuyor. GitHub Actions aynı paketi Windows
 - Değişiklik özeti için [CHANGELOG.md](CHANGELOG.md)
 - Katkı süreci için [CONTRIBUTING.md](CONTRIBUTING.md)
 - Güvenlik bildirimi için [SECURITY.md](SECURITY.md)
+- GitHub dal koruması ve repo kurulumu için [docs/GITHUB_KURULUM.md](docs/GITHUB_KURULUM.md)
 
 MIT lisansı ile yayımlanır.

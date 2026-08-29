@@ -1,9 +1,25 @@
-# Değişiklikler
+# Değişiklik günlüğü
 
-## Henüz yayımlanmadı
+Bu dosya [Keep a Changelog](https://keepachangelog.com/tr-TR/1.1.0/) düzenini izler. Sürümler [Semantic Versioning](https://semver.org/lang/tr/) yaklaşımıyla numaralandırılır.
+
+## [Henüz yayımlanmadı]
+
+### Eklendi
 
 - Windows dışındaki sistemlerde gizli ayarlar için Fernet tabanlı yerel şifreleme eklendi.
 - Desteklenen işletim sistemi ve özellik gereksinimleri README'de açıklandı.
+- WMI, DHCP, SNMP switch eşleme ve derin keşif motorları için hata yolu testleri ile yüzde 70 coverage kapısı eklendi.
+- Windows/Ubuntu test matrisi, Ruff/Mypy, Bandit, `pip-audit`, Dependabot ve Codecov iş akışları eklendi.
+- `v*` etiketlerinde PyInstaller ile Windows uygulaması ve SHA256 özeti yayımlayan release iş akışı eklendi.
+- GitHub dal koruması, zorunlu kontroller ve sürüm adımları için kurulum belgesi eklendi.
+- Trafik ekranına ölçüm kaynağı ve veri yaşı eklendi.
+- Sistem bileşenlerinin hazırlık durumunu döndüren API eklendi.
+- DHCP ve Active Directory ayarları kalıcı hale getirildi.
+- Cihaz sahibi bilgisi envantere kaydedildi.
+- Operasyon ve ayar akışları için yeni testler eklendi.
+
+### Değiştirildi
+
 - Active Directory giriş hataları parola içermeden sunucu ve hata türüyle loglanmaya başladı.
 - Windows'ta tam test paketinin kaynak tüketmeden tek seferde tamamlanması sağlandı.
 - Kimlik doğrulama, oturum ve kullanıcı yönetimi uçları ayrı bir FastAPI router'ına taşındı.
@@ -17,13 +33,10 @@
 - Analist korelasyonu, eğilim ve ağ bilgi tabanı uçları ayrı bir FastAPI router'ına taşındı.
 - Uygulama giriş noktası inceltildi; SQLite ve rol/yetki yardımcıları ortak çekirdek modüllerine taşındı.
 - Çalışma aralıkları, saklama süreleri ve güvenlik eşikleri ortam değişkenleriyle yapılandırılabilir hale getirildi.
-- WMI, DHCP, SNMP switch eşleme ve derin keşif motorları için hata yolu testleri ile yüzde 70 coverage kapısı eklendi.
-- Trafik ekranına ölçüm kaynağı ve veri yaşı eklendi.
-- Sistem bileşenlerinin hazırlık durumunu döndüren API eklendi.
-- DHCP ve Active Directory ayarları kalıcı hale getirildi.
-- Cihaz sahibi bilgisi envantere kaydedildi.
+- Tek parça tarayıcı kodu, her biri 1.000 satırın altında olan native ES modüllerine ayrıldı.
+- SNMP switch port taraması eski PySNMP API'sinin yanında PySNMP 7 asenkron API'sini destekleyecek şekilde güncellendi.
 - Arka plan yenilemeleri açık olan sayfaya göre sınırlandırıldı.
 - Ölçülmeyen web filtresi ve SIEM özellikleri arayüzde açıkça belirtildi.
-- Operasyon ve ayar akışları için yeni testler eklendi.
+- README; dinamik rozetler, gerçek ve anonimleştirilmiş ekran görüntüsü, karşılaştırma tablosu ve mimari diyagramla güncellendi.
 
-Sürüm numarası verildiğinde bu bölüm ilgili sürüm başlığına taşınacak.
+[Henüz yayımlanmadı]: https://github.com/AtakanTas-io/NetMon/compare/v2.5.0...HEAD
