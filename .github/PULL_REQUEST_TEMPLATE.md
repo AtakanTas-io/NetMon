@@ -5,7 +5,7 @@ Bu değişikliğin çözdüğü sorunu kısa ve teknik biçimde açıklayın.
 Closes #
 
 ## Değişiklikler
-- 
+- Açıklama:
 
 ## Çalıştırılan testler
 - Komut ve sonuç:

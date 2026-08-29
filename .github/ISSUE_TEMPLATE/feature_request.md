@@ -16,6 +16,6 @@ assignees: ''
 Gösterilecek veri nasıl ölçülecek, keşfedilecek veya yapılandırılacak? Veri yoksa arayüz ne göstermeli?
 
 ## Kabul ölçütleri
-- 
+- Ölçüt:
 
 ## Alternatifler ve ek bilgi
