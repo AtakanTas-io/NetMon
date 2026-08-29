@@ -21,6 +21,11 @@ Yerel ağdaki cihazları keşfetmek, envanterini tutmak ve temel ağ sorunların
 - Yetkili sunucu listesine göre rogue DHCP uyarısı
 - Yerel ağ arayüzü trafiği ve işletim sistemindeki aktif bağlantılar
 - Kullanıcı rolleri, oturum kontrolü ve işlem kayıtları
+- Kanıta dayalı alarm kuralları ile SMTP ve webhook bildirimi
+- 24 saat, 7 gün ve 30 günlük operasyon geçmişi
+- Zamanlanmış PDF/Excel raporları ve e-posta teslimi
+- Subnet tabanlı çoklu site yönetimi
+- Rol kapsamını aşamayan, süreli ve hız sınırlı API anahtarları
 - Web arayüzü ve PyWebView masaüstü çalıştırma seçeneği
 
 ## Ekran görüntüsü
@@ -39,7 +44,8 @@ Bu tablo ürünlerin tüm yeteneklerini değil, NetMon'un kullanım sınırını
 | Cihaz keşfi ve temel envanter | Var; erişilebilen protokol verileriyle sınırlı | Genellikle daha geniş cihaz şablonu ve üretici desteği |
 | WMI, WinRM, SSH ve SNMP | Var; kullanıcı yapılandırması gerekir | Genellikle sihirbazlar ve hazır kimlik bilgisi kasaları bulunur |
 | IPAM ve config farkı | Temel yerel görünüm var | Daha kapsamlı iş akışı, onay ve saklama seçenekleri bulunabilir |
-| Bildirim ve uzun dönem geçmiş | Geliştirme aşamasında | Yerleşik bildirim, eskalasyon ve uzun dönem raporlama yaygındır |
+| Bildirim ve uzun dönem geçmiş | SMTP/webhook alarmı, 30 günlük snapshot ve zamanlanmış rapor var | Genellikle daha geniş eskalasyon, çağrı zinciri ve uzun dönem saklama bulunur |
+| Çoklu site ve API erişimi | Subnet tabanlı site, rol kapsamlı ve hız sınırlı API anahtarı var | Genellikle MSP tenant yapısı ve daha geniş entegrasyon kataloğu bulunur |
 | Destek modeli | Topluluk ve kaynak kod | Ücretli üretici desteği ve SLA seçenekleri |
 
 NetMon; küçük ağlarda verinin kaynağını görebilmek, yerel çalışmak ve kodu ihtiyaçlara göre uyarlamak isteyen kullanıcılar içindir. Üretici destekli SLA, çok geniş cihaz kataloğu veya hazır MSP iş akışları gerekiyorsa ticari ürünler daha uygun olabilir.
@@ -54,6 +60,8 @@ flowchart LR
     API --> DISCOVERY[ARP / ICMP / Nmap / mDNS / SSDP]
     API --> INVENTORY[WMI / WinRM / SSH / SNMP]
     API --> OS[İşletim sistemi sayaçları ve soketleri]
+    API --> OPS[Alarm / geçmiş / rapor / site]
+    OPS --> DELIVERY[SMTP / yönetici tanımlı webhook]
 ```
 
 ## Veri sınırları
@@ -134,7 +142,7 @@ Kökteki `calistir.bat`, `build.bat` ve `auto-push.ps1` dosyaları `scripts/wind
 python -m pytest tests -v
 ```
 
-Mevcut test paketi 174 senaryodan oluşuyor ve toplam ölçülen backend kapsamı için yüzde 70 alt sınırı uyguluyor. GitHub Actions paketi Windows ve Ubuntu üzerinde Python 3.11 ve 3.13 ile çalıştırıyor; Ruff, Mypy, Bandit ve `pip-audit` ayrı iş akışlarında denetleniyor.
+Mevcut test paketi 182 senaryodan oluşuyor ve toplam ölçülen backend kapsamı için yüzde 70 alt sınırı uyguluyor. GitHub Actions paketi Windows ve Ubuntu üzerinde Python 3.11 ve 3.13 ile çalıştırıyor; Ruff, Mypy, Bandit ve `pip-audit` ayrı iş akışlarında denetleniyor.
 
 ## Notlar
 
@@ -143,5 +151,6 @@ Mevcut test paketi 174 senaryodan oluşuyor ve toplam ölçülen backend kapsam�
 - Katkı süreci için [CONTRIBUTING.md](CONTRIBUTING.md)
 - Güvenlik bildirimi için [SECURITY.md](SECURITY.md)
 - GitHub dal koruması ve repo kurulumu için [docs/GITHUB_KURULUM.md](docs/GITHUB_KURULUM.md)
+- Kimlik doğrulama ve operasyon API örnekleri için [docs/API_ORNEKLERI.md](docs/API_ORNEKLERI.md)
 
 MIT lisansı ile yayımlanır.

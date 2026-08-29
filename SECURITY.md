@@ -2,7 +2,12 @@
 
 ## Destek kapsamı
 
-Proje henüz kararlı bir sürüm yayımlamadı. Güvenlik düzeltmeleri güncel `main` dalına uygulanır; eski commitler için ayrı destek sözü verilmez.
+| Sürüm | Destek |
+|---|---|
+| 2.5.x | Evet |
+| 2.4.x ve öncesi | Hayır |
+
+Güvenlik düzeltmeleri güncel `main` dalına ve desteklenen son 2.5.x sürümüne uygulanır.
 
 ## Bildirim
 

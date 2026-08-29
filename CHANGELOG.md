@@ -4,6 +4,8 @@ Bu dosya [Keep a Changelog](https://keepachangelog.com/tr-TR/1.1.0/) düzenini i
 
 ## [Henüz yayımlanmadı]
 
+## [2.5.0] - 2026-08-29
+
 ### Eklendi
 
 - Windows dışındaki sistemlerde gizli ayarlar için Fernet tabanlı yerel şifreleme eklendi.
@@ -17,6 +19,11 @@ Bu dosya [Keep a Changelog](https://keepachangelog.com/tr-TR/1.1.0/) düzenini i
 - DHCP ve Active Directory ayarları kalıcı hale getirildi.
 - Cihaz sahibi bilgisi envantere kaydedildi.
 - Operasyon ve ayar akışları için yeni testler eklendi.
+- Kanıta dayalı alarm kuralları, SMTP ve yönetici tanımlı webhook teslimi eklendi.
+- 24 saat, 7 gün ve 30 günlük operasyon snapshot geçmişi eklendi.
+- PDF/Excel dışa aktarma ve zamanlanmış e-posta raporları eklendi.
+- Subnet tabanlı çoklu site yönetimi eklendi.
+- Rol kapsamlı, süreli, iptal edilebilir ve hız sınırlı API anahtarları eklendi.
 
 ### Değiştirildi
 
@@ -38,5 +45,7 @@ Bu dosya [Keep a Changelog](https://keepachangelog.com/tr-TR/1.1.0/) düzenini i
 - Arka plan yenilemeleri açık olan sayfaya göre sınırlandırıldı.
 - Ölçülmeyen web filtresi ve SIEM özellikleri arayüzde açıkça belirtildi.
 - README; dinamik rozetler, gerçek ve anonimleştirilmiş ekran görüntüsü, karşılaştırma tablosu ve mimari diyagramla güncellendi.
+- WMI, SSH, SNMP ve derin keşif modülleri Mypy denetimine alındı.
 
 [Henüz yayımlanmadı]: https://github.com/AtakanTas-io/NetMon/compare/v2.5.0...HEAD
+[2.5.0]: https://github.com/AtakanTas-io/NetMon/releases/tag/v2.5.0
