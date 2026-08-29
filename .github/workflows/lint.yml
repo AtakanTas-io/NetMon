@@ -13,7 +13,7 @@ jobs:
       - name: Kaynak kodu al
         uses: actions/checkout@v4
       - name: Python kur
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.13"
           cache: pip
