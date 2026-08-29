@@ -48,6 +48,7 @@ try:
     from .core.access import ROLE_DEFINITIONS, has_permission, role_definition, role_permissions
     from .core.config import RUNTIME_CONFIG
     from .core.database import connect_sqlite
+    from .core.operations import collect_snapshot, deliver_events, ensure_operations_schema, evaluate_rules, run_due_reports
     from .netdiag_core import NetworkDiagnostics, NetworkDiscoveryError
     from .wmi_scanner import WmiNetworkScanner
 except ImportError:
@@ -56,6 +57,7 @@ except ImportError:
     from core.access import ROLE_DEFINITIONS, has_permission, role_definition, role_permissions
     from core.config import RUNTIME_CONFIG
     from core.database import connect_sqlite
+    from core.operations import collect_snapshot, deliver_events, ensure_operations_schema, evaluate_rules, run_due_reports
     from netdiag_core import NetworkDiagnostics, NetworkDiscoveryError
     from wmi_scanner import WmiNetworkScanner
 
@@ -64,7 +66,7 @@ try:
 except ImportError:
     win32crypt = None
 
-SECRET_SETTING_KEYS = {"wmi_password", "ssh_password", "snmp_community"}
+SECRET_SETTING_KEYS = {"wmi_password", "ssh_password", "snmp_community", "smtp_password", "webhook_url"}
 DPAPI_PREFIX = "dpapi:"
 FERNET_PREFIX = "fernet:"
 FERNET_KEY_FILENAME = "secret.key"
@@ -575,6 +577,7 @@ def init_db():
             updated_at REAL, FOREIGN KEY(asset_id) REFERENCES inventory_assets(asset_id) ON DELETE CASCADE
         )
     """)
+    ensure_operations_schema(conn)
 
     # Tablo zaten varsa eksik sütunu eklemesi için migration güvenliği:
     kd_columns = {row[1] for row in conn.execute("PRAGMA table_info(known_devices)").fetchall()}
@@ -672,6 +675,9 @@ def _prune_operational_data(conn: sqlite3.Connection, now: float | None = None):
         conn.execute(f"DELETE FROM {table} WHERE ts < ?", (cutoff,))  # nosec B608
     conn.execute("DELETE FROM sessions WHERE expires_at < ?", (now,))
     conn.execute("DELETE FROM login_attempts WHERE locked_until IS NULL OR locked_until < ?", (now,))
+    operations_cutoff = now - max(RETENTION_HOURS, 30 * 24) * 3600
+    conn.execute("DELETE FROM operational_snapshots WHERE ts < ?", (operations_cutoff,))
+    conn.execute("DELETE FROM alert_events WHERE ts < ?", (operations_cutoff,))
     conn.commit()
 
 # ============================================================
@@ -1017,6 +1023,30 @@ def _load_last_known_devices_into_cache():
     logger.info("[STARTUP] %d bilinen cihaz önbelleğe yüklendi (stale=true, tarama devam ediyor)", len(devices))
 
 
+def operations_loop(stop_event: threading.Event):
+    """Gerçek envanter/telemetri snapshotlarını, kuralları ve zamanlanmış raporları işler."""
+    last_snapshot = 0.0
+    while not stop_event.is_set():
+        conn = db_conn()
+        try:
+            now = time.time()
+            devices = list(_devices_cache.get("data", []))
+            if now - last_snapshot >= 300:
+                collect_snapshot(conn, devices, now)
+                last_snapshot = now
+            events = evaluate_rules(conn, devices, now)
+            if events:
+                deliver_events(conn, events, get_all_settings())
+                for event in events:
+                    manager.broadcast_threadsafe({"type": "system_alert", "ts": now, **event, "simulated": False})
+            run_due_reports(conn, get_all_settings(), now)
+        except Exception:
+            logger.exception("[OPERATIONS] Alarm/snapshot/rapor döngüsü başarısız")
+        finally:
+            conn.close()
+        stop_event.wait(60)
+
+
 try:
     from .dhcp_monitor import start_dhcp_monitor, stop_dhcp_monitor, configure_authorized_dhcp_provider, get_dhcp_monitor_status
 except ImportError:
@@ -1040,8 +1070,13 @@ async def lifespan(app: FastAPI):
 
     t2 = threading.Thread(target=diagnostics_loop, args=(_stop_event,), daemon=True)
     t4 = threading.Thread(target=device_scan_loop, args=(_stop_event,), daemon=True)
-    workers = [t2, t4, threading.Thread(target=syslog_receiver_loop, args=(_stop_event,), daemon=True),
-               threading.Thread(target=ncm_backup_loop, args=(_stop_event,), daemon=True)]
+    workers = [
+        t2,
+        t4,
+        threading.Thread(target=syslog_receiver_loop, args=(_stop_event,), daemon=True),
+        threading.Thread(target=ncm_backup_loop, args=(_stop_event,), daemon=True),
+        threading.Thread(target=operations_loop, args=(_stop_event,), daemon=True),
+    ]
     if HAS_PSUTIL:
         workers.extend([
             threading.Thread(target=traffic_sampler_loop, args=(_stop_event,), daemon=True),
@@ -1061,6 +1096,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="NetMon", lifespan=lifespan)
 _request_timestamps = deque(maxlen=100_000)
 _request_metrics_lock = threading.Lock()
+_api_key_rate_state: dict[int, deque] = {}
+_api_key_rate_lock = threading.Lock()
 _server_started_at = time.time()
 
 
@@ -1194,6 +1231,39 @@ def get_current_user(request: Request, authorization: str | None = Header(defaul
         (token,),
     ).fetchone()
     if row is None:
+        if token.startswith("nm_"):
+            key_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+            key_row = conn.execute(
+                "SELECT k.id,k.permissions_json,k.rate_limit_per_minute,k.expires_at,k.revoked_at,"
+                "u.id,u.username,u.role,u.active,u.must_change_password "
+                "FROM api_keys k JOIN users u ON u.id=k.user_id WHERE k.key_hash=?",
+                (key_hash,),
+            ).fetchone()
+            now = time.time()
+            if key_row and key_row[4] is None and (key_row[3] is None or key_row[3] > now) and key_row[8]:
+                key_id, permissions_json, rate_limit = key_row[:3]
+                with _api_key_rate_lock:
+                    timestamps = _api_key_rate_state.setdefault(key_id, deque())
+                    while timestamps and timestamps[0] < now - 60:
+                        timestamps.popleft()
+                    if len(timestamps) >= rate_limit:
+                        conn.close()
+                        raise _AuthError(429, "API anahtarı dakika istek sınırını aştı.")
+                    timestamps.append(now)
+                conn.execute("UPDATE api_keys SET last_used_at=? WHERE id=?", (now, key_id))
+                conn.commit()
+                conn.close()
+                return {
+                    "id": key_row[5],
+                    "username": key_row[6],
+                    "role": key_row[7],
+                    "role_label": _role_definition(key_row[7])["label"],
+                    "permissions": json.loads(permissions_json),
+                    "must_change_password": bool(key_row[9]),
+                    "token": token,
+                    "auth_type": "api_key",
+                    "api_key_id": key_id,
+                }
         conn.close()
         raise _AuthError(401, "Oturum geçersiz. Lütfen tekrar giriş yapın.")
 
@@ -3854,6 +3924,14 @@ DEFAULT_SETTINGS = {
     "authorized_dhcp_servers": "",
     "ad_server": "",
     "ad_domain": "",
+    "smtp_host": "",
+    "smtp_port": 587,
+    "smtp_username": "",
+    "smtp_password": "",
+    "smtp_from": "",
+    "smtp_tls": True,
+    "notification_email": "",
+    "webhook_url": "",
 }
 
 
@@ -3890,14 +3968,14 @@ def get_all_settings():
     conn.close()
     result = dict(DEFAULT_SETTINGS)
     result.update(rows)
-    for k in ("ping_count", "diagnostics_interval", "scan_interval", "retention_hours", "ncm_backup_interval"):
+    for k in ("ping_count", "diagnostics_interval", "scan_interval", "retention_hours", "ncm_backup_interval", "smtp_port"):
         try:
             result[k] = int(result[k])
         except (TypeError, ValueError):
             result[k] = DEFAULT_SETTINGS[k]
     for key in SECRET_SETTING_KEYS:
         result[key] = _unprotect_secret(result.get(key, "") or "")
-    for bool_key in ("public_ip_lookup", "winrm_verify_tls", "ncm_auto_backup_enabled"):
+    for bool_key in ("public_ip_lookup", "winrm_verify_tls", "ncm_auto_backup_enabled", "smtp_tls"):
         raw_bool = result.get(bool_key, DEFAULT_SETTINGS[bool_key])
         result[bool_key] = raw_bool if isinstance(raw_bool, bool) else str(raw_bool).lower() in ("1", "true", "yes", "on")
     return result
@@ -4455,6 +4533,7 @@ try:
     from .routers.inventory import create_inventory_router
     from .routers.ipam import create_ipam_router
     from .routers.ncm import create_ncm_router
+    from .routers.operations import create_operations_router
     from .routers.security import create_security_router
     from .routers.settings import create_settings_router
 except ImportError:
@@ -4465,6 +4544,7 @@ except ImportError:
     from routers.inventory import create_inventory_router
     from routers.ipam import create_ipam_router
     from routers.ncm import create_ncm_router
+    from routers.operations import create_operations_router
     from routers.security import create_security_router
     from routers.settings import create_settings_router
 
@@ -4475,6 +4555,7 @@ app.include_router(create_discovery_router(sys.modules[__name__]))
 app.include_router(create_inventory_router(sys.modules[__name__]))
 app.include_router(create_ipam_router(sys.modules[__name__]))
 app.include_router(create_ncm_router(sys.modules[__name__]))
+app.include_router(create_operations_router(sys.modules[__name__]))
 app.include_router(create_security_router(sys.modules[__name__]))
 app.include_router(create_settings_router(sys.modules[__name__]))
 

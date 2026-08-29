@@ -30,6 +30,14 @@ class SettingsUpdate(BaseModel):
     authorized_dhcp_servers: str | None = None
     ad_server: str | None = None
     ad_domain: str | None = None
+    smtp_host: str | None = None
+    smtp_port: int | None = None
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_from: str | None = None
+    smtp_tls: bool | None = None
+    notification_email: str | None = None
+    webhook_url: str | None = None
 
 
 def _validate_settings_update(ctx, updates: dict) -> str | None:
@@ -39,6 +47,7 @@ def _validate_settings_update(ctx, updates: dict) -> str | None:
         "scan_interval": (60, 86400),
         "retention_hours": (1, 8760),
         "ncm_backup_interval": (900, 604800),
+        "smtp_port": (1, 65535),
     }
     for key, (lower, upper) in bounds.items():
         if key in updates and not lower <= updates[key] <= upper:
@@ -87,20 +96,25 @@ def _validate_settings_update(ctx, updates: dict) -> str | None:
             return "En fazla 32 yetkili DHCP sunucusu tanımlanabilir."
         updates["authorized_dhcp_servers"] = ",".join(sorted(set(normalized_servers)))
 
-    for key in ("ad_server", "ad_domain"):
+    for key in ("ad_server", "ad_domain", "smtp_host"):
         if key in updates:
             value = str(updates[key] or "").strip()
             if value and (len(value) > 253 or re.search(r"[^A-Za-z0-9._:-]", value)):
                 return f"{key} geçerli bir IP veya alan adı olmalıdır."
             updates[key] = value
 
-    for key in ("wmi_username", "ssh_username"):
+    for key in ("wmi_username", "ssh_username", "smtp_username", "smtp_from", "notification_email"):
         if key in updates:
             updates[key] = str(updates[key]).strip()
             if len(updates[key]) > 256:
                 return f"{key} en fazla 256 karakter olabilir."
     if "wmi_username" in updates and "/" in updates["wmi_username"]:
         return "WMI kullanıcı adı DOMAIN\\kullanıcı veya kullanıcı@domain biçiminde olmalıdır; '/' kullanmayın."
+    if "webhook_url" in updates:
+        value = str(updates["webhook_url"] or "").strip()
+        if value and not value.startswith(("https://", "http://")):
+            return "Webhook URL http:// veya https:// ile başlamalıdır."
+        updates["webhook_url"] = value
     for key in ctx.SECRET_SETTING_KEYS:
         if key in updates and len(str(updates[key])) > 1024:
             return f"{key} en fazla 1024 karakter olabilir."
