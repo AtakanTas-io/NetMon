@@ -1,0 +1,49 @@
+name: Windows sürümü
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  windows-exe:
+    runs-on: windows-latest
+    steps:
+      - name: Kaynak kodu al
+        uses: actions/checkout@v4
+
+      - name: Python kur
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Derleme bağımlılıklarını kur
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Windows uygulamasını derle
+        working-directory: backend
+        run: pyinstaller --clean NetMon.spec
+
+      - name: SHA256 özeti oluştur
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash backend/dist/NetMon.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  NetMon.exe" | Set-Content backend/dist/NetMon.exe.sha256 -Encoding ascii
+
+      - name: GitHub sürümünü yayımla
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create $env:GITHUB_REF_NAME
+          backend/dist/NetMon.exe
+          backend/dist/NetMon.exe.sha256
+          --verify-tag
+          --generate-notes
+          --title "NetMon $env:GITHUB_REF_NAME"

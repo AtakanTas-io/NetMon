@@ -1,5 +1,9 @@
 name: Test
 
+permissions:
+  contents: read
+  id-token: write
+
 on:
   push:
     branches: [main, master, develop]
@@ -38,4 +42,12 @@ jobs:
       - name: Testleri çalıştır
         env:
           NETMON_SYSLOG_PORT: "0"
-        run: python -m pytest tests -v
+        run: python -m pytest tests -v --cov-report=term-missing --cov-report=xml
+
+      - name: Kapsam raporunu yükle
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          use_oidc: true
+          fail_ci_if_error: true
