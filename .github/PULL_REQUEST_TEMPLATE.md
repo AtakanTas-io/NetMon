@@ -1,16 +1,27 @@
-## Description
-Provide a brief description of the PR's purpose here.
+## Amaç
+Bu değişikliğin çözdüğü sorunu kısa ve teknik biçimde açıklayın.
 
-## Related Issues
-Closes # (issue number)
+## İlgili kayıt
+Closes #
 
-## Changes Made
-- List of changes
+## Değişiklikler
+- 
 
-## Testing Performed
-- [ ] Passed existing tests
-- [ ] Added new tests
-- [ ] Manual testing on Windows/Linux
+## Çalıştırılan testler
+- Komut ve sonuç:
+- [ ] `python -m pytest tests -v` başarılı
+- [ ] Ruff, Mypy ve güvenlik kontrolleri başarılı
+- [ ] Yeni davranış için test eklendi veya neden gerekmediği açıklandı
 
-## Screenshots (if UI changed)
-(Optional)
+## Denenen platformlar
+- [ ] Windows
+- [ ] Ubuntu/Linux
+- [ ] macOS
+- [ ] Yalnızca platformdan bağımsız testlerle doğrulandı
+
+## Veri kaynağı kontrolü
+- [ ] Arayüz ölçülen, keşfedilen, yapılandırılan ve kullanılamayan veriyi doğru ayırıyor
+- [ ] Olmayan veri tahmin veya örnek değer gibi gerçekmiş gösterilmiyor
+
+## Ekran görüntüsü
+Arayüz değiştiyse kişisel bilgi içermeyen önce/sonra görseli ekleyin.

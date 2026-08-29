@@ -1,32 +1,30 @@
 ---
-name: Bug report
-about: Create a report to help us improve NetMon
+name: Hata bildirimi
+about: Tekrarlanabilir bir NetMon hatasını bildirin
 title: ''
 labels: bug
 assignees: ''
 
 ---
 
-**Describe the bug**
-A clear and concise description of what the bug is.
+## Hata
+Gözlenen davranışı ve ekranda görünen hata metnini yazın.
 
-**To Reproduce**
-Steps to reproduce the behavior:
-1. Go to '...'
-2. Click on '....'
-3. Scroll down to '....'
-4. See error
+## Tekrarlama adımları
+1.
+2.
+3.
 
-**Expected behavior**
-A clear and concise description of what you expected to happen.
+## Beklenen davranış
 
-**Screenshots**
-If applicable, add screenshots to help explain your problem.
+## Ortam
+- NetMon sürümü/commit:
+- İşletim sistemi ve sürümü:
+- Python sürümü:
+- Tarayıcı veya PyWebView:
+- Kullanılan keşif protokolü (varsa):
 
-**Environment (please complete the following information):**
- - OS: [e.g. Windows 11]
- - Browser [e.g. Chrome, PyWebView]
- - NetMon Version [e.g. 2.6.0]
+## Log ve ekran görüntüsü
+Parola, token, kullanıcı adı, özel IP veya cihaz seri numarası gibi bilgileri silerek ilgili logu ekleyin.
 
-**Additional context**
-Add any other context about the problem here.
+## Ek bilgi
