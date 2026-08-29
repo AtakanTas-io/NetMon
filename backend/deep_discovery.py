@@ -59,7 +59,14 @@ def scan_windows_deep(ip: str, username: str = "", password: str = "", timeout: 
     Windows cihazlar için pywinrm veya WMI/PowerShell kullanarak Donanım & Yazılım detaylarını çeker.
     (CPU, RAM, Seri No, Yüklü Yazılımlar, İşletim Sistemi)
     """
-    result = {"status": "Failed", "os_family": "Windows", "error": "", "hardware": {}, "software": {}, "system": {}}
+    result: Dict[str, Any] = {
+        "status": "Failed",
+        "os_family": "Windows",
+        "error": "",
+        "hardware": {},
+        "software": {},
+        "system": {},
+    }
 
     # 1. Yöntem: WinRM kütüphanesi (Port 5985/5986)
     if HAS_WINRM and username and password:
@@ -157,7 +164,7 @@ def scan_windows_deep(ip: str, username: str = "", password: str = "", timeout: 
 # ============================================================
 def test_ssh_access(ip: str, username: str, password: str = "", timeout: int = 5) -> Dict[str, Any]:
     """Validate SSH connectivity/authentication without collecting inventory."""
-    result = {"status": "Failed", "error_code": "ssh_failed", "error": ""}
+    result: Dict[str, Any] = {"status": "Failed", "error_code": "ssh_failed", "error": ""}
     if not HAS_PARAMIKO:
         result.update({"error_code": "ssh_dependency_missing", "error": "Paramiko SSH bağımlılığı kurulu değil."})
         return result
@@ -212,7 +219,14 @@ def scan_linux_deep(
     Linux cihazlar için Paramiko (SSH) veya sistem SSH istemcisi kullanarak
     'uname', 'lshw', 'dpkg'/'rpm' gibi komutlarla Donanım ve Yazılım detaylarını çeker.
     """
-    result = {"status": "Failed", "os_family": "Linux", "error": "", "hardware": {}, "software": {}, "system": {}}
+    result: Dict[str, Any] = {
+        "status": "Failed",
+        "os_family": "Linux",
+        "error": "",
+        "hardware": {},
+        "software": {},
+        "system": {},
+    }
 
     if HAS_PARAMIKO and username:
         client = paramiko.SSHClient()
@@ -327,7 +341,13 @@ def scan_snmp_deep(ip: str, community: str = "public", timeout: float = 1.0) -> 
     Yazıcı, Router, Switch ve Access Point gibi ağ cihazları için SNMP ile
     sysDescr, sysName, sysObjectID ve donanım tanımlarını çeker.
     """
-    result = {"status": "Failed", "os_family": "Network Firmware", "hardware": {}, "system": {}, "software": {}}
+    result: Dict[str, Any] = {
+        "status": "Failed",
+        "os_family": "Network Firmware",
+        "hardware": {},
+        "system": {},
+        "software": {},
+    }
 
     if not community:
         result["error"] = "SNMP salt-okuma community yapılandırılmamış."
@@ -424,7 +444,7 @@ def integrate_discovery_flow(
     l_pass = credentials.get("ssh_password") or ""
     snmp_comm = credentials.get("snmp_community") or ""
 
-    deep_info = {"status": "Unavailable", "hardware": {}, "software": {}, "system": {}}
+    deep_info: Dict[str, Any] = {"status": "Unavailable", "hardware": {}, "software": {}, "system": {}}
 
     try:
         # Karar 1: Windows (Port 135 veya 5985)

@@ -37,12 +37,9 @@ ignore_missing_imports = true
 check_untyped_defs = true
 exclude = [
     "backend/application.py",
-    "backend/deep_discovery.py",
     "backend/desktop_app.py",
     "backend/fix_ports.py",
     "backend/netdiag_core.py",
-    "backend/snmp_switch_mapper.py",
-    "backend/wmi_scanner.py",
 ]
 
 [tool.bandit]

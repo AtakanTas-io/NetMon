@@ -7,6 +7,7 @@ import math
 import socket
 import threading
 import time
+from typing import Any
 
 # DÜZELTME: Bu modüller (wmi, pythoncom = pywin32) eksikse eskiden
 # import anında ServerException fırlatıp TÜM backend'in (server.py) açılışını
@@ -18,8 +19,8 @@ try:
 
     WMI_AVAILABLE = True
 except ImportError:
-    wmi = None
-    pythoncom = None
+    wmi = None  # type: ignore[assignment]
+    pythoncom = None  # type: ignore[assignment]
     WMI_AVAILABLE = False
 
 try:
@@ -27,7 +28,7 @@ try:
 
     WINRM_AVAILABLE = True
 except ImportError:
-    winrm = None
+    winrm = None  # type: ignore[assignment]
     WINRM_AVAILABLE = False
 
 # --- LOGGING YAPILANDIRMASI ---
@@ -113,14 +114,14 @@ def _ensure_com_initialized():
         _com_state.initialized = True
 
 
-def _local_ips() -> set:
+def _local_ips() -> set[str]:
     """Bu makinenin sahip olduğu tüm IPv4 adreslerini döndürür (localhost dahil)."""
     ips = {"127.0.0.1", "localhost", "::1"}
     try:
         hostname = socket.gethostname()
         ips.add(socket.gethostbyname(hostname))
         for info in socket.getaddrinfo(hostname, None, socket.AF_INET):
-            ips.add(info[4][0])
+            ips.add(str(info[4][0]))
     except Exception:
         pass
     try:
@@ -145,7 +146,7 @@ class WmiNetworkScanner:
     def test_access(self, ip: str) -> dict:
         """Test Windows management authorization without collecting inventory."""
         ports = self._probe_management_ports(ip)
-        base = {
+        base: dict[str, Any] = {
             "ip_address": ip,
             "status": "Failed",
             "management_ports": sorted(ports),
@@ -592,7 +593,7 @@ try {
         logger.info(f"{len(ip_list)} adet IP için tarama başlatılıyor (Max Thread: {max_workers})...")
         max_workers = max(1, min(int(max_workers or 10), 25))
         semaphore = threading.Semaphore(max_workers)
-        slots = [None] * len(ip_list)
+        slots: list[dict[str, Any] | None] = [None] * len(ip_list)
 
         def worker(index, ip):
             with semaphore:
