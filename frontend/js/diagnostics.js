@@ -534,7 +534,9 @@ function renderSecurityPage() {
 
 async function refreshSecurity() {
   try {
-    const data = await get("/api/security");
+    const [data, alertRules, alertEvents] = await Promise.all([
+      get("/api/security"), get("/api/alert-rules"), get("/api/alert-events?limit=25")
+    ]);
     S.securityData = data;
     const body = $("securityBody");
     if (!body) return;
@@ -585,6 +587,11 @@ async function refreshSecurity() {
       <h3 style="margin:0 0 12px; font-size:14px; color:var(--txt); border-bottom:1px solid var(--line-soft); padding-bottom:8px;">Politika İhlalleri & Güvenlik Logları</h3>
       ${rulesHtml}
       <div id="securityPostureBody" style="margin-top:18px"></div>
+      <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--line-soft)">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><div><h3 style="margin:0">Otomatik Alarm Kuralları</h3><div class="hint">Çevrimdışı süre, yeni cihaz, rogue DHCP, IP çakışması ve config farkı gerçek kanıttan değerlendirilir.</div></div>${hasPermission("security.manage")?'<div><button class="mini-btn" onclick="evaluateAlertRules()">Şimdi Değerlendir</button> <button class="mini-btn blue" onclick="openAlertRuleModal()">Kural Ekle</button></div>':''}</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;margin-top:10px">${(alertRules.rules||[]).map(rule=>`<div class="info-card"><span>${esc(rule.name)}</span><b>${esc(rule.rule_type.replaceAll('_',' '))}</b><small>${esc(rule.level)} · bekleme ${Math.round(rule.cooldown_seconds/60)} dk · ${rule.enabled?'etkin':'kapalı'}</small></div>`).join('')||'<div class="hint">Henüz otomatik alarm kuralı yok.</div>'}</div>
+        <h3 style="margin:16px 0 8px">Son Kural Olayları</h3>${(alertEvents.events||[]).map(event=>`<div style="padding:9px;border-bottom:1px solid var(--line-soft)"><span class="badge ${event.level==='critical'?'fail':event.level==='warning'?'warn':'blue'}">${esc(event.level)}</span> <b>${esc(event.rule_name)}</b> · ${esc(event.message)}<div class="hint">${new Date(event.ts*1000).toLocaleString('tr-TR')} · ${event.evidence.length} kanıt · teslim ${esc(JSON.stringify(event.delivery))}</div></div>`).join('')||'<div class="hint">Henüz kural olayı oluşmadı.</div>'}
+      </div>
     `;
     const postureEl = $("securityPostureBody");
     if (!hasPermission("security.manage")) {
@@ -598,6 +605,23 @@ async function refreshSecurity() {
     console.warn("Güvenlik verisi alınamadı:", e);
     renderLoadError("securityBody", "Güvenlik görünürlüğü alınamadı", e, "refreshSecurity()");
   }
+}
+
+function openAlertRuleModal() {
+  openModal(`<h3>Alarm Kuralı</h3><div class="field-label">Ad</div><input id="alertRuleName" placeholder="Kritik cihaz çevrimdışı"><div class="field-label" style="margin-top:10px">Tür</div><select id="alertRuleType"><option value="offline_duration">Çevrimdışı süre</option><option value="new_device">Yeni cihaz</option><option value="rogue_dhcp">Rogue DHCP</option><option value="ip_conflict">IP çakışması</option><option value="config_diff">Konfigürasyon farkı</option></select><div class="field-label" style="margin-top:10px">Eşik (saniye)</div><input id="alertRuleThreshold" type="number" min="0" value="1800"><div class="field-label" style="margin-top:10px">Seviye</div><select id="alertRuleLevel"><option value="warning">Uyarı</option><option value="critical">Kritik</option><option value="info">Bilgi</option></select><div class="field-label" style="margin-top:10px">Kanallar</div><label><input id="alertRuleEmail" type="checkbox"> E-posta</label> <label><input id="alertRuleWebhook" type="checkbox"> Webhook</label><div class="field-label" style="margin-top:10px">Tekrar bekleme (saniye)</div><input id="alertRuleCooldown" type="number" min="30" value="900"><div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px"><button class="mini-btn" onclick="closeModalForce()">İptal</button><button class="mini-btn blue" onclick="createAlertRule()">Kaydet</button></div>`);
+}
+
+async function createAlertRule() {
+  try {
+    const channels = []; if ($("alertRuleEmail").checked) channels.push("email"); if ($("alertRuleWebhook").checked) channels.push("webhook");
+    await post("/api/alert-rules", {name:$("alertRuleName").value.trim(),rule_type:$("alertRuleType").value,threshold_seconds:Number($("alertRuleThreshold").value),level:$("alertRuleLevel").value,channels,cooldown_seconds:Number($("alertRuleCooldown").value)});
+    closeModalForce(); toast("Alarm kuralı kaydedildi.", "success"); refreshSecurity();
+  } catch (e) { toast(e.message || "Alarm kuralı kaydedilemedi.", "error"); }
+}
+
+async function evaluateAlertRules() {
+  try { const data=await post("/api/alert-rules/evaluate",{}); toast(`${data.events.length} alarm olayı üretildi.`, data.events.length?'warn':'success'); refreshSecurity(); }
+  catch (e) { toast(e.message || "Kurallar değerlendirilemedi.", "error"); }
 }
 
 function showSecurityRule(index) {
@@ -647,6 +671,9 @@ Object.assign(globalThis, {
   refreshAnalyst,
   renderSecurityPage,
   refreshSecurity,
+  openAlertRuleModal,
+  createAlertRule,
+  evaluateAlertRules,
   showSecurityRule,
   inspectSecurityCapability,
 });

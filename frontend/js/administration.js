@@ -8,7 +8,7 @@ function renderReportsPage() {
       <div class="panel">
         <div class="panel-head" style="flex-wrap:wrap;height:auto;padding:12px;gap:12px">
           <div><h2 style="margin:0">Operasyon & SLA Raporu</h2><small class="hint">Gerçek envanter, trafik, alarm ve snapshot kayıtlarından üretilir.</small></div>
-          <div class="right"><button class="mini-btn" onclick="window.print()">Yazdır / PDF</button><button class="mini-btn blue" onclick="refreshReports()">Raporu Güncelle</button></div>
+          <div class="right"><button class="mini-btn" onclick="downloadOperationsReport('pdf')">PDF indir</button><button class="mini-btn" onclick="downloadOperationsReport('xlsx')">Excel indir</button><button class="mini-btn blue" onclick="refreshReports()">Raporu Güncelle</button></div>
         </div>
         <div class="panel-body" id="reportsBody"><div class="hint">Rapor hazırlanıyor…</div></div>
       </div>
@@ -20,7 +20,12 @@ async function refreshReports() {
   const body = $("reportsBody");
   if (!body) return;
   try {
-    const data = await get("/api/reports/operations");
+    const range = S.reportHistoryRange || "24h";
+    const [data, history, schedules] = await Promise.all([
+      get("/api/reports/operations"),
+      get(`/api/history?range=${range}`),
+      get("/api/report-schedules"),
+    ]);
     const s = data.summary || {};
     const t = data.traffic || {};
     const val = v => v == null ? "Ölçüm yok" : v;
@@ -42,11 +47,46 @@ async function refreshReports() {
           ${(data.recurring_alerts||[]).map(a=>`<div style="padding:8px 0;border-bottom:1px solid var(--line-soft)"><span class="badge ${a.level==='critical'?'fail':a.level==='warning'?'warn':'blue'}">${esc(a.level)}</span> <b>${a.count}×</b> ${esc(a.message)}</div>`).join("") || '<div class="hint">Son 24 saatte alarm kaydı yok.</div>'}
         </div></div>
       </div>
+      <div class="panel" style="box-shadow:none;margin-top:12px"><div class="panel-head" style="height:auto;flex-wrap:wrap;gap:8px"><div><h2>Operasyon Geçmişi</h2><small class="hint">Gerçek snapshot kayıtları; veri yoksa çizgi üretilmez.</small></div><div class="right">${["24h","7d","30d"].map(r=>`<button class="mini-btn ${range===r?'blue':''}" onclick="setReportHistoryRange('${r}')">${r}</button>`).join("")}</div></div><div class="panel-body">${renderHistoryChart(history.points||[])}</div></div>
+      <div class="panel" style="box-shadow:none;margin-top:12px"><div class="panel-head"><div><h2>Zamanlanmış Raporlar</h2><small class="hint">PDF/XLSX üretimi; alıcı girilirse SMTP ile gönderilir.</small></div>${hasPermission("system.settings.manage")?'<button class="mini-btn blue" onclick="openReportScheduleModal()">Program Ekle</button>':''}</div><div class="panel-body">${(schedules.schedules||[]).map(item=>`<div style="display:flex;justify-content:space-between;padding:9px;border-bottom:1px solid var(--line-soft)"><span><b>${esc(item.name)}</b><small class="hint"> · ${esc(item.format.toUpperCase())} · ${Math.round(item.interval_seconds/3600)} saat</small></span><span class="badge ${item.enabled?'ok':'gray'}">${item.enabled?'Etkin':'Kapalı'}</span></div>`).join("") || '<div class="hint">Henüz rapor programı yok.</div>'}</div></div>
       <div class="hint" style="margin-top:12px">${esc(data.data_note)}</div>
     `;
   } catch (e) {
     body.innerHTML = `<div class="hint c-red">Rapor alınamadı: ${esc(e.message)}</div>`;
   }
+}
+
+function renderHistoryChart(points) {
+  if (!points.length) return '<div class="hint">Bu aralıkta snapshot yok. Arka plan toplayıcısı ilk ölçümü kaydettiğinde grafik oluşur.</div>';
+  const values = points.map(p=>Number(p.online)||0);
+  const max = Math.max(1, ...values);
+  const polyline = values.map((value,index)=>`${points.length===1?50:(index/(points.length-1))*100},${92-(value/max)*78}`).join(" ");
+  const last = points[points.length-1];
+  return `<div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:10px"><span><b>${last.devices}</b> cihaz</span><span><b>${last.online}</b> çevrimiçi</span><span><b>${last.open_ports}</b> benzersiz açık port</span><span><b>${last.traffic_bps==null?'Ölçüm yok':fmtBandwidthRate(last.traffic_bps)}</b> trafik</span></div><svg viewBox="0 0 100 100" preserveAspectRatio="none" style="width:100%;height:180px;background:var(--panel-2);border-radius:8px" role="img" aria-label="Çevrimiçi cihaz geçmişi"><polyline fill="none" stroke="var(--cyan)" stroke-width="2" vector-effect="non-scaling-stroke" points="${polyline}"/></svg><div class="hint">${points.length} snapshot · ${new Date(points[0].ts*1000).toLocaleString("tr-TR")} — ${new Date(last.ts*1000).toLocaleString("tr-TR")}</div>`;
+}
+
+function setReportHistoryRange(range) { S.reportHistoryRange = range; refreshReports(); }
+
+async function downloadOperationsReport(format) {
+  try {
+    const response = await fetch(`/api/reports/export?format=${format}`, {headers:{Authorization:`Bearer ${getToken()}`}});
+    if (!response.ok) throw new Error("Rapor üretilemedi.");
+    const blob = await response.blob();
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob); link.download = `netmon-report.${format}`; link.click();
+    setTimeout(()=>URL.revokeObjectURL(link.href), 1000);
+  } catch (e) { toast(e.message || "Rapor indirilemedi.", "error"); }
+}
+
+function openReportScheduleModal() {
+  openModal(`<h3>Rapor Programı</h3><div class="field-label">Ad</div><input id="reportScheduleName" value="Haftalık operasyon raporu"><div class="field-label" style="margin-top:10px">Format</div><select id="reportScheduleFormat"><option value="xlsx">Excel</option><option value="pdf">PDF</option></select><div class="field-label" style="margin-top:10px">Aralık</div><select id="reportScheduleInterval"><option value="86400">Günlük</option><option value="604800">Haftalık</option><option value="2592000">30 günlük</option></select><div class="field-label" style="margin-top:10px">E-posta alıcısı (isteğe bağlı)</div><input id="reportScheduleRecipient" type="email" placeholder="noc@example.com"><div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px"><button class="mini-btn" onclick="closeModalForce()">İptal</button><button class="mini-btn blue" onclick="createReportSchedule()">Kaydet</button></div>`);
+}
+
+async function createReportSchedule() {
+  try {
+    await post("/api/report-schedules", {name:$("reportScheduleName").value.trim(),format:$("reportScheduleFormat").value,interval_seconds:Number($("reportScheduleInterval").value),recipient:$("reportScheduleRecipient").value.trim()});
+    closeModalForce(); toast("Rapor programı kaydedildi.", "success"); refreshReports();
+  } catch (e) { toast(e.message || "Rapor programı kaydedilemedi.", "error"); }
 }
 
 function renderAccessPage() {
@@ -95,14 +135,28 @@ function renderLocationsPage() {
 async function refreshLocations() {
   const body = $("locationsBody"); if (!body) return;
   try {
-    const data = await get("/api/locations/summary");
+    const [data, siteData] = await Promise.all([get("/api/locations/summary"), get("/api/sites")]);
     body.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div><b>Ağ kapsamı siteleri</b><div class="hint">Subnetler otomatik olarak envanter varlıklarını siteye bağlar.</div></div>${hasPermission("locations.manage")?'<button class="mini-btn blue" onclick="openSiteModal()">Site Ekle</button>':''}</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-bottom:16px">${(siteData.sites||[]).map(s=>`<div class="info-card"><span>${esc(s.name)}</span><b>${s.asset_count} varlık</b><small>${esc((s.cidrs||[]).join(', ')||'Subnet yok')}</small></div>`).join('') || '<div class="hint">Henüz subnet tabanlı site tanımlanmadı.</div>'}</div>
       <div class="hint" style="margin-bottom:12px">Adlandırma örneği: <code>${esc(data.naming_example)}</code></div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-bottom:16px">${(data.sites||[]).map(s=>`<div class="info-card"><span>${esc(s.location)}</span><b>${s.total} cihaz</b><small>${s.online} çevrimiçi · ${s.offline} çevrimdışı</small></div>`).join('') || '<div class="hint">Henüz lokasyon atanmış envanter yok.</div>'}</div>
       <div class="table-wrap"><table><thead><tr><th>Cihaz</th><th>IP</th><th>Tip</th><th>Durum</th><th>Lokasyon</th>${data.can_manage?'<th>İşlem</th>':''}</tr></thead><tbody>
       ${(data.assets||[]).map(a=>`<tr><td>${esc(a.hostname||'İsimsiz')}</td><td><code>${esc(a.ip||'-')}</code></td><td>${esc(a.device_type||'unknown')}</td><td>${esc(a.status||'unknown')}</td><td>${data.can_manage?`<input id="loc-${a.asset_id}" value="${esc(a.location==='Atanmamış'?'':a.location)}" placeholder="Şube > Bina > Kat > Kabinet" style="min-width:260px">`:esc(a.location)}</td>${data.can_manage?`<td><button class="mini-btn blue" onclick="saveLocation(${a.asset_id})">Kaydet</button></td>`:''}</tr>`).join('')}
       </tbody></table></div>`;
   } catch(e) { body.innerHTML=`<div class="hint c-red">Lokasyon verisi alınamadı: ${esc(e.message)}</div>`; }
+}
+
+function openSiteModal() {
+  openModal(`<h3>Yeni Site</h3><div class="field-label">Ad</div><input id="newSiteName" placeholder="İstanbul Merkez"><div class="field-label" style="margin-top:10px">Açıklama</div><input id="newSiteDescription" placeholder="Merkez ofis"><div class="field-label" style="margin-top:10px">Özel IPv4 subnetleri</div><input id="newSiteCidrs" placeholder="10.20.0.0/16, 192.168.10.0/24"><div class="hint">En geniş /16 desteklenir. Birden çok ağı virgülle ayırın.</div><div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px"><button class="mini-btn" onclick="closeModalForce()">İptal</button><button class="mini-btn blue" onclick="createSite()">Kaydet</button></div>`);
+}
+
+async function createSite() {
+  try {
+    const cidrs = $("newSiteCidrs").value.split(",").map(x=>x.trim()).filter(Boolean);
+    await post("/api/sites", {name:$("newSiteName").value.trim(),description:$("newSiteDescription").value.trim(),cidrs});
+    closeModalForce(); toast("Site kaydedildi ve varlıklar eşleştirildi.", "success"); refreshLocations();
+  } catch (e) { toast(e.message || "Site kaydedilemedi.", "error"); }
 }
 
 async function saveLocation(assetId) {
@@ -175,6 +229,19 @@ async function loadSettings() {
       </div>
 
       <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line-soft)">
+        <h4 style="margin:0 0 4px;color:var(--cyan);font-size:13px">📨 Alarm ve Rapor Bildirimleri</h4>
+        <div class="hint" style="margin-bottom:10px">SMTP, alarm e-postaları ve zamanlanmış rapor ekleri için kullanılır. Webhook yalnız yönetici tarafından tanımlanan adrese gönderilir.</div>
+        <div style="display:grid;grid-template-columns:2fr 1fr;gap:8px"><div><div class="field-label">SMTP sunucusu</div><input id="setSmtpHost" value="${esc(s.smtp_host||'')}" placeholder="smtp.example.com" ${isAdmin ? "" : "disabled"}></div><div><div class="field-label">Port</div><input id="setSmtpPort" type="number" min="1" max="65535" value="${esc(s.smtp_port||587)}" ${isAdmin ? "" : "disabled"}></div></div>
+        <div class="field-label" style="margin-top:10px">SMTP kullanıcı adı</div><input id="setSmtpUser" value="${esc(s.smtp_username||'')}" ${isAdmin ? "" : "disabled"}>
+        <div class="field-label" style="margin-top:10px">SMTP parolası</div><input id="setSmtpPass" type="password" placeholder="${s.smtp_password_configured?'Kayıtlı — değiştirmek için yeni parola yazın':'Parola'}" ${isAdmin ? "" : "disabled"}>
+        ${s.smtp_password_configured&&isAdmin?'<label class="hint"><input id="clearSmtpPass" type="checkbox"> Kayıtlı SMTP parolasını sil</label>':''}
+        <div class="field-label" style="margin-top:10px">Gönderen / alarm alıcısı</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><input id="setSmtpFrom" type="email" value="${esc(s.smtp_from||'')}" placeholder="netmon@example.com" ${isAdmin ? "" : "disabled"}><input id="setNotificationEmail" type="email" value="${esc(s.notification_email||'')}" placeholder="noc@example.com" ${isAdmin ? "" : "disabled"}></div>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:10px"><input id="setSmtpTls" type="checkbox" ${s.smtp_tls!==false?'checked':''} ${isAdmin ? "" : "disabled"}><span>STARTTLS kullan</span></label>
+        <div class="field-label" style="margin-top:10px">Webhook URL</div><input id="setWebhookUrl" type="url" value="" placeholder="${s.webhook_url_configured?'Kayıtlı — değiştirmek için yeni URL yazın':'https://hooks.example.com/netmon'}" ${isAdmin ? "" : "disabled"}>
+        ${s.webhook_url_configured&&isAdmin?'<label class="hint"><input id="clearWebhookUrl" type="checkbox"> Kayıtlı webhook adresini sil</label>':''}
+      </div>
+
+      <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line-soft)">
         <h4 style="margin:0 0 4px;color:var(--blue);font-size:13px">🔑 Yetkili Envanter Kimlik Bilgileri</h4>
         <div class="hint" style="margin-bottom:10px">Windows için WMI/WinRM, Linux için SSH ve ağ cihazları için SNMP salt-okuma bilgileri kullanılır.</div>
         <div class="field-label">Windows Envanter Servis Hesabı (en az yetki)</div>
@@ -223,6 +290,12 @@ async function saveSettings() {
       authorized_dhcp_servers: $("setAuthDhcp")?.value.trim() ?? undefined,
       ad_server: $("setAdServer")?.value.trim() ?? undefined,
       ad_domain: $("setAdDomain")?.value.trim() ?? undefined,
+      smtp_host: $("setSmtpHost")?.value.trim() ?? undefined,
+      smtp_port: Number($("setSmtpPort")?.value) || undefined,
+      smtp_username: $("setSmtpUser")?.value.trim() ?? undefined,
+      smtp_from: $("setSmtpFrom")?.value.trim() ?? undefined,
+      smtp_tls: Boolean($("setSmtpTls")?.checked),
+      notification_email: $("setNotificationEmail")?.value.trim() ?? undefined,
       wmi_username: $("setWmiUser")?.value.trim() ?? undefined,
       ssh_username: $("setSshUser")?.value.trim() ?? undefined,
       public_ip_lookup: Boolean($("setPublicIpLookup")?.checked),
@@ -231,12 +304,18 @@ async function saveSettings() {
     const wmiPassword = $("setWmiPass")?.value || "";
     const sshPassword = $("setSshPass")?.value || "";
     const snmpCommunity = $("setSnmpCommunity")?.value || "";
+    const smtpPassword = $("setSmtpPass")?.value || "";
+    const webhookUrl = $("setWebhookUrl")?.value.trim() || "";
     if ($("clearWmiPass")?.checked) payload.wmi_password = "";
     else if (wmiPassword) payload.wmi_password = wmiPassword;
     if ($("clearSshPass")?.checked) payload.ssh_password = "";
     else if (sshPassword) payload.ssh_password = sshPassword;
     if ($("clearSnmpCommunity")?.checked) payload.snmp_community = "";
     else if (snmpCommunity) payload.snmp_community = snmpCommunity;
+    if ($("clearSmtpPass")?.checked) payload.smtp_password = "";
+    else if (smtpPassword) payload.smtp_password = smtpPassword;
+    if ($("clearWebhookUrl")?.checked) payload.webhook_url = "";
+    else if (webhookUrl) payload.webhook_url = webhookUrl;
     await post("/api/settings", payload);
     toast("Ayarlar kaydedildi.", "success");
     await loadSettings();
@@ -290,9 +369,38 @@ function renderManagementPage() {
           <div><b>Ağ Cihazı SNMP</b><span>Salt-okuma community · UDP 161 · NetMon sunucu IP'sine izin veren ACL</span></div>
         </div>
       </div>
+      <div class="panel" style="margin-top:14px">
+        <div class="panel-head"><div><h2>API Anahtarlarım</h2><span class="data-scope">Rolünüzü aşmayan kapsam ve anahtar başına hız sınırı</span></div><button class="mini-btn blue" onclick="openApiKeyModal()">Anahtar Oluştur</button></div>
+        <div class="panel-body" id="apiKeysBody"><div class="hint">API anahtarları yükleniyor…</div></div>
+      </div>
     `;
   }
-  Promise.all([loadUsers(), loadAdminAudit()]);
+  Promise.all([loadUsers(), loadAdminAudit(), loadApiKeys()]);
+}
+
+async function loadApiKeys() {
+  const body = $("apiKeysBody"); if (!body) return;
+  try {
+    const data = await get("/api/api-keys");
+    body.innerHTML = (data.keys||[]).map(key=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:10px;border-bottom:1px solid var(--line-soft)"><div><b>${esc(key.name)}</b> <code>${esc(key.prefix)}…</code><div class="hint">${esc((key.permissions||[]).join(', '))} · ${key.rate_limit_per_minute}/dk · ${key.last_used_at?`son kullanım ${new Date(key.last_used_at*1000).toLocaleString('tr-TR')}`:'henüz kullanılmadı'}</div></div><div><span class="badge ${key.revoked?'gray':'ok'}">${key.revoked?'İptal':'Etkin'}</span>${key.revoked?'':` <button class="mini-btn" onclick="revokeApiKey(${key.id})">İptal Et</button>`}</div></div>`).join("") || '<div class="hint">Henüz API anahtarı oluşturmadınız.</div>';
+  } catch (e) { body.innerHTML = `<div class="hint c-red">API anahtarları alınamadı: ${esc(e.message)}</div>`; }
+}
+
+function openApiKeyModal() {
+  openModal(`<h3>API Anahtarı Oluştur</h3><div class="field-label">Ad</div><input id="apiKeyName" placeholder="Rapor otomasyonu"><div class="field-label" style="margin-top:10px">İzinler</div><input id="apiKeyPermissions" placeholder="reports.view, locations.view"><div class="hint">Boş bırakırsanız rolünüzün tüm izinleri verilir. Anahtar rolünüzü aşamaz.</div><div class="field-label" style="margin-top:10px">Dakikalık istek sınırı</div><input id="apiKeyRate" type="number" min="5" max="600" value="60"><div class="field-label" style="margin-top:10px">Geçerlilik (gün)</div><input id="apiKeyExpiry" type="number" min="1" max="3650" value="365"><div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px"><button class="mini-btn" onclick="closeModalForce()">İptal</button><button class="mini-btn blue" onclick="createApiKey()">Oluştur</button></div>`);
+}
+
+async function createApiKey() {
+  try {
+    const permissions = $("apiKeyPermissions").value.split(",").map(x=>x.trim()).filter(Boolean);
+    const data = await post("/api/api-keys", {name:$("apiKeyName").value.trim(),permissions,rate_limit_per_minute:Number($("apiKeyRate").value),expires_in_days:Number($("apiKeyExpiry").value)});
+    openModal(`<h3>API anahtarı hazır</h3><div class="device-learning warning"><b>Bu değer yalnız bir kez gösterilir.</b><code style="display:block;word-break:break-all;margin-top:10px">${esc(data.key)}</code></div><div style="display:flex;justify-content:flex-end;margin-top:16px"><button class="mini-btn blue" onclick="closeModalForce();loadApiKeys()">Anladım</button></div>`);
+  } catch (e) { toast(e.message || "API anahtarı oluşturulamadı.", "error"); }
+}
+
+async function revokeApiKey(id) {
+  try { await del(`/api/api-keys/${id}`); toast("API anahtarı iptal edildi.", "success"); loadApiKeys(); }
+  catch (e) { toast(e.message || "API anahtarı iptal edilemedi.", "error"); }
 }
 
 async function loadUsers() {
@@ -363,7 +471,7 @@ async function loadAdminAudit() {
 }
 
 function refreshManagementData() {
-  return Promise.all([loadUsers(), loadAdminAudit()]);
+  return Promise.all([loadUsers(), loadAdminAudit(), loadApiKeys()]);
 }
 
 function openCreateUserModal() {
@@ -482,11 +590,17 @@ async function stopSim() {
 Object.assign(globalThis, {
   renderReportsPage,
   refreshReports,
+  setReportHistoryRange,
+  downloadOperationsReport,
+  openReportScheduleModal,
+  createReportSchedule,
   renderAccessPage,
   refreshAccessCenter,
   renderLocationsPage,
   refreshLocations,
   saveLocation,
+  openSiteModal,
+  createSite,
   renderSettingsPage,
   loadSettings,
   saveSettings,
@@ -495,6 +609,10 @@ Object.assign(globalThis, {
   loadUsers,
   loadAdminAudit,
   refreshManagementData,
+  loadApiKeys,
+  openApiKeyModal,
+  createApiKey,
+  revokeApiKey,
   openCreateUserModal,
   createUser,
   toggleUserActive,
