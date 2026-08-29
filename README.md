@@ -142,7 +142,7 @@ Kökteki `calistir.bat`, `build.bat` ve `auto-push.ps1` dosyaları `scripts/wind
 python -m pytest tests -v
 ```
 
-Mevcut test paketi 182 senaryodan oluşuyor ve toplam ölçülen backend kapsamı için yüzde 70 alt sınırı uyguluyor. GitHub Actions paketi Windows ve Ubuntu üzerinde Python 3.11 ve 3.13 ile çalıştırıyor; Ruff, Mypy, Bandit ve `pip-audit` ayrı iş akışlarında denetleniyor.
+Mevcut test paketi 184 senaryodan oluşuyor ve toplam ölçülen backend kapsamı için yüzde 70 alt sınırı uyguluyor. GitHub Actions paketi Windows ve Ubuntu üzerinde Python 3.11 ve 3.13 ile çalıştırıyor; Ruff, Mypy, Bandit ve `pip-audit` ayrı iş akışlarında denetleniyor.
 
 ## Notlar
 
