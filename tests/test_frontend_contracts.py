@@ -82,3 +82,13 @@ def test_live_pages_poll_only_as_disconnected_websocket_fallback():
     assert 'type === "topology"' in source
     assert "renderDeviceTable();" in source
     assert "drawTopology();" in source
+
+
+def test_ncm_uses_line_diff_and_collapses_large_unchanged_blocks():
+    index_html = (ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
+    source = frontend_source()
+    assert "diff@7.0.0" in index_html
+    assert "globalThis.Diff.diffLines(before, after)" in source
+    assert 'type: "collapse"' in source
+    assert "satır değişmedi, göster" in source
+    assert "expandUnchangedBlock" in source

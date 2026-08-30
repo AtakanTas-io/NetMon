@@ -328,6 +328,8 @@ def test_ncm_backup_and_diff_roundtrip(isolated_server):
     diff_res = client.get(f"/api/ncm/diff?ip=192.168.1.254&v1_id={v1_id}&v2_id={v2_id}", headers=headers)
     assert diff_res.status_code == 200
     diff_data = diff_res.json()
+    assert diff_data["config_before"] == cfg1
+    assert diff_data["config_after"] == cfg2
     assert diff_data["stats"]["additions"] >= 1
     assert diff_data["stats"]["deletions"] >= 1
     assert any(line["type"] == "add" and "vlan 20" in line["content"] for line in diff_data["diff_lines"])
