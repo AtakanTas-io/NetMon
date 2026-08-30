@@ -20,9 +20,11 @@ if not logger.handlers:
 logger.setLevel(logging.INFO)
 
 # Opsiyonel 3. parti kütüphanelerin dinamik kontrolü (yoksa fallback yöntemler çalışır)
+winrm: Any = None
 try:
-    import winrm
+    import winrm as _winrm
 
+    winrm = _winrm
     HAS_WINRM = True
 except ImportError:
     HAS_WINRM = False
