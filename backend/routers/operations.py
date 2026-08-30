@@ -53,6 +53,11 @@ class ApiKeyInput(BaseModel):
     rate_limit_per_minute: int = Field(default=60, ge=5, le=600)
 
 
+class AlertStateInput(BaseModel):
+    is_read: bool | None = None
+    suppressed: bool | None = None
+
+
 def _rule_dict(row) -> dict:
     return {
         "id": row[0],
@@ -194,6 +199,56 @@ def create_operations_router(ctx) -> APIRouter:
                 for row in rows
             ]
         }
+
+    @router.get("/api/alerts/inbox")
+    def alert_inbox(limit: int = Query(default=100, ge=1, le=500), user: dict = Depends(ctx.get_current_user)):
+        conn = ctx.db_conn()
+        rows = conn.execute(
+            "SELECT a.ts,a.level,a.message,a.source,COALESCE(s.is_read,0),COALESCE(s.suppressed,0) "
+            "FROM alerts a LEFT JOIN alert_user_states s ON s.alert_ts=a.ts AND s.user_id=? "
+            "ORDER BY a.ts DESC LIMIT ?",
+            (user["id"], limit),
+        ).fetchall()
+        conn.close()
+        alerts = [
+            {
+                "id": f"{row[0]:.6f}",
+                "ts": row[0],
+                "level": row[1] or "warning",
+                "message": row[2] or "Alarm ayrıntısı yok.",
+                "source": row[3] or "NetMon",
+                "is_read": bool(row[4]),
+                "suppressed": bool(row[5]),
+            }
+            for row in rows
+        ]
+        return {"alerts": alerts, "unread": sum(not item["is_read"] and not item["suppressed"] for item in alerts)}
+
+    @router.put("/api/alerts/{alert_id}/state")
+    def update_alert_state(alert_id: str, body: AlertStateInput, user: dict = Depends(ctx.get_current_user)):
+        try:
+            alert_ts = float(alert_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Geçersiz alarm kimliği.") from exc
+        conn = ctx.db_conn()
+        if conn.execute("SELECT 1 FROM alerts WHERE ts=?", (alert_ts,)).fetchone() is None:
+            conn.close()
+            raise HTTPException(status_code=404, detail="Alarm bulunamadı.")
+        current = conn.execute(
+            "SELECT is_read,suppressed FROM alert_user_states WHERE user_id=? AND alert_ts=?",
+            (user["id"], alert_ts),
+        ).fetchone() or (0, 0)
+        is_read = int(body.is_read if body.is_read is not None else bool(current[0]))
+        suppressed = int(body.suppressed if body.suppressed is not None else bool(current[1]))
+        conn.execute(
+            "INSERT INTO alert_user_states(user_id,alert_ts,is_read,suppressed,updated_at) VALUES(?,?,?,?,?) "
+            "ON CONFLICT(user_id,alert_ts) DO UPDATE SET is_read=excluded.is_read,"
+            "suppressed=excluded.suppressed,updated_at=excluded.updated_at",
+            (user["id"], alert_ts, is_read, suppressed, time.time()),
+        )
+        conn.commit()
+        conn.close()
+        return {"ok": True, "id": alert_id, "is_read": bool(is_read), "suppressed": bool(suppressed)}
 
     @router.get("/api/history")
     def get_history(

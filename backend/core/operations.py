@@ -67,6 +67,17 @@ def ensure_operations_schema(conn: sqlite3.Connection) -> None:
             FOREIGN KEY(rule_id) REFERENCES alert_rules(id) ON DELETE CASCADE
         );
         CREATE INDEX IF NOT EXISTS idx_alert_events_ts ON alert_events(ts DESC, rule_id);
+        CREATE TABLE IF NOT EXISTS alert_user_states (
+            user_id INTEGER NOT NULL,
+            alert_ts REAL NOT NULL,
+            is_read INTEGER NOT NULL DEFAULT 0,
+            suppressed INTEGER NOT NULL DEFAULT 0,
+            updated_at REAL NOT NULL,
+            PRIMARY KEY(user_id, alert_ts),
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_alert_user_states_user
+            ON alert_user_states(user_id, is_read, suppressed);
         CREATE TABLE IF NOT EXISTS report_schedules (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
