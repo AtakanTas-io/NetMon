@@ -10,6 +10,9 @@ Bu dosya [Keep a Changelog](https://keepachangelog.com/tr-TR/1.1.0/) düzenini i
 - Canlı alarm sayacı, kullanıcıya özel kalıcı okundu ve bastırma durumları olan alarm gelen kutusu eklendi.
 - Dashboard, cihaz listesi ve topoloji yenilemeleri WebSocket push akışına taşındı; polling yalnızca bağlantı koptuğunda emniyet yenilemesi olarak bırakıldı.
 - NCM karşılaştırması jsdiff ile satır bazında renklendirildi ve uzun değişmeyen bloklar açılabilir özetlere dönüştürüldü.
+- Cihaz ayrıntıları liste, topoloji, arama ve alarmdan açılabilen ortak sekmeli yan panelde birleştirildi.
+- Büyük envanterler için görünür satırları oluşturan sanal cihaz listesi eklendi.
+- Ctrl/Cmd+K ile açılan IP, hostname ve MAC odaklı hızlı cihaz araması eklendi.
 
 ## [2.5.0] - 2026-08-30
 
