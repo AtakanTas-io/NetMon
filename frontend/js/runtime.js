@@ -763,7 +763,8 @@ function startAutoRefresh() {
   if (autoRefreshTimer) clearInterval(autoRefreshTimer);
   autoRefreshTimer = setInterval(async () => {
     if (document.hidden) return;
-    refreshAll();
+    const socketConnected = networkSocket?.readyState === WebSocket.OPEN;
+    if (!socketConnected) refreshAll();
   }, 10000);
 }
 
