@@ -5,6 +5,10 @@ import pytest
 from backend import deep_discovery as module
 
 
+def test_optional_winrm_dependency_has_stable_module_attribute():
+    assert hasattr(module, "winrm")
+
+
 def test_windows_scan_without_management_dependencies_returns_no_hardware(monkeypatch):
     monkeypatch.setattr(module, "HAS_WINRM", False)
     monkeypatch.setattr(module, "HAS_WMI", False)
