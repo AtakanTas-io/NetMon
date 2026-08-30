@@ -185,6 +185,8 @@ def create_ncm_router(ctx) -> APIRouter:
                 )
         return {
             "ip": ip,
+            "config_before": row1[2],
+            "config_after": row2[2],
             "v1": {
                 "id": row1[0],
                 "label": row1[1],
