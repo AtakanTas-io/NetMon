@@ -49,3 +49,16 @@ def test_inventory_actions_are_device_protocol_aware():
     assert 'return "snmp"' in app_js
     assert "function rdpActionButtonHtml" in app_js
     assert "SNMP Envanter" in app_js
+
+
+def test_topology_uses_node_link_contract_and_large_network_simplification():
+    index_html = (ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
+    topology_js = (ROOT / "frontend" / "js" / "topology.js").read_text(encoding="utf-8")
+
+    assert "vis-network@9.1.9" in index_html
+    assert "new globalThis.vis.Network" in topology_js
+    assert "rawData?.nodes" in topology_js
+    assert "rawData?.edges" in topology_js
+    assert "nodes.length > 200" in topology_js
+    assert "edge.source_port" in topology_js
+    assert 'showNode(params.nodes[0])' in topology_js
