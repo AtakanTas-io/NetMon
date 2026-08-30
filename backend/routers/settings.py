@@ -4,6 +4,8 @@ import ipaddress
 import json
 import platform
 import re
+import time
+from typing import Literal
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
@@ -38,6 +40,10 @@ class SettingsUpdate(BaseModel):
     smtp_tls: bool | None = None
     notification_email: str | None = None
     webhook_url: str | None = None
+
+
+class UserPreferenceUpdate(BaseModel):
+    theme: Literal["light", "dark", "system"]
 
 
 def _validate_settings_update(ctx, updates: dict) -> str | None:
@@ -134,6 +140,25 @@ def create_settings_router(ctx) -> APIRouter:
             "platform": platform.platform(),
             "db_path": str(ctx.DB_PATH) if can_manage else None,
         }
+
+    @router.get("/api/preferences")
+    def get_user_preferences(user: dict = Depends(ctx.get_current_user)):
+        conn = ctx.db_conn()
+        row = conn.execute("SELECT theme FROM user_preferences WHERE user_id=?", (user["id"],)).fetchone()
+        conn.close()
+        return {"theme": row[0] if row else "system"}
+
+    @router.put("/api/preferences")
+    def update_user_preferences(body: UserPreferenceUpdate, user: dict = Depends(ctx.get_current_user)):
+        conn = ctx.db_conn()
+        conn.execute(
+            "INSERT INTO user_preferences(user_id,theme,updated_at) VALUES(?,?,?) "
+            "ON CONFLICT(user_id) DO UPDATE SET theme=excluded.theme,updated_at=excluded.updated_at",
+            (user["id"], body.theme, time.time()),
+        )
+        conn.commit()
+        conn.close()
+        return {"ok": True, "theme": body.theme}
 
     @router.post("/api/settings")
     def api_set_settings(body: SettingsUpdate, user: dict = Depends(ctx.require_permission("system.settings.manage"))):
