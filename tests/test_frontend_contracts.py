@@ -105,3 +105,15 @@ def test_shared_device_drawer_search_and_virtual_list_contracts():
     assert "performance.now()" in source
     assert "filteredList.length >= 500" in source
     assert "requestAnimationFrame(paint)" in source
+
+
+def test_empty_inventory_onboarding_and_backend_theme_preference_contracts():
+    source = frontend_source()
+    index_html = (ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
+    assert "function maybeShowOnboarding" in source
+    assert "Atla, manuel devam et" in source
+    assert 'await post("/api/settings", settings)' in source
+    assert "await scanNetwork()" in source
+    assert 'apiFetch("/api/preferences", { method: "PUT"' in source
+    assert 'localStorage.setItem("netmon_theme"' not in source
+    assert "/static/css/tokens.css" in index_html

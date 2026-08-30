@@ -73,6 +73,15 @@ def test_alarm_inbox_read_and_suppressed_state_is_persistent(isolated_server):
     assert persisted["alerts"][0]["suppressed"] is True
 
 
+def test_user_theme_preference_persists_without_admin_settings_permission(isolated_server):
+    client, password_path = isolated_server
+    headers = _bootstrap_admin(client, password_path)
+    saved = client.put("/api/preferences", headers=headers, json={"theme": "light"})
+    assert saved.status_code == 200
+    assert client.get("/api/preferences", headers=headers).json()["theme"] == "light"
+    assert client.put("/api/preferences", headers=headers, json={"theme": "invalid"}).status_code == 422
+
+
 def test_alert_rule_uses_evidence_and_respects_cooldown(isolated_server):
     client, password_path = isolated_server
     headers = _bootstrap_admin(client, password_path)
