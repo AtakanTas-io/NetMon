@@ -61,7 +61,7 @@ def test_topology_uses_node_link_contract_and_large_network_simplification():
     assert "rawData?.edges" in topology_js
     assert "nodes.length > 200" in topology_js
     assert "edge.source_port" in topology_js
-    assert "showNode(params.nodes[0])" in topology_js
+    assert "openDeviceDrawer(node.mac" in topology_js
 
 
 def test_alarm_inbox_uses_websocket_and_persistent_state_api():
@@ -92,3 +92,16 @@ def test_ncm_uses_line_diff_and_collapses_large_unchanged_blocks():
     assert 'type: "collapse"' in source
     assert "satır değişmedi, göster" in source
     assert "expandUnchangedBlock" in source
+
+
+def test_shared_device_drawer_search_and_virtual_list_contracts():
+    source = frontend_source()
+    assert "function openDeviceDrawer" in source
+    assert "Genel Bakış" in source and "Config Değişiklikleri" in source and "İlişkili Alarmlar" in source
+    assert "openDeviceDrawer(node.mac" in source
+    assert 'openDeviceDrawer(null, ip, "alerts")' in source
+    assert 'event.key.toLowerCase() === "k"' in source
+    assert "function levenshteinDistance" in source
+    assert "performance.now()" in source
+    assert "filteredList.length >= 500" in source
+    assert "requestAnimationFrame(paint)" in source
