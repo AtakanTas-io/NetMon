@@ -177,18 +177,25 @@ function updateThemeIcon() {
   btn.innerHTML = ico(isLight ? "moon" : "sun", 17);
 }
 
-function toggleTheme() {
+function applyThemePreference(theme) {
   const root = document.documentElement;
-  const next = root.getAttribute("data-theme") === "light" ? "dark" : "light";
-  if (next === "light") {
-    root.setAttribute("data-theme", "light");
-  } else {
-    root.removeAttribute("data-theme");
-  }
-  try {
-    localStorage.setItem("netmon_theme", next);
-  } catch (e) {}
+  if (theme === "light" || theme === "dark") root.setAttribute("data-theme", theme);
+  else root.removeAttribute("data-theme");
   updateThemeIcon();
+}
+
+async function loadThemePreference() {
+  try { const data = await get("/api/preferences"); S.theme = data.theme || "system"; applyThemePreference(S.theme); }
+  catch (_) { applyThemePreference("system"); }
+}
+
+async function toggleTheme() {
+  const currentLight = document.documentElement.getAttribute("data-theme") === "light" || (!document.documentElement.hasAttribute("data-theme") && matchMedia("(prefers-color-scheme: light)").matches);
+  const next = currentLight ? "dark" : "light";
+  applyThemePreference(next);
+  S.theme = next;
+  try { await apiFetch("/api/preferences", { method: "PUT", body: { theme: next } }); }
+  catch (error) { toast(`Tema tercihi kaydedilemedi: ${error.message}`, "warn"); }
 }
 
 function initStaticIcons() {
@@ -219,6 +226,8 @@ if (document.readyState === "loading") {
 } else {
   initStaticIcons();
 }
+
+Object.assign(globalThis, { applyThemePreference, loadThemePreference });
 
 function toggleAuto() {
   S.auto = !S.auto;

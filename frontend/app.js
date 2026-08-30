@@ -16,4 +16,5 @@ import "./js/traffic.js";
 import "./js/ncm.js";
 import "./js/notifications.js";
 import "./js/device-experience.js";
+import "./js/onboarding.js";
 import "./js/runtime.js";

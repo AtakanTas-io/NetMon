@@ -141,6 +141,7 @@ async function scanNetwork() {
     renderDeviceTable();
     renderStats();
     renderInventoryCommandCenter();
+    maybeShowOnboarding();
     updateDeviceFilterSummary();
     drawTopology();
   }
@@ -199,6 +200,7 @@ async function refreshDevices() {
     renderDeviceTable();
     renderStats();
     renderInventoryCommandCenter();
+    maybeShowOnboarding();
     const scanBox = $("inventoryScanHistory");
     if (scanBox) {
       const scans = await get("/api/inventory/scans?limit=5").catch(() => null);
@@ -562,6 +564,7 @@ function boot() {
   hideLogin();
   applyRolePermissions();
   buildNav();
+  loadThemePreference();
   go("dashboard");
   if (S.user?.must_change_password) {
     setTimeout(() => openPasswordChangeModal(true), 100);
