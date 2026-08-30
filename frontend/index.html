@@ -8,6 +8,7 @@
     <meta http-equiv="Expires" content="0" />
     <title>NetMon — Ağ İzleme</title>
     <script src="/static/chart.umd.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/diff@7.0.0/dist/diff.min.js"></script>
     <link rel="stylesheet" href="https://unpkg.com/vis-network@9.1.9/styles/vis-network.min.css" />
     <script src="https://unpkg.com/vis-network@9.1.9/dist/vis-network.min.js"></script>
     <style>
@@ -995,6 +996,7 @@
       .alert-inbox-popover{position:absolute;right:0;top:45px;z-index:80;width:min(440px,90vw);max-height:70vh;overflow:hidden;border:1px solid var(--line);border-radius:12px;background:var(--panel);box-shadow:0 18px 55px rgba(0,0,0,.45)}
       .alert-inbox-popover>header{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:12px;border-bottom:1px solid var(--line)}.alert-inbox-popover>header small{display:block;color:var(--muted);margin-top:2px}.alert-inbox-list{max-height:58vh;overflow:auto}
       .alert-inbox-item{display:grid;grid-template-columns:5px 1fr auto;gap:9px;padding:11px;border-bottom:1px solid var(--line-soft);cursor:pointer}.alert-inbox-item:hover{background:var(--panel-2)}.alert-inbox-item>i{border-radius:5px;background:var(--muted)}.alert-inbox-item.level-critical>i{background:var(--red)}.alert-inbox-item.level-warning>i{background:var(--orange)}.alert-inbox-item.unread{background:rgba(56,189,248,.07)}.alert-inbox-item b{display:block;font-size:11px;line-height:1.35}.alert-inbox-item span{display:block;margin-top:4px;color:var(--muted);font-size:9.5px}.alert-inbox-actions{display:flex;gap:3px}.alert-inbox-actions button{width:25px;height:25px;border:1px solid var(--line);border-radius:6px;background:var(--panel-2);color:var(--txt);cursor:pointer}
+      .diff-collapse{display:flex;justify-content:center;padding:8px;background:var(--panel-2);border-block:1px solid var(--line-soft)}.diff-collapse button{border:0;background:transparent;color:var(--blue);cursor:pointer;font-size:10px;font-weight:700}
       .inventory-diagnostic-card { margin-top:10px; color:var(--txt); border:1px solid rgba(239,68,68,.35); border-radius:11px; background:linear-gradient(145deg,rgba(127,29,29,.14),rgba(15,23,42,.96)); overflow:hidden; text-align:left; }
       .inventory-diagnostic-head { display:flex; align-items:center; justify-content:space-between; padding:10px 12px; border-bottom:1px solid rgba(239,68,68,.2); }
       .inventory-diagnostic-head > div { display:flex; flex-direction:column; gap:2px; }

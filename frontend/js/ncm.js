@@ -165,8 +165,12 @@ async function compareNcmDiff() {
 
   try {
     const diffData = await get(`/api/ncm/diff?ip=${encodeURIComponent(ip)}&v1_id=${v1}&v2_id=${v2}`);
-    const stats = diffData?.stats || { additions: 0, deletions: 0 };
-    const lines = diffData?.diff_lines || [];
+    const lines = globalThis.Diff?.diffLines
+      ? buildNcmDiffRows(diffData.config_before || "", diffData.config_after || "")
+      : (diffData?.diff_lines || []);
+    const stats = globalThis.Diff?.diffLines
+      ? { additions: lines.filter(line => line.type === "add").length, deletions: lines.filter(line => line.type === "delete").length }
+      : (diffData?.stats || { additions: 0, deletions: 0 });
 
     if (!lines.length) {
       container.innerHTML = `
@@ -192,7 +196,8 @@ async function compareNcmDiff() {
           <button class="mini-btn" onclick="copyDiffToClipboard()">📋 Farkları Kopyala</button>
         </div>
         <div style="max-height:480px; overflow-y:auto; padding:4px 0" id="ncmDiffLinesWrap">
-          ${lines.map(l => {
+          ${lines.map((l, index) => {
+            if (l.type === "collapse") return `<div class="diff-collapse" id="diffCollapse-${index}"><button onclick="expandUnchangedBlock(${index})">${l.count} satır değişmedi, göster</button><template>${l.lines.map(line => `<div class="diff-line"><span class="diff-num">${line.old_ln}</span><span class="diff-num">${line.new_ln}</span><span class="diff-content">  ${esc(line.content)}</span></div>`).join("")}</template></div>`;
             let cls = "";
             let prefix = " ";
             if (l.type === "add") { cls = "diff-add"; prefix = "+"; }
@@ -215,6 +220,30 @@ async function compareNcmDiff() {
   }
 }
 
+function buildNcmDiffRows(before, after) {
+  if (!globalThis.Diff?.diffLines) return [];
+  let oldLine = 1, newLine = 1;
+  const rows = [];
+  globalThis.Diff.diffLines(before, after).forEach(part => {
+    const values = part.value.replace(/\n$/, "").split("\n");
+    const partRows = values.map(content => {
+      if (part.added) return { type: "add", content, old_ln: null, new_ln: newLine++ };
+      if (part.removed) return { type: "delete", content, old_ln: oldLine++, new_ln: null };
+      return { type: "context", content, old_ln: oldLine++, new_ln: newLine++ };
+    });
+    if (!part.added && !part.removed && partRows.length > 8) {
+      rows.push(...partRows.slice(0, 2), { type: "collapse", count: partRows.length - 4, lines: partRows.slice(2, -2) }, ...partRows.slice(-2));
+    } else rows.push(...partRows);
+  });
+  return rows;
+}
+
+function expandUnchangedBlock(index) {
+  const block = $(`diffCollapse-${index}`);
+  const template = block?.querySelector("template");
+  if (block && template) block.replaceWith(template.content.cloneNode(true));
+}
+
 function copyDiffToClipboard() {
   const wrap = $("ncmDiffLinesWrap");
   if (wrap) {
@@ -229,5 +258,7 @@ Object.assign(globalThis, {
   loadNcmDeviceVersions,
   takeNcmBackup,
   compareNcmDiff,
+  buildNcmDiffRows,
+  expandUnchangedBlock,
   copyDiffToClipboard,
 });
