@@ -7,6 +7,7 @@ Bu dosya [Keep a Changelog](https://keepachangelog.com/tr-TR/1.1.0/) düzenini i
 ### Eklendi
 
 - Ağ topolojisi cihaz durumu ve port bağlantılarını gösteren, büyük ağlarda otomatik sadeleşen etkileşimli node-link haritasına dönüştürüldü.
+- Canlı alarm sayacı, kullanıcıya özel kalıcı okundu ve bastırma durumları olan alarm gelen kutusu eklendi.
 
 ## [2.5.0] - 2026-08-30
 
