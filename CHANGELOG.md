@@ -13,6 +13,8 @@ Bu dosya [Keep a Changelog](https://keepachangelog.com/tr-TR/1.1.0/) düzenini i
 - Cihaz ayrıntıları liste, topoloji, arama ve alarmdan açılabilen ortak sekmeli yan panelde birleştirildi.
 - Büyük envanterler için görünür satırları oluşturan sanal cihaz listesi eklendi.
 - Ctrl/Cmd+K ile açılan IP, hostname ve MAC odaklı hızlı cihaz araması eklendi.
+- Boş envanterde subnet, isteğe bağlı erişim bilgileri ve ilk taramayı yöneten üç adımlı kurulum sihirbazı eklendi.
+- Renk, boşluk ve tipografi tokenları ile kullanıcı hesabına kaydedilen açık/koyu/sistem tema tercihi eklendi.
 
 ## [2.5.0] - 2026-08-30
 
