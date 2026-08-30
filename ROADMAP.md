@@ -9,10 +9,6 @@
 - `application.py`, `netdiag_core.py` ve masaüstü girişlerini coverage kapsamına alıp başlangıçtaki yüzde 70 eşiğini kademeli yükseltmek
 - Kalan masaüstü ve çekirdek çalışma zamanı modüllerini tiplendirip Mypy denetimini strict moda taşımak
 
-## Paketleme
-
-- Windows derlemesini temiz bir `v*` etiketiyle doğrulayıp ilk GitHub sürümünü yayımlamak
-
 ## Daha sonra
 
 - Topoloji için LLDP/CDP kanıtlarını genişletmek
