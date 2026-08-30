@@ -1,6 +1,7 @@
 import "./inventory.js";
 
 const TOPO = { k: 1, x: 0, y: 0, drag: null };
+const VIS_TOPO = { network: null, nodes: null, edges: null, container: null };
 const STATUS_COLOR = {
   online: "#3ddc84",
   discovered: "#f5a623",
@@ -325,8 +326,100 @@ function setTopoCategory(cat) {
   drawTopology();
 }
 
+function topologyIcon(type) {
+  return ({
+    switch: "🖧", router: "⇄", gateway: "⇄", firewall: "🛡", server: "▣",
+    printer: "▤", iot: "⌁", access_point: "⌁", phone: "▯", mobile: "▯",
+    pc: "▣", computer: "▣", laptop: "▣", internet: "◎", lan: "⌘",
+  })[type] || "●";
+}
+
+function topologyVisibleData(rawData) {
+  let nodes = [...(rawData?.nodes || [])];
+  const simplified = nodes.length > 200;
+  let selectedSubnet = "";
+  if (simplified) {
+    const configured = String(S.settings?.subnet || "").split(",").map(value => value.trim()).filter(Boolean);
+    selectedSubnet = String(S.topologySubnet || configured[0] || "");
+    const prefix = selectedSubnet.includes("/") ? selectedSubnet.split("/")[0].split(".").slice(0, 3).join(".") + "." : "";
+    nodes = nodes.filter(node =>
+      ["internet", "gateway", "router", "switch", "lan"].includes(node.id) ||
+      ["switch", "router", "access_point"].includes(node.type) ||
+      (prefix && String(node.ip || "").startsWith(prefix))
+    );
+  }
+  const ids = new Set(nodes.map(node => node.id));
+  return {
+    nodes,
+    edges: (rawData?.edges || []).filter(edge => ids.has(edge.from) && ids.has(edge.to)),
+    simplified,
+    selectedSubnet,
+  };
+}
+
+function drawVisTopology(container) {
+  if (!globalThis.vis?.Network || !globalThis.vis?.DataSet) return false;
+  const visible = topologyVisibleData(S.topology || { nodes: [], edges: [] });
+  const statusFor = node => (S.devices.find(device => device.ip && device.ip === node.ip)?.status || node.status || "unknown");
+  const nodes = visible.nodes.map(node => {
+    const status = statusFor(node);
+    const color = STATUS_COLOR[status] || STATUS_COLOR.unknown;
+    const name = topologyDeviceName(node);
+    return {
+      ...node,
+      id: node.id,
+      label: `${topologyIcon(node.type)}  ${name}${node.ip ? `\n${node.ip}` : ""}`,
+      title: `<b>${esc(name)}</b><br>${esc(topologyTypeTitle(node.type))}${node.ip ? `<br>${esc(node.ip)}` : ""}<br>Durum: ${esc(deviceStatusLabel(status))}`,
+      shape: "box",
+      color: { background: "#0f172a", border: color, highlight: { background: "#172554", border: "#38bdf8" } },
+      borderWidth: status === "offline" ? 3 : 2,
+      font: { color: "#f8fafc", face: "Segoe UI", size: visible.simplified ? 12 : 13, multi: false },
+      margin: 12,
+    };
+  });
+  const edges = visible.edges.map((edge, index) => {
+    const state = edge.congested || edge.mismatch || edge.status === "warning" ? "warning" : edge.status;
+    const color = state === "online" ? STATUS_COLOR.online : state === "offline" || state === "down" ? STATUS_COLOR.offline : state === "warning" ? STATUS_COLOR.warn : STATUS_COLOR.unknown;
+    const ports = edge.source_port || edge.target_port || edge.label
+      ? `${edge.source_port || edge.label || "?"} → ${edge.target_port || "?"}`
+      : "Port eşleşmesi keşfedilmedi";
+    return {
+      ...edge,
+      id: edge.id || `edge-${index}-${edge.from}-${edge.to}`,
+      title: `<b>Port bağlantısı</b><br>${esc(ports)}`,
+      color: { color, highlight: "#38bdf8", hover: "#22d3ee" },
+      width: edge.kind === "uplink" ? 3 : 2,
+      dashes: state !== "online",
+      arrows: { to: { enabled: Boolean(edge.directed), scaleFactor: 0.45 } },
+      smooth: { enabled: true, type: "dynamic", roundness: 0.25 },
+    };
+  });
+  if (VIS_TOPO.network) VIS_TOPO.network.destroy();
+  VIS_TOPO.nodes = new globalThis.vis.DataSet(nodes);
+  VIS_TOPO.edges = new globalThis.vis.DataSet(edges);
+  VIS_TOPO.container = container;
+  VIS_TOPO.network = new globalThis.vis.Network(container, { nodes: VIS_TOPO.nodes, edges: VIS_TOPO.edges }, {
+    autoResize: true,
+    interaction: { hover: true, tooltipDelay: 120, navigationButtons: false, keyboard: true },
+    physics: visible.simplified ? false : { stabilization: { iterations: nodes.length > 100 ? 60 : 120, fit: true }, barnesHut: { gravitationalConstant: -5000, springLength: 135 } },
+    layout: S.topoLayout === "tree" ? { hierarchical: { enabled: true, direction: "UD", sortMethod: "directed", nodeSpacing: 145, levelSeparation: 135 } } : { improvedLayout: nodes.length < 150 },
+  });
+  VIS_TOPO.network.on("click", params => { if (params.nodes.length) showNode(params.nodes[0]); });
+  const wrap = container.closest(".topo-wrap");
+  wrap?.querySelector(".topo-simplified-note")?.remove();
+  if (visible.simplified && wrap) {
+    const note = document.createElement("div");
+    note.className = "topo-simplified-note";
+    note.textContent = `Sadeleştirilmiş görünüm: switch'ler${visible.selectedSubnet ? ` + ${visible.selectedSubnet}` : ""}`;
+    wrap.appendChild(note);
+  }
+  return true;
+}
+
 function drawTopology(targetId) {
-  const svg = $(targetId || "topoSvg2") || $("topoSvg");
+  const requested = $(targetId || "topoNetwork2");
+  if (requested && requested.tagName !== "svg" && drawVisTopology(requested)) return;
+  const svg = requested || $("topoSvg2") || $("topoSvg");
   if (!svg) return;
 
   let rawData = S.topology || { nodes: [], edges: [] };
@@ -495,6 +588,7 @@ function bindTopologyEdgeTooltips(svg) {
 }
 
 function topoFit(reset = true) {
+  if (VIS_TOPO.network) { VIS_TOPO.network.fit({ animation: { duration: 250 } }); return; }
   TOPO.x = 0;
   TOPO.y = 0;
   TOPO.k = 1;
@@ -502,6 +596,7 @@ function topoFit(reset = true) {
 }
 
 function topoZoom(f) {
+  if (VIS_TOPO.network) { VIS_TOPO.network.moveTo({ scale: Math.min(3, Math.max(.2, VIS_TOPO.network.getScale() * f)), animation: { duration: 180 } }); return; }
   TOPO.k = Math.min(3, Math.max(0.4, TOPO.k * f));
   applyTopoTransform();
 }
@@ -553,6 +648,7 @@ function bindTopoDrag(svg) {
 Object.assign(globalThis, {
   TOPO,
   STATUS_COLOR,
+  VIS_TOPO,
   layoutTopology,
   setTopoLayout,
   toggleTopoActiveOnly,
@@ -563,6 +659,9 @@ Object.assign(globalThis, {
   topologyTypeTitle,
   nodeSvg,
   setTopoCategory,
+  topologyIcon,
+  topologyVisibleData,
+  drawVisTopology,
   drawTopology,
   bindTopologyEdgeTooltips,
   topoFit,

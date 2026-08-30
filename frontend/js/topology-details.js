@@ -541,7 +541,7 @@ function renderTopologyPage() {
         </div>
         <div id="discoveryScheduleCard" style="margin:10px 12px 0;padding:10px 12px;border:1px solid var(--line-soft);border-radius:9px;background:var(--panel-2)"><span class="hint">Otomatik keşif zamanlaması yükleniyor…</span></div>
         <div class="topo-wrap" style="height:calc(100vh - 250px); min-height:460px" id="topoWrap2">
-          <svg class="topo-svg" id="topoSvg2"></svg>
+          <div class="topo-network" id="topoNetwork2" role="img" aria-label="Keşfedilen cihazların bağlantı haritası"></div>
           <div class="topo-status-legend" aria-label="Bağlantı durumları">
             <span><i style="background:#10b981"></i>Aktif</span>
             <span><i style="background:#ef4444"></i>Down</span>
@@ -552,9 +552,8 @@ function renderTopologyPage() {
         </div>
       </div>
     `;
-    bindTopoDrag($("topoSvg2"));
   }
-  drawTopology("topoSvg2");
+  drawTopology("topoNetwork2");
   refreshDiscoverySchedule();
   if (!S.activeTopoNodeId) {
     renderNocOverviewDrawer();
