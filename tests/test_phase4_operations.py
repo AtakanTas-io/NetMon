@@ -43,11 +43,34 @@ def test_phase4_schema_is_migrated(isolated_server):
         "operational_snapshots",
         "alert_rules",
         "alert_events",
+        "alert_user_states",
         "report_schedules",
         "report_runs",
         "api_keys",
     }.issubset(tables)
     assert "site_id" in asset_columns
+
+
+def test_alarm_inbox_read_and_suppressed_state_is_persistent(isolated_server):
+    client, password_path = isolated_server
+    headers = _bootstrap_admin(client, password_path)
+    alert_ts = round(time.time(), 6)
+    with server.db_conn() as conn:
+        conn.execute(
+            "INSERT INTO alerts(ts,level,message,source) VALUES(?,?,?,?)",
+            (alert_ts, "critical", "10.0.0.9 cihazı çevrimdışı", "test"),
+        )
+        conn.commit()
+
+    inbox = client.get("/api/alerts/inbox", headers=headers).json()
+    assert inbox["unread"] == 1
+    alert_id = inbox["alerts"][0]["id"]
+    changed = client.put(f"/api/alerts/{alert_id}/state", headers=headers, json={"is_read": True, "suppressed": True})
+    assert changed.status_code == 200
+    persisted = client.get("/api/alerts/inbox", headers=headers).json()
+    assert persisted["unread"] == 0
+    assert persisted["alerts"][0]["is_read"] is True
+    assert persisted["alerts"][0]["suppressed"] is True
 
 
 def test_alert_rule_uses_evidence_and_respects_cooldown(isolated_server):

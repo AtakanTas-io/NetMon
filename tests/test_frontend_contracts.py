@@ -61,4 +61,14 @@ def test_topology_uses_node_link_contract_and_large_network_simplification():
     assert "rawData?.edges" in topology_js
     assert "nodes.length > 200" in topology_js
     assert "edge.source_port" in topology_js
-    assert 'showNode(params.nodes[0])' in topology_js
+    assert "showNode(params.nodes[0])" in topology_js
+
+
+def test_alarm_inbox_uses_websocket_and_persistent_state_api():
+    source = frontend_source()
+    assert 'channels: ["devices", "traffic", "connections", "topology", "alerts"]' in source
+    assert "function receiveLiveAlert" in source
+    assert 'get("/api/alerts/inbox?limit=100")' in source
+    assert "/api/alerts/${encodeURIComponent(id)}/state" in source
+    assert "scheduleSocketReconnect" in source
+    assert "Math.pow(2" in source
