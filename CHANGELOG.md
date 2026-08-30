@@ -9,6 +9,7 @@ Bu dosya [Keep a Changelog](https://keepachangelog.com/tr-TR/1.1.0/) düzenini i
 - Ağ topolojisi cihaz durumu ve port bağlantılarını gösteren, büyük ağlarda otomatik sadeleşen etkileşimli node-link haritasına dönüştürüldü.
 - Canlı alarm sayacı, kullanıcıya özel kalıcı okundu ve bastırma durumları olan alarm gelen kutusu eklendi.
 - Dashboard, cihaz listesi ve topoloji yenilemeleri WebSocket push akışına taşındı; polling yalnızca bağlantı koptuğunda emniyet yenilemesi olarak bırakıldı.
+- NCM karşılaştırması jsdiff ile satır bazında renklendirildi ve uzun değişmeyen bloklar açılabilir özetlere dönüştürüldü.
 
 ## [2.5.0] - 2026-08-30
 
