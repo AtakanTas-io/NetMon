@@ -72,3 +72,13 @@ def test_alarm_inbox_uses_websocket_and_persistent_state_api():
     assert "/api/alerts/${encodeURIComponent(id)}/state" in source
     assert "scheduleSocketReconnect" in source
     assert "Math.pow(2" in source
+
+
+def test_live_pages_poll_only_as_disconnected_websocket_fallback():
+    source = frontend_source()
+    assert "networkSocket?.readyState === WebSocket.OPEN" in source
+    assert "if (!socketConnected) refreshAll();" in source
+    assert 'type === "devices"' in source
+    assert 'type === "topology"' in source
+    assert "renderDeviceTable();" in source
+    assert "drawTopology();" in source
