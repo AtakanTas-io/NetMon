@@ -59,6 +59,9 @@ function renderDeviceTable() {
     return (statusFilter === "all" || st === statusFilter) &&
            (typeFilter === "all" || tp === typeFilter);
   });
+  const virtualViewport = $("virtualDeviceViewport");
+  if (filteredList.length >= 500 && S.deviceViewMode !== "grid" && renderVirtualDeviceList(filteredList)) return;
+  if (virtualViewport) virtualViewport.style.display = "none";
 
   // Grid/Kart Görünümü Modu
   if (S.deviceViewMode === "grid") {
@@ -483,6 +486,7 @@ function inspectDevice(ip, mac) {
 window.inspectDevice = inspectDevice;
 
 function showDeviceDetails(mac, ip) {
+  if (typeof openDeviceDrawer === "function") return openDeviceDrawer(mac, ip);
   let d = (S.devices || []).find(x => (mac && x.mac === mac) || (ip && x.ip === ip));
   if (!d) {
     const ipamItem = (_ipamAllocationsCache || []).find(x => (ip && x.ip === ip) || (mac && x.mac === mac));

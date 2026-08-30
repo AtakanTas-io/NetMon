@@ -404,7 +404,11 @@ function drawVisTopology(container) {
     physics: visible.simplified ? false : { stabilization: { iterations: nodes.length > 100 ? 60 : 120, fit: true }, barnesHut: { gravitationalConstant: -5000, springLength: 135 } },
     layout: S.topoLayout === "tree" ? { hierarchical: { enabled: true, direction: "UD", sortMethod: "directed", nodeSpacing: 145, levelSeparation: 135 } } : { improvedLayout: nodes.length < 150 },
   });
-  VIS_TOPO.network.on("click", params => { if (params.nodes.length) showNode(params.nodes[0]); });
+  VIS_TOPO.network.on("click", params => {
+    if (!params.nodes.length) return;
+    const node = visible.nodes.find(item => item.id === params.nodes[0]);
+    if (node) openDeviceDrawer(node.mac || "", node.ip || "");
+  });
   const wrap = container.closest(".topo-wrap");
   wrap?.querySelector(".topo-simplified-note")?.remove();
   if (visible.simplified && wrap) {

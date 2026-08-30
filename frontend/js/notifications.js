@@ -84,7 +84,7 @@ function openAlertDevice(id) {
   if (!item) return;
   if (!item.is_read) setAlertState(id, { is_read: true });
   const ip = String(item.message || "").match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/)?.[0];
-  if (ip) showDeviceDetails(null, ip);
+  if (ip) openDeviceDrawer(null, ip, "alerts");
 }
 
 function initAlarmInbox() {

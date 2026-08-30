@@ -15,4 +15,5 @@ import "./js/ipam.js";
 import "./js/traffic.js";
 import "./js/ncm.js";
 import "./js/notifications.js";
+import "./js/device-experience.js";
 import "./js/runtime.js";
