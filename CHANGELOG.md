@@ -4,7 +4,7 @@ Bu dosya [Keep a Changelog](https://keepachangelog.com/tr-TR/1.1.0/) düzenini i
 
 ## [Henüz yayımlanmadı]
 
-## [2.5.0] - 2026-08-29
+## [2.5.0] - 2026-08-30
 
 ### Eklendi
 
