@@ -14,4 +14,5 @@ import "./js/topology-details.js";
 import "./js/ipam.js";
 import "./js/traffic.js";
 import "./js/ncm.js";
+import "./js/notifications.js";
 import "./js/runtime.js";

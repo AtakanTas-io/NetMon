@@ -569,6 +569,7 @@ function boot() {
   }
   try {
     connectNetworkSocket();
+    initAlarmInbox();
     if (!autoRefreshTimer) startAutoRefresh();
   } catch (e) {}
   refreshAll();
@@ -603,7 +604,7 @@ function connectNetworkSocket() {
       networkSocket.send(
         JSON.stringify({
           type: "subscribe",
-          channels: ["devices", "traffic", "connections", "topology"],
+          channels: ["devices", "traffic", "connections", "topology", "alerts"],
         }),
       );
     };
@@ -720,6 +721,7 @@ async function handleNetworkMessage(message) {
   }
 
   if (type === "alert") {
+    receiveLiveAlert(message);
     const banner = document.getElementById("securityBannerContainer");
     if (banner) {
         banner.innerHTML = `<div style="background-color: var(--fail); color: #fff; padding: 12px; margin-bottom: 15px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 4px 12px rgba(239,68,68,0.2);">
@@ -735,6 +737,7 @@ async function handleNetworkMessage(message) {
   }
 
   if (type === "system_alert") {
+    receiveLiveAlert(message);
     toast(message.message || "Sistem Uyarısı", message.level === "critical" ? "fail" : "warn");
     return;
   }
