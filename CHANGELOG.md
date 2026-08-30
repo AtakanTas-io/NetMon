@@ -4,6 +4,10 @@ Bu dosya [Keep a Changelog](https://keepachangelog.com/tr-TR/1.1.0/) düzenini i
 
 ## [Henüz yayımlanmadı]
 
+### Eklendi
+
+- Ağ topolojisi cihaz durumu ve port bağlantılarını gösteren, büyük ağlarda otomatik sadeleşen etkileşimli node-link haritasına dönüştürüldü.
+
 ## [2.5.0] - 2026-08-30
 
 ### Eklendi
