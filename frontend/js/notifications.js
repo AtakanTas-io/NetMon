@@ -1,6 +1,7 @@
 import "./topology-details.js";
 
 S.alertInbox = S.alertInbox || [];
+S.showSuppressedAlerts = S.showSuppressedAlerts || false;
 
 function ensureAlertInboxUi() {
   if ($("alertInboxButton")) return;
@@ -14,6 +15,7 @@ function ensureAlertInboxUi() {
     </button>
     <section class="alert-inbox-popover" id="alertInboxPopover" hidden>
       <header><div><b>Alarm Gelen Kutusu</b><small>Canlı ve kalıcı bildirimler</small></div><button class="mini-btn" onclick="markAllAlertsRead()">Tümünü okundu yap</button></header>
+      <label class="alert-inbox-filter"><input id="showSuppressedAlerts" type="checkbox" onchange="S.showSuppressedAlerts=this.checked;renderAlertInbox()"> Bastırılmışları göster</label>
       <div class="alert-inbox-list" id="alertInboxList"><div class="empty-note">Alarmlar yükleniyor…</div></div>
     </section>`;
   host.prepend(wrap);
@@ -24,18 +26,22 @@ function renderAlertInbox() {
   const list = $("alertInboxList");
   const badge = $("alertUnreadBadge");
   if (!list || !badge) return;
-  const visible = S.alertInbox.filter(item => !item.suppressed);
+  const visible = S.alertInbox.filter(item => S.showSuppressedAlerts || !item.suppressed);
   const unread = visible.filter(item => !item.is_read).length;
   badge.textContent = unread > 99 ? "99+" : String(unread);
   badge.hidden = unread === 0;
   list.innerHTML = visible.length ? visible.map(item => `
-    <article class="alert-inbox-item ${item.is_read ? "" : "unread"} level-${esc(item.level)}" onclick="openAlertDevice('${esc(item.id)}')">
+    <article class="alert-inbox-item ${item.is_read ? "" : "unread"} ${item.suppressed ? "suppressed" : ""} level-${esc(item.level)}" onclick="openAlertDevice('${esc(item.id)}')">
       <i></i><div><b>${esc(item.message)}</b><span>${esc(item.source || "NetMon")} · ${new Date(Number(item.ts) * 1000).toLocaleString("tr-TR")}</span></div>
       <div class="alert-inbox-actions">
         <button title="${item.is_read ? "Okunmadı yap" : "Okundu yap"}" onclick="event.stopPropagation();setAlertState('${esc(item.id)}',{is_read:${!item.is_read}})">${item.is_read ? "○" : "✓"}</button>
-        <button title="Bastır" onclick="event.stopPropagation();setAlertState('${esc(item.id)}',{suppressed:true,is_read:true})">⊘</button>
+        ${item.suppressed
+          ? `<button title="Alarmı yeniden gelen kutusunda göster" onclick="event.stopPropagation();setAlertState('${esc(item.id)}',{suppressed:false})">Tekrar göster</button>`
+          : `<button title="Bu, alarmı kalıcı olarak silmez, yalnızca listeden gizler" onclick="event.stopPropagation();setAlertState('${esc(item.id)}',{suppressed:true,is_read:true})">Gizle (tekrar gösterme)</button>`}
       </div>
     </article>`).join("") : `<div class="empty-note">Gösterilecek alarm yok.</div>`;
+  const filter = $("showSuppressedAlerts");
+  if (filter) filter.checked = Boolean(S.showSuppressedAlerts);
 }
 
 async function refreshAlertInbox() {
