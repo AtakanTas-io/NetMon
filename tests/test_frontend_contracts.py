@@ -64,6 +64,17 @@ def test_topology_uses_node_link_contract_and_large_network_simplification():
     assert "openDeviceDrawer(node.mac" in topology_js
 
 
+def test_topology_defaults_to_current_network_and_can_select_history():
+    source = frontend_source()
+
+    assert 'topologyScope: "current_network"' in source
+    assert "Yalnızca mevcut ağ" in source
+    assert "Tüm bilinen ağlar" in source
+    assert "function setTopologyScope" in source
+    assert "function selectTopologyNetwork" in source
+    assert 'params.set("network_id"' in source
+
+
 def test_alarm_inbox_uses_websocket_and_persistent_state_api():
     source = frontend_source()
     assert 'channels: ["devices", "traffic", "connections", "topology", "alerts"]' in source

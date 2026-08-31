@@ -39,6 +39,7 @@ def test_phase4_schema_is_migrated(isolated_server):
         asset_columns = {row[1] for row in conn.execute("PRAGMA table_info(inventory_assets)")}
         alert_columns = {row[1] for row in conn.execute("PRAGMA table_info(alerts)")}
         state_columns = {row[1] for row in conn.execute("PRAGMA table_info(alert_user_states)")}
+        known_device_columns = {row[1] for row in conn.execute("PRAGMA table_info(known_devices)")}
 
     assert {
         "sites",
@@ -49,11 +50,13 @@ def test_phase4_schema_is_migrated(isolated_server):
         "report_schedules",
         "report_runs",
         "api_keys",
+        "networks",
     }.issubset(tables)
     assert "site_id" in asset_columns
     assert "id" in alert_columns
     assert "alert_id" in state_columns
     assert "alert_ts" not in state_columns
+    assert "network_id" in known_device_columns
 
 
 def test_alarm_inbox_read_and_suppressed_state_is_persistent(isolated_server):
