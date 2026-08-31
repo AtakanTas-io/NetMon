@@ -42,7 +42,12 @@ def create_inventory_router(ctx) -> APIRouter:
     router = APIRouter()
 
     @router.get("/api/devices")
-    def get_devices(force: bool = False, user: dict = Depends(ctx.get_current_user)):
+    def get_devices(
+        force: bool = False,
+        scope: str = "current_network",
+        network_id: int | None = None,
+        user: dict = Depends(ctx.get_current_user),
+    ):
         if force and user.get("role") != "admin":
             raise ctx._AuthError(403, "Zorunlu ağ taraması için yönetici yetkisi gerekiyor.")
         now = time.time()
@@ -50,10 +55,14 @@ def create_inventory_router(ctx) -> APIRouter:
             devices = ctx._devices_cache["data"]
             for device in devices:
                 ctx._enrich_device_inventory(device)
-            return {"devices": devices, "cached": True, "error": ctx._devices_cache.get("error")}
+            return {
+                "devices": ctx.filter_devices_by_scope(devices, scope, network_id),
+                "cached": True,
+                "error": ctx._devices_cache.get("error"),
+            }
         if not ctx._device_scan_lock.acquire(blocking=False):
             return {
-                "devices": ctx._devices_cache.get("data") or [],
+                "devices": ctx.filter_devices_by_scope(ctx._devices_cache.get("data") or [], scope, network_id),
                 "cached": True,
                 "scanning": True,
                 "error": ctx._devices_cache.get("error"),
@@ -89,7 +98,11 @@ def create_inventory_router(ctx) -> APIRouter:
                     )
             ctx._devices_cache["data"] = devices
             ctx._devices_cache["ts"] = now
-            return {"devices": devices, "cached": False, "error": ctx._devices_cache["error"]}
+            return {
+                "devices": ctx.filter_devices_by_scope(devices, scope, network_id),
+                "cached": False,
+                "error": ctx._devices_cache["error"],
+            }
         finally:
             ctx._devices_cache["scan_status"] = "idle"
             ctx._device_scan_lock.release()
@@ -245,7 +258,11 @@ def create_inventory_router(ctx) -> APIRouter:
                 "mode": scan_mode,
                 "error": None,
             }
-            ctx.manager.broadcast_threadsafe({"type": "devices", **scan_result})
+            ctx.manager.broadcast_threadsafe({
+                "type": "devices",
+                **scan_result,
+                "devices": ctx.filter_devices_by_scope(devices),
+            })
             return scan_result
         except ctx.NetworkDiscoveryError as exc:
             ctx.logger.warning("[API] Manual scan failed: %s", exc)

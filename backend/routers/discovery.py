@@ -14,6 +14,11 @@ def create_discovery_router(ctx) -> APIRouter:
             return {"scopes": [], "error": str(exc)}
         return {"scopes": scopes, "count": len(scopes), "policy": "local-private-networks-only"}
 
+    @router.get("/api/networks")
+    def network_contexts(user: dict = Depends(ctx.get_current_user)):
+        networks = ctx.list_network_contexts()
+        return {"networks": networks, "current": [item["id"] for item in networks if item["current"]]}
+
     @router.get("/api/discovery/schedule")
     def get_discovery_schedule(user: dict = Depends(ctx.get_current_user)):
         last_finished = ctx._discovery_schedule_state.get("last_finished")

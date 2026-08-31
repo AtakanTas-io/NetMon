@@ -459,6 +459,19 @@ def init_db():
     conn.execute("DELETE FROM login_attempts WHERE locked_until IS NULL OR locked_until < ?", (time.time(),))
 
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS networks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fingerprint TEXT UNIQUE NOT NULL,
+            gateway_ip TEXT,
+            gateway_mac TEXT,
+            subnet_cidr TEXT NOT NULL,
+            interface_name TEXT,
+            user_name TEXT,
+            first_seen REAL NOT NULL,
+            last_seen REAL NOT NULL
+        )
+    """)
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS known_devices (
             mac TEXT PRIMARY KEY,
             friendly_name TEXT,
@@ -481,6 +494,7 @@ def init_db():
             connectivity_status TEXT DEFAULT 'unknown',
             identification_status TEXT DEFAULT 'unknown',
             last_network TEXT,
+            network_id INTEGER,
             open_ports TEXT
         )
     """)
@@ -609,6 +623,7 @@ def init_db():
         ("connectivity_status", "TEXT DEFAULT 'unknown'"),
         ("identification_status", "TEXT DEFAULT 'unknown'"),
         ("last_network", "TEXT"),
+        ("network_id", "INTEGER REFERENCES networks(id) ON DELETE SET NULL"),
         ("open_ports", "TEXT"),
     ):
         if col not in kd_columns:
@@ -1005,8 +1020,10 @@ def _load_last_known_devices_into_cache():
     try:
         conn = db_conn()
         rows = conn.execute(
-            """SELECT ip_address, mac_address, hostname, vendor, device_type, status, last_seen
-               FROM inventory_assets WHERE ip_address IS NOT NULL ORDER BY last_seen DESC"""
+            """SELECT ia.ip_address,ia.mac_address,ia.hostname,ia.vendor,ia.device_type,ia.status,ia.last_seen,
+                      kd.network_id,kd.last_network
+               FROM inventory_assets ia LEFT JOIN known_devices kd ON kd.mac=ia.mac_address
+               WHERE ia.ip_address IS NOT NULL ORDER BY ia.last_seen DESC"""
         ).fetchall()
         conn.close()
     except Exception:
@@ -1022,8 +1039,10 @@ def _load_last_known_devices_into_cache():
             "online": False,
             "stale": True,
             "last_seen": last_seen,
+            "network_id": network_id,
+            "network_cidr": network_cidr,
         }
-        for ip, mac, hostname, vendor, device_type, status, last_seen in rows
+        for ip, mac, hostname, vendor, device_type, status, last_seen, network_id, network_cidr in rows
     ]
     _devices_cache["data"] = devices
     _devices_cache["ts"] = time.time()
@@ -1441,7 +1460,7 @@ def get_traffic(minutes: int = 15, user: dict = Depends(get_current_user)):
 # ============================================================
 # OVERVIEW, TOPOLOGY, LOGS VE CİHAZ API ROTALARI
 # ============================================================
-_devices_cache = {"ts": 0, "data": [], "error": None, "scan_status": "idle"}
+_devices_cache = {"ts": 0, "data": [], "error": None, "scan_status": "idle", "active_networks": []}
 _device_scan_lock = threading.Lock()
 
 STALE_AFTER_MISSED_SCANS = 3
@@ -1456,6 +1475,104 @@ def _is_allowed_inventory_ip(value: ipaddress.IPv4Address) -> bool:
 
 def _is_allowed_inventory_network(value: ipaddress.IPv4Network) -> bool:
     return value.version == 4 and any(value.subnet_of(network) for network in _ALLOWED_INVENTORY_NETWORKS)
+
+
+def _register_network_contexts(subnets: list[str], devices: list[dict]) -> list[dict]:
+    now = time.time()
+    try:
+        local_context = diag.get_network_context()
+    except Exception:
+        local_context = {}
+    gateway_ip = local_context.get("gateway") or ""
+    interface_name = local_context.get("interface") or ""
+    gateway_mac = next((d.get("mac") for d in devices if d.get("ip") == gateway_ip and d.get("mac")), "")
+    contexts = []
+    conn = db_conn()
+    try:
+        for raw in subnets:
+            network = ipaddress.ip_network(raw, strict=False)
+            network_gateway = gateway_ip if gateway_ip and ipaddress.ip_address(gateway_ip) in network else ""
+            fingerprint_source = f"{network_gateway}|{gateway_mac if network_gateway else ''}|{network}"
+            fingerprint = hashlib.sha256(fingerprint_source.encode("utf-8")).hexdigest()
+            conn.execute(
+                "INSERT INTO networks(fingerprint,gateway_ip,gateway_mac,subnet_cidr,interface_name,first_seen,last_seen) "
+                "VALUES(?,?,?,?,?,?,?) ON CONFLICT(fingerprint) DO UPDATE SET gateway_ip=excluded.gateway_ip,"
+                "gateway_mac=excluded.gateway_mac,interface_name=excluded.interface_name,last_seen=excluded.last_seen",
+                (fingerprint, network_gateway or None, gateway_mac or None, str(network), interface_name or None, now, now),
+            )
+            row = conn.execute(
+                "SELECT id,user_name FROM networks WHERE fingerprint=?",
+                (fingerprint,),
+            ).fetchone()
+            contexts.append(
+                {
+                    "id": row[0],
+                    "name": row[1] or str(network),
+                    "subnet_cidr": str(network),
+                    "gateway_ip": network_gateway or None,
+                    "gateway_mac": gateway_mac or None,
+                    "interface": interface_name or None,
+                    "current": True,
+                }
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    parsed_contexts = [(item, ipaddress.ip_network(item["subnet_cidr"])) for item in contexts]
+    for device in devices:
+        try:
+            address = ipaddress.ip_address(device.get("ip") or "")
+        except ValueError:
+            continue
+        match = next((item for item, network in parsed_contexts if address in network), None)
+        if match:
+            device["network_id"] = match["id"]
+            device["network_cidr"] = match["subnet_cidr"]
+    _devices_cache["active_networks"] = contexts
+    return contexts
+
+
+def list_network_contexts() -> list[dict]:
+    conn = db_conn()
+    rows = conn.execute(
+        "SELECT id,subnet_cidr,gateway_ip,gateway_mac,interface_name,user_name,last_seen "
+        "FROM networks ORDER BY last_seen DESC"
+    ).fetchall()
+    conn.close()
+    active_ids = {item["id"] for item in _devices_cache.get("active_networks", [])}
+    return [
+        {
+            "id": row[0],
+            "name": row[5] or row[1],
+            "subnet_cidr": row[1],
+            "gateway_ip": row[2],
+            "gateway_mac": row[3],
+            "interface": row[4],
+            "last_seen": row[6],
+            "current": row[0] in active_ids,
+        }
+        for row in rows
+    ]
+
+
+def filter_devices_by_scope(devices: list[dict], scope: str = "current_network", network_id: int | None = None) -> list[dict]:
+    if scope == "all_known" and network_id is None:
+        return list(devices)
+    if network_id is not None:
+        return [device for device in devices if device.get("network_id") == network_id]
+    active = [ipaddress.ip_network(item["subnet_cidr"]) for item in _devices_cache.get("active_networks", [])]
+    if not active:
+        return list(devices)
+    visible = []
+    for device in devices:
+        try:
+            address = ipaddress.ip_address(device.get("ip") or "")
+        except ValueError:
+            continue
+        if any(address in network for network in active):
+            visible.append(device)
+    return visible
 
 
 def _discover_configured_devices() -> list[dict]:
@@ -1473,7 +1590,16 @@ def _discover_configured_devices() -> list[dict]:
         if auto_networks:
             subnets = auto_networks
         else:
-            return diag.get_connected_devices(fast=True)
+            devices = diag.get_connected_devices(fast=True)
+            try:
+                fallback_cidr = diag.get_network_context().get("cidr")
+            except Exception:
+                fallback_cidr = None
+            if fallback_cidr:
+                _register_network_contexts([fallback_cidr], devices)
+            else:
+                _devices_cache["active_networks"] = []
+            return devices
     if len(subnets) > 16:
         raise NetworkDiscoveryError("En fazla 16 subnet aynı tarama görevine eklenebilir.")
     merged = {}
@@ -1495,7 +1621,9 @@ def _discover_configured_devices() -> list[dict]:
                 continue
             if ip not in merged or len(device.get("discovery_sources", [])) > len(merged[ip].get("discovery_sources", [])):
                 merged[ip] = device
-    return list(merged.values())
+    devices = list(merged.values())
+    _register_network_contexts([str(ipaddress.ip_network(item, strict=False)) for item in subnets], devices)
+    return devices
 
 def merge_scan_into_inventory(scanned: list[dict]) -> list[dict]:
     """DISCOVERY != HEALTH CHECK: yeni tarama sonucu mevcut envanterin
@@ -1530,6 +1658,7 @@ def merge_scan_into_inventory(scanned: list[dict]) -> list[dict]:
             d["first_seen"] = old.get("first_seen", d.get("first_seen", now))
         merged.append(d)
 
+    active_networks = [ipaddress.ip_network(item["subnet_cidr"]) for item in _devices_cache.get("active_networks", [])]
     for key, old in {**prev_by_mac, **{("ip", ip): d for ip, d in prev_by_ip.items()}}.items():
         if key in seen_keys:
             continue
@@ -1538,6 +1667,16 @@ def merge_scan_into_inventory(scanned: list[dict]) -> list[dict]:
         if (old_mac and old_mac in seen_macs) or (old_ip and old_ip in seen_ips):
             continue
         old = dict(old)
+        try:
+            old_address = ipaddress.ip_address(old.get("ip") or "")
+        except ValueError:
+            old_address = None
+        if active_networks and old_address and not any(old_address in network for network in active_networks):
+            old["status"] = "network_changed"
+            old["connectivity_status"] = "network_changed"
+            old["status_reason"] = "Cihaz farklı bir ağ bağlamında keşfedildi"
+            merged.append(old)
+            continue
         old["missed_scans"] = int(old.get("missed_scans", 0)) + 1
         old["status"] = "stale" if old["missed_scans"] >= STALE_AFTER_MISSED_SCANS else "offline"
         old["connectivity_status"] = old["status"]
@@ -1598,8 +1737,12 @@ def get_network_info(user: dict = Depends(get_current_user)):
         return {"error": str(exc)}
 
 @app.get("/api/overview")
-def get_overview(user: dict = Depends(get_current_user)):
-    devices_list = _devices_cache.get("data", [])
+def get_overview(
+    scope: str = "current_network",
+    network_id: int | None = None,
+    user: dict = Depends(get_current_user),
+):
+    devices_list = filter_devices_by_scope(_devices_cache.get("data", []), scope, network_id)
     online = [d for d in devices_list if d.get("status", "online" if d.get("online", True) else "offline") == "online"]
     discovered = [d for d in devices_list if d.get("status") == "discovered"]
     offline = [d for d in devices_list if d.get("status") == "offline"]
@@ -1695,8 +1838,12 @@ def get_overview(user: dict = Depends(get_current_user)):
         "simulation": simulation_state
     }
 
-def get_topology(user: dict = Depends(get_current_user)):
-    devices_list = _devices_cache.get("data", [])
+def get_topology(
+    scope: str = "current_network",
+    network_id: int | None = None,
+    user: dict = Depends(get_current_user),
+):
+    devices_list = filter_devices_by_scope(_devices_cache.get("data", []), scope, network_id)
     gateway = _last_status.get("gateway") or ""
 
     gateway_dev = next((d for d in devices_list if d.get("ip") == gateway or d.get("is_gateway")), None)
@@ -1857,6 +2004,8 @@ def get_topology(user: dict = Depends(get_current_user)):
 
     return {"nodes": nodes, "edges": edges, "meta": {
         "gateway": gateway, "gateway_type": gateway_type,
+        "scope": scope, "network_id": network_id,
+        "networks": list_network_contexts(),
         "physical_switch_discovered": physical_switch_discovered,
         "switch_ip": (main_switch_dev or {}).get("ip"),
         "note": "Gercek switch/port topolojisi kullaniliyor." if physical_switch_discovered else "Fiziksel switch kesfedilmedi; LAN mantiksal gosterimdir."
@@ -1971,23 +2120,23 @@ def enrich_devices(devices: list[dict]) -> list[dict]:
                 classification_source = "auto"
                 is_new = True
                 conn.execute(
-                    "INSERT INTO known_devices (mac, friendly_name, hostname, device_type, classification_source, owner, notes, first_seen, last_seen, last_ip, last_status, last_latency, last_packet_loss, last_arp_seen, last_icmp_seen, last_hostname_seen, last_vendor, last_discovery_sources, connectivity_status, identification_status, last_network, open_ports) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO known_devices (mac, friendly_name, hostname, device_type, classification_source, owner, notes, first_seen, last_seen, last_ip, last_status, last_latency, last_packet_loss, last_arp_seen, last_icmp_seen, last_hostname_seen, last_vendor, last_discovery_sources, connectivity_status, identification_status, last_network, network_id, open_ports) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (mac, None, hostname, device_type, classification_source, "", "", now, now, device.get("ip"),
                      device.get("status", "unknown"), device.get("latency"), device.get("packet_loss"),
                      device.get("last_arp_seen"), device.get("last_icmp_seen"), device.get("last_hostname_seen"),
                      vendor or None, json.dumps(device.get("discovery_sources", []), ensure_ascii=False),
                      device.get("connectivity_status", "unknown"), device.get("identification_status", "unknown"),
-                     current_network, json.dumps(classification.get('open_ports', []))),
+                     current_network, device.get("network_id"), json.dumps(classification.get('open_ports', []))),
                 )
 
             conn.execute(
-                "UPDATE known_devices SET hostname=?, device_type=?, last_seen=?, last_ip=?, last_status=?, last_latency=?, last_packet_loss=?, last_arp_seen=?, last_icmp_seen=?, last_hostname_seen=?, last_vendor=?, last_discovery_sources=?, connectivity_status=?, identification_status=?, last_network=?, open_ports=? WHERE mac=?",
+                "UPDATE known_devices SET hostname=?, device_type=?, last_seen=?, last_ip=?, last_status=?, last_latency=?, last_packet_loss=?, last_arp_seen=?, last_icmp_seen=?, last_hostname_seen=?, last_vendor=?, last_discovery_sources=?, connectivity_status=?, identification_status=?, last_network=?, network_id=?, open_ports=? WHERE mac=?",
                 (hostname, device_type, now, device.get("ip"), device.get("status", "unknown"), device.get("latency"),
                  device.get("packet_loss"), device.get("last_arp_seen"), device.get("last_icmp_seen"),
                  device.get("last_hostname_seen"), vendor or None,
                  json.dumps(device.get("discovery_sources", []), ensure_ascii=False),
                  device.get("connectivity_status", "unknown"), device.get("identification_status", "unknown"),
-                 current_network, json.dumps(classification.get('open_ports', [])), mac),
+                 current_network, device.get("network_id"), json.dumps(classification.get('open_ports', [])), mac),
             )
         else:
             # ARP/MAC bilgisi olmayan SSDP/mDNS cihazları yine gösterilir;
@@ -2015,6 +2164,8 @@ def enrich_devices(devices: list[dict]) -> list[dict]:
             "connectivity_status": device.get("connectivity_status", "online" if device.get("status") == "online" else "unknown"),
             "identification_status": device.get("identification_status", "identified" if device_type != "unknown" else "unknown"),
             "identification_reason": device.get("identification_reason") or ("Cihaz tipi birden fazla kanıta göre belirlendi." if device_type != "unknown" else "Cihaz tipi için yeterli kanıt bulunamadı."),
+            "network_id": device.get("network_id"),
+            "network_cidr": device.get("network_cidr") or current_network,
         })
         result.append(device)
 
@@ -2023,14 +2174,15 @@ def enrich_devices(devices: list[dict]) -> list[dict]:
     seen_macs = {d.get("mac") for d in result if d.get("mac")}
     seen_ips = {d.get("ip") for d in result if d.get("ip")}
     offline_rows = conn.execute(
-        "SELECT mac, friendly_name, hostname, device_type, classification_source, owner, notes, first_seen, last_seen, last_ip, last_status, last_latency, last_packet_loss, last_arp_seen, last_icmp_seen, last_hostname_seen, last_vendor, last_discovery_sources, connectivity_status, identification_status "
+        "SELECT mac, friendly_name, hostname, device_type, classification_source, owner, notes, first_seen, last_seen, last_ip, last_status, last_latency, last_packet_loss, last_arp_seen, last_icmp_seen, last_hostname_seen, last_vendor, last_discovery_sources, connectivity_status, identification_status, network_id, last_network "
         "FROM known_devices WHERE last_seen IS NOT NULL AND last_seen >= ? ORDER BY last_seen DESC",
         (now - 2 * 3600,),
     ).fetchall()
     for row in offline_rows:
         (mac, friendly_name, saved_hostname, saved_type, classification_source, owner, notes, first_seen, last_seen,
          last_ip, last_status, last_latency, last_packet_loss, last_arp_seen, last_icmp_seen,
-         last_hostname_seen, last_vendor, last_discovery_sources, saved_connectivity, saved_identification) = row
+         last_hostname_seen, last_vendor, last_discovery_sources, saved_connectivity, saved_identification,
+         saved_network_id, saved_network) = row
         if (mac and mac in seen_macs) or (last_ip and last_ip in seen_ips):
             continue
         if mac and str(mac).upper() in ("FF:FF:FF:FF:FF:FF", "00:00:00:00:00:00", "FF-FF-FF-FF-FF-FF"):
@@ -2068,6 +2220,8 @@ def enrich_devices(devices: list[dict]) -> list[dict]:
             "discovery_sources": json.loads(last_discovery_sources) if last_discovery_sources else [],
             "confidence": 0.0 if (saved_type or "unknown") == "unknown" else 0.5,
             "identification_reason": "Son taramada keşfedilemedi; önceki kimlik bilgisi korunuyor.",
+            "network_id": saved_network_id,
+            "network_cidr": saved_network,
             "classification": {
                 "method": [],
                 "confidence": 0.0,
@@ -2185,7 +2339,7 @@ def rename_device(body: DeviceRenameRequest, user: dict = Depends(require_permis
                     device["type"] = body.device_type
                 break
 
-    manager.broadcast_threadsafe({"type": "devices", "devices": _devices_cache.get("data", []), "ts": _devices_cache.get("ts", 0)})
+    manager.broadcast_threadsafe({"type": "devices", "devices": filter_devices_by_scope(_devices_cache.get("data", [])), "ts": _devices_cache.get("ts", 0)})
     return {"ok": True}
 
 
@@ -3641,7 +3795,7 @@ def scan_authorized_device_inventory(req: AuthorizedInventoryRequest, user: dict
     if is_new_cache_entry:
         cached_devices.append(device)
     _devices_cache["ts"] = time.time()
-    manager.broadcast_threadsafe({"type": "devices", "devices": _devices_cache.get("data", []), "ts": time.time()})
+    manager.broadcast_threadsafe({"type": "devices", "devices": filter_devices_by_scope(_devices_cache.get("data", [])), "ts": time.time()})
     succeeded = result.get("status") == "Success"
     _audit(
         user["username"],
@@ -3687,7 +3841,7 @@ def device_scan_loop(stop_event: threading.Event):
             _devices_cache["ts"] = time.time()
             _devices_cache["error"] = None
             _discovery_schedule_state.update(last_status="success", last_total=len(devices))
-            manager.broadcast_threadsafe({"type": "devices", "devices": devices, "ts": _devices_cache["ts"]})
+            manager.broadcast_threadsafe({"type": "devices", "devices": filter_devices_by_scope(devices), "ts": _devices_cache["ts"]})
         except NetworkDiscoveryError as exc:
             logger.warning("[LOOP] Auto device scan failed: %s", exc)
             _devices_cache["error"] = str(exc)
@@ -3888,7 +4042,7 @@ async def ws_live(websocket: WebSocket):
     try:
         await websocket.send_text(json.dumps({"type": "status", **_last_status}))
         if _devices_cache.get("data"):
-            await websocket.send_text(json.dumps({"type": "devices", "devices": _devices_cache["data"], "ts": _devices_cache.get("ts", time.time())}))
+            await websocket.send_text(json.dumps({"type": "devices", "devices": filter_devices_by_scope(_devices_cache["data"]), "ts": _devices_cache.get("ts", time.time())}))
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
