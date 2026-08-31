@@ -1335,7 +1335,6 @@ def require_admin(user: dict = Depends(get_current_user)) -> dict:
     return user
 
 
-@app.get("/api/access/capabilities")
 def get_access_capabilities(user: dict = Depends(get_current_user)):
     """Uygulama rolü ile cihaz/ağ önkoşullarını tek, anlaşılır sözleşmede göster."""
     settings = get_all_settings()
@@ -1366,7 +1365,6 @@ def get_access_capabilities(user: dict = Depends(get_current_user)):
     }
 
 
-@app.get("/api/system/readiness")
 def get_system_readiness(user: dict = Depends(get_current_user)):
     """Gerçek özellik hazırlığını bağımlılık, ayar ve çalışma durumu ile açıkla."""
     settings = get_all_settings()
@@ -1442,11 +1440,9 @@ def get_system_readiness(user: dict = Depends(get_current_user)):
 # ============================================================
 # REST API (Veri Okuma)
 # ============================================================
-@app.get("/api/status")
 def get_status(user: dict = Depends(get_current_user)):
     return _last_status
 
-@app.get("/api/traffic")
 def get_traffic(minutes: int = 15, user: dict = Depends(get_current_user)):
     cutoff = time.time() - minutes * 60
     conn = db_conn()
@@ -1736,7 +1732,6 @@ def get_network_info(user: dict = Depends(get_current_user)):
     except Exception as exc:
         return {"error": str(exc)}
 
-@app.get("/api/overview")
 def get_overview(
     scope: str = "current_network",
     network_id: int | None = None,
@@ -2011,7 +2006,6 @@ def get_topology(
         "note": "Gercek switch/port topolojisi kullaniliyor." if physical_switch_discovered else "Fiziksel switch kesfedilmedi; LAN mantiksal gosterimdir."
     }}
 
-@app.get("/api/logs")
 def get_logs_api(limit: int = 120, user: dict = Depends(get_current_user)):
     conn = db_conn()
     rows = conn.execute("SELECT ts, level, message, source FROM alerts ORDER BY ts DESC LIMIT ?", (limit,)).fetchall()
@@ -2022,7 +2016,6 @@ def get_logs_api(limit: int = 120, user: dict = Depends(get_current_user)):
         logs = [{"time": datetime.now().strftime("%H:%M:%S"), "level": "info", "message": "NetMon Servisi Aktif", "tag": "Sistem"}]
     return {"logs": logs}
 
-@app.post("/api/logs/clear")
 def clear_logs_api(user: dict = Depends(require_permission("logs.manage"))):
     conn = db_conn()
     conn.execute("DELETE FROM alerts")
@@ -2030,7 +2023,6 @@ def clear_logs_api(user: dict = Depends(require_permission("logs.manage"))):
     conn.close()
     return {"ok": True}
 
-@app.get("/api/snapshot")
 def get_snapshot(user: dict = Depends(get_current_user)):
     return _last_status
 
@@ -2939,11 +2931,9 @@ ACADEMY_CONTENT = {
     "incident": {"title":"Incident Response","level":"İleri","summary":"Güvenlik olaylarını sistematik biçimde yönetme sürecidir.","lesson":["Tespit, analiz, sınırlama, düzeltme ve öğrenme adımlarını kapsar.","Amaç yalnız olayı kapatmak değil, tekrarını azaltmaktır."],"quiz":{"question":"Olay müdahalesinde ilk önemli adımlardan biri nedir?","options":["Olayı tespit edip doğrulamak","Kanıtları silmek","Tüm ağı kapatmak","Rastgele port açmak"],"answer":0}},
 }
 
-@app.get("/api/academy/modules")
 def academy_modules(user: dict = Depends(get_current_user)):
     return {"modules": [{"id": k, "title": v["title"], "level": v["level"], "summary": v["summary"]} for k,v in ACADEMY_CONTENT.items()]}
 
-@app.get("/api/academy/modules/{module_id}")
 def academy_module_detail(module_id: str, user: dict = Depends(get_current_user)):
     item = ACADEMY_CONTENT.get(module_id)
     if not item:
@@ -2954,7 +2944,6 @@ class AcademyQuizRequest(BaseModel):
     module_id: str
     answer: int
 
-@app.post("/api/academy/quiz")
 def academy_quiz(req: AcademyQuizRequest, user: dict = Depends(get_current_user)):
     item = ACADEMY_CONTENT.get(req.module_id)
     if not item:
@@ -3138,7 +3127,6 @@ import csv
 import platform
 import json
 
-@app.post("/api/tools/rdp")
 def api_launch_rdp(ip: str, user: dict = Depends(get_current_user)):
     if platform.system() == "Windows":
         import subprocess
@@ -3150,7 +3138,6 @@ def api_launch_rdp(ip: str, user: dict = Depends(get_current_user)):
             return JSONResponse(status_code=500, content={"error": f"RDP başlatılamadı: {e}"})
     return JSONResponse(status_code=400, content={"error": "RDP sadece Windows'ta destekleniyor."})
 
-@app.get("/api/export/devices")
 def export_devices_csv(token: str | None = None, authorization: str | None = Header(None)):
     auth_token = None
     if isinstance(token, str) and token:
@@ -3253,7 +3240,6 @@ def export_devices_csv(token: str | None = None, authorization: str | None = Hea
         logger.exception("[EXPORT] Excel/CSV export failed")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
-@app.post("/api/export/devices/save")
 def export_devices_save_to_disk(user: dict = Depends(get_current_user)):
     """Masaüstü (Desktop) veya İndirilenler (Downloads) klasörüne doğrudan dosyayı kaydeder ve Windows Gezgini'nde açar."""
     try:
@@ -3363,7 +3349,6 @@ def export_devices_save_to_disk(user: dict = Depends(get_current_user)):
         logger.exception("[EXPORT] Direct save to disk failed")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
-@app.post("/api/tools/open-downloads")
 def open_downloads_folder(user: dict = Depends(get_current_user)):
     """İndirilenler klasörünü Windows Dosya Gezgini'nde açar."""
     if platform.system() == "Windows":
@@ -4333,7 +4318,6 @@ def _runtime_network_visibility() -> dict:
 # ============================================================
 # TOP TALKERS & TRAFFIC BREAKDOWN (REAL-TIME LIVE SOCKET TELEMETRY)
 # ============================================================
-@app.get("/api/traffic/top-talkers")
 def get_top_talkers(user: dict = Depends(get_current_user)):
     devices_list = _devices_cache.get("data", [])
     device_by_ip = {d.get("ip"): d for d in devices_list if d.get("ip")}
@@ -4604,7 +4588,6 @@ def ncm_backup_loop(stop_event: threading.Event):
         stop_event.wait(max(900, NCM_BACKUP_INTERVAL))
 
 
-@app.get("/api/reports/operations")
 def get_operations_report(user: dict = Depends(require_permission("reports.view"))):
     """Gerçek envanter, snapshot, alarm ve trafik kayıtlarından yönetici özeti üret."""
     since = time.time() - 24 * 3600
@@ -4645,7 +4628,6 @@ class LocationAssignmentRequest(BaseModel):
     location: str
 
 
-@app.get("/api/locations/summary")
 def get_locations_summary(user: dict = Depends(require_permission("locations.view"))):
     conn = db_conn()
     rows = conn.execute("""
@@ -4669,7 +4651,6 @@ def get_locations_summary(user: dict = Depends(require_permission("locations.vie
     return {"sites": list(sites.values()), "assets": assets, "can_manage": _has_permission(user, "locations.manage"), "naming_example": "İstanbul Merkez > A Blok > Kat 3 > Kabinet 3A"}
 
 
-@app.post("/api/locations/assign")
 def assign_asset_location(req: LocationAssignmentRequest, user: dict = Depends(require_permission("locations.manage"))):
     location = " > ".join(part.strip() for part in req.location.split(">") if part.strip())
     if not 2 <= len(location) <= 180:

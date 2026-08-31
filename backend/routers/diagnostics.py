@@ -363,4 +363,6 @@ def create_diagnostics_router(ctx) -> APIRouter:
         except Exception as exc:
             return {"steps": [], "error": str(exc)}
 
+    router.add_api_route("/api/tools/rdp", ctx.api_launch_rdp, methods=["POST"])
+    router.add_api_route("/api/tools/open-downloads", ctx.open_downloads_folder, methods=["POST"])
     return router

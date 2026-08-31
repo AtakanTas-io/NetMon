@@ -590,4 +590,16 @@ def create_operations_router(ctx) -> APIRouter:
         ctx._audit(user["username"], "api_key_revoke", f"key_id={key_id}")
         return {"ok": True}
 
+    router.add_api_route("/api/access/capabilities", ctx.get_access_capabilities, methods=["GET"])
+    router.add_api_route("/api/system/readiness", ctx.get_system_readiness, methods=["GET"])
+    router.add_api_route("/api/status", ctx.get_status, methods=["GET"])
+    router.add_api_route("/api/traffic", ctx.get_traffic, methods=["GET"])
+    router.add_api_route("/api/overview", ctx.get_overview, methods=["GET"])
+    router.add_api_route("/api/logs", ctx.get_logs_api, methods=["GET"])
+    router.add_api_route("/api/logs/clear", ctx.clear_logs_api, methods=["POST"])
+    router.add_api_route("/api/snapshot", ctx.get_snapshot, methods=["GET"])
+    router.add_api_route("/api/traffic/top-talkers", ctx.get_top_talkers, methods=["GET"])
+    router.add_api_route("/api/reports/operations", ctx.get_operations_report, methods=["GET"])
+    router.add_api_route("/api/locations/summary", ctx.get_locations_summary, methods=["GET"])
+    router.add_api_route("/api/locations/assign", ctx.assign_asset_location, methods=["POST"])
     return router

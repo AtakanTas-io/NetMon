@@ -437,4 +437,7 @@ def create_analyst_router(ctx) -> APIRouter:
             ]
         }
 
+    router.add_api_route("/api/academy/modules", ctx.academy_modules, methods=["GET"])
+    router.add_api_route("/api/academy/modules/{module_id}", ctx.academy_module_detail, methods=["GET"])
+    router.add_api_route("/api/academy/quiz", ctx.academy_quiz, methods=["POST"])
     return router

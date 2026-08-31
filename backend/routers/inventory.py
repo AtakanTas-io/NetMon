@@ -477,4 +477,6 @@ def create_inventory_router(ctx) -> APIRouter:
     )
     router.add_api_route("/api/devices/rename", ctx.rename_device, methods=["POST"])
     router.add_api_route("/api/devices/known", ctx.list_known_devices, methods=["GET"])
+    router.add_api_route("/api/export/devices", ctx.export_devices_csv, methods=["GET"])
+    router.add_api_route("/api/export/devices/save", ctx.export_devices_save_to_disk, methods=["POST"])
     return router
