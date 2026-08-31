@@ -1,8 +1,10 @@
 [tool.coverage.run]
-branch = true
+# Eşik satır kapsamını ölçer. Dal kapsamı ayrıca raporlanacaksa bağımsız bir
+# eşik tanımlanmalıdır; ikisini tek yüzdeye karıştırmak "satır kapsamı %70"
+# sözleşmesini belirsizleştirir.
+branch = false
 source = ["backend"]
 omit = [
-    "backend/application.py",
     "backend/netdiag_core.py",
     "backend/desktop_app.py",
     "backend/fix_ports.py",
