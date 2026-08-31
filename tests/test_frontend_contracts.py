@@ -117,3 +117,11 @@ def test_empty_inventory_onboarding_and_backend_theme_preference_contracts():
     assert 'apiFetch("/api/preferences", { method: "PUT"' in source
     assert 'localStorage.setItem("netmon_theme"' not in source
     assert "/static/css/tokens.css" in index_html
+
+
+def test_clock_starts_immediately_and_refreshes_every_second():
+    runtime = (ROOT / "frontend" / "js" / "runtime.js").read_text(encoding="utf-8")
+    dom_ready = runtime.split('document.addEventListener("DOMContentLoaded", () => {', 1)[1]
+
+    assert "tickClock();" in dom_ready
+    assert "setInterval(tickClock, 1000);" in dom_ready

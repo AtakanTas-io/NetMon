@@ -780,6 +780,9 @@ function stopAutoRefresh() {
 
 /* ---------- DOMContentLoaded Dinleyicisi ---------- */
 document.addEventListener("DOMContentLoaded", () => {
+  tickClock();
+  setInterval(tickClock, 1000);
+
   const loginForm = $("loginForm");
   if (loginForm) {
     loginForm.addEventListener("submit", handleLoginSubmit);
