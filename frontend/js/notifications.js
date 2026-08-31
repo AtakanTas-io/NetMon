@@ -19,6 +19,14 @@ function ensureAlertInboxUi() {
       <div class="alert-inbox-list" id="alertInboxList"><div class="empty-note">Alarmlar yükleniyor…</div></div>
     </section>`;
   host.prepend(wrap);
+  bindClickOutside("alertInboxPopover", closeAlertInbox, "alertInboxButton");
+}
+
+function closeAlertInbox() {
+  const popover = $("alertInboxPopover");
+  const button = $("alertInboxButton");
+  if (popover) popover.hidden = true;
+  if (button) button.setAttribute("aria-expanded", "false");
 }
 
 function renderAlertInbox() {
@@ -112,4 +120,4 @@ function initAlarmInbox() {
   refreshAlertInbox();
 }
 
-Object.assign(globalThis, { ensureAlertInboxUi, renderAlertInbox, refreshAlertInbox, toggleAlertInbox, setAlertState, markAllAlertsRead, receiveLiveAlert, openAlertDevice, initAlarmInbox });
+Object.assign(globalThis, { ensureAlertInboxUi, closeAlertInbox, renderAlertInbox, refreshAlertInbox, toggleAlertInbox, setAlertState, markAllAlertsRead, receiveLiveAlert, openAlertDevice, initAlarmInbox });

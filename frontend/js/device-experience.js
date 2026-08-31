@@ -8,6 +8,7 @@ function ensureDeviceDrawer() {
   drawer.className = "device-experience-drawer";
   drawer.setAttribute("aria-label", "Cihaz ayrıntıları");
   document.body.appendChild(drawer);
+  bindClickOutside("deviceExperienceDrawer", closeDeviceDrawer, null, "class");
   return drawer;
 }
 
@@ -79,7 +80,13 @@ function globalDeviceMatches(query) {
 function handleGlobalSearch(query) {
   let panel = $("globalSearchResults");
   const input = $("globalSearchInput");
-  if (!panel && input) { panel = document.createElement("div"); panel.id = "globalSearchResults"; panel.className = "global-search-results"; input.parentElement.appendChild(panel); }
+  if (!panel && input) {
+    panel = document.createElement("div");
+    panel.id = "globalSearchResults";
+    panel.className = "global-search-results";
+    input.parentElement.appendChild(panel);
+    bindClickOutside("globalSearchResults", () => { panel.hidden = true; }, "globalSearchInput");
+  }
   if (!panel) return;
   const started = performance.now();
   const matches = globalDeviceMatches(query);

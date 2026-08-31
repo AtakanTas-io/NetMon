@@ -5,9 +5,15 @@ function topoCloseDetails() {
   renderNocOverviewDrawer();
 }
 
+function closeTopologyDrawer() {
+  S.activeTopoNodeId = null;
+  $("topoDetailDrawer")?.classList.remove("open");
+}
+
 function renderNocOverviewDrawer() {
   const drawer = $("topoDetailDrawer");
   if (!drawer) return;
+  bindClickOutside("topoDetailDrawer", closeTopologyDrawer, null, "class");
   drawer.onclick = (e) => e.stopPropagation();
 
   const o = S.overview || {};
@@ -566,6 +572,7 @@ function renderTopologyPage() {
 
 Object.assign(globalThis, {
   topoCloseDetails,
+  closeTopologyDrawer,
   renderNocOverviewDrawer,
   showNode,
   quickPing,

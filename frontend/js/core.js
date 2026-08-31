@@ -323,6 +323,28 @@ function ico(name, size, cls) {
   return `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="${cls || ""}">${body}</svg>`;
 }
 
+const clickOutsideBindings = new Set();
+
+function bindClickOutside(elementId, closeFn, triggerButtonId = null, openMode = "hidden") {
+  if (clickOutsideBindings.has(elementId)) return;
+  clickOutsideBindings.add(elementId);
+  const closeWhenOpen = (event) => {
+    const element = $(elementId);
+    if (!element) return;
+    const isOpen = openMode === "class" ? element.classList.contains("open") : !element.hidden;
+    if (!isOpen) return;
+    if (event?.type === "click") {
+      const trigger = triggerButtonId ? $(triggerButtonId) : null;
+      if (element.contains(event.target) || trigger?.contains(event.target)) return;
+    }
+    if (event?.type !== "keydown" || event.key === "Escape") closeFn();
+  };
+  setTimeout(() => {
+    document.addEventListener("click", closeWhenOpen);
+    document.addEventListener("keydown", closeWhenOpen);
+  }, 0);
+}
+
 /* ---------- Oturum / token yönetimi ---------- */
 
 Object.assign(globalThis, {
@@ -347,4 +369,5 @@ Object.assign(globalThis, {
   DEVICE_TYPE_ICON,
   ICON,
   ico,
+  bindClickOutside,
 });
