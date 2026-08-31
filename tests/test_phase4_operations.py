@@ -37,6 +37,8 @@ def test_phase4_schema_is_migrated(isolated_server):
     with server.db_conn() as conn:
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
         asset_columns = {row[1] for row in conn.execute("PRAGMA table_info(inventory_assets)")}
+        alert_columns = {row[1] for row in conn.execute("PRAGMA table_info(alerts)")}
+        state_columns = {row[1] for row in conn.execute("PRAGMA table_info(alert_user_states)")}
 
     assert {
         "sites",
@@ -49,6 +51,9 @@ def test_phase4_schema_is_migrated(isolated_server):
         "api_keys",
     }.issubset(tables)
     assert "site_id" in asset_columns
+    assert "id" in alert_columns
+    assert "alert_id" in state_columns
+    assert "alert_ts" not in state_columns
 
 
 def test_alarm_inbox_read_and_suppressed_state_is_persistent(isolated_server):

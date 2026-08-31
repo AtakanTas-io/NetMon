@@ -121,7 +121,7 @@ def test_rogue_offer_is_persisted_and_broadcast(monkeypatch):
 
         def execute(self, sql, params):
             self.executed.append((sql, params))
-            return SimpleNamespace(fetchone=lambda: None)
+            return SimpleNamespace(fetchone=lambda: None, lastrowid=42)
 
         def commit(self):
             self.committed = True
