@@ -61,26 +61,40 @@ function toggleAlertInbox() {
 }
 
 async function setAlertState(id, state) {
-  await apiFetch(`/api/alerts/${encodeURIComponent(id)}/state`, { method: "PUT", body: state });
-  const item = S.alertInbox.find(alert => alert.id === id);
-  if (item) Object.assign(item, state);
-  renderAlertInbox();
+  try {
+    await apiFetch(`/api/alerts/${encodeURIComponent(id)}/state`, { method: "PUT", body: state });
+    const item = S.alertInbox.find(alert => String(alert.id) === String(id));
+    if (item) Object.assign(item, state);
+    renderAlertInbox();
+    return true;
+  } catch (error) {
+    toast(`Alarm güncellenemedi: ${error.message}`, "error");
+    return false;
+  }
 }
 
 async function markAllAlertsRead() {
   const unread = S.alertInbox.filter(item => !item.is_read && !item.suppressed);
-  await Promise.all(unread.map(item => setAlertState(item.id, { is_read: true })));
+  try {
+    await Promise.all(unread.map(item => apiFetch(`/api/alerts/${encodeURIComponent(item.id)}/state`, { method: "PUT", body: { is_read: true } })));
+    unread.forEach(item => { item.is_read = true; });
+    renderAlertInbox();
+  } catch (error) {
+    toast(`Alarmlar güncellenemedi: ${error.message}`, "error");
+    await refreshAlertInbox();
+  }
 }
 
 function receiveLiveAlert(message) {
   const ts = Number(message.ts || Date.now() / 1000);
-  const item = { id: ts.toFixed(6), ts, level: message.level || "warning", message: message.message || "Yeni alarm", source: message.source || "NetMon", is_read: false, suppressed: false };
-  if (!S.alertInbox.some(existing => existing.id === item.id)) S.alertInbox.unshift(item);
+  if (message.id == null) { refreshAlertInbox(); return; }
+  const item = { id: Number(message.id), ts, level: message.level || "warning", message: message.message || "Yeni alarm", source: message.source || "NetMon", is_read: false, suppressed: false };
+  if (!S.alertInbox.some(existing => String(existing.id) === String(item.id))) S.alertInbox.unshift(item);
   renderAlertInbox();
 }
 
 function openAlertDevice(id) {
-  const item = S.alertInbox.find(alert => alert.id === id);
+  const item = S.alertInbox.find(alert => String(alert.id) === String(id));
   if (!item) return;
   if (!item.is_read) setAlertState(id, { is_read: true });
   const ip = String(item.message || "").match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/)?.[0];
