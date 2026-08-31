@@ -84,12 +84,19 @@ def _dhcp_monitor_loop():
                         ).fetchone()
                         now = time.time()
                         if not row or (now - row[0]) > 600:
-                            conn.execute(
+                            cursor = conn.execute(
                                 "INSERT INTO alerts (ts, level, message) VALUES (?, ?, ?)", (now, "critical", msg)
                             )
                             conn.commit()
                             manager.broadcast_threadsafe(
-                                {"type": "alert", "ts": now, "level": "critical", "message": msg, "simulated": False}
+                                {
+                                    "type": "alert",
+                                    "id": cursor.lastrowid,
+                                    "ts": now,
+                                    "level": "critical",
+                                    "message": msg,
+                                    "simulated": False,
+                                }
                             )
                         conn.close()
                     except Exception as e:

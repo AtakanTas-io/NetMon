@@ -741,10 +741,10 @@ def _check_traffic_anomaly(now: float, total_bps: float, conn: sqlite3.Connectio
         _last_anomaly_ts = now
         pct = min(999, int((total_bps / avg - 1) * 100)) if avg else 0
         message = f"Sıra dışı trafik aktivitesi! Anlık trafik, son 1 saatin ortalamasının %{pct} üzerinde."
-        conn.execute("INSERT OR REPLACE INTO alerts (ts, level, message) VALUES (?, ?, ?)",
-                     (now, "warning", message))
+        cursor = conn.execute("INSERT OR REPLACE INTO alerts (ts, level, message) VALUES (?, ?, ?)",
+                              (now, "warning", message))
         conn.commit()
-        manager.broadcast_threadsafe({"type": "alert", "ts": now, "level": "warning",
+        manager.broadcast_threadsafe({"type": "alert", "id": cursor.lastrowid, "ts": now, "level": "warning",
                                        "message": message, "simulated": False})
 
 # ============================================================
@@ -1046,7 +1046,9 @@ def operations_loop(stop_event: threading.Event):
             if events:
                 deliver_events(conn, events, get_all_settings())
                 for event in events:
-                    manager.broadcast_threadsafe({"type": "system_alert", "ts": now, **event, "simulated": False})
+                    manager.broadcast_threadsafe(
+                        {"type": "system_alert", "ts": now, **event, "id": event.get("alert_id"), "simulated": False}
+                    )
             run_due_reports(conn, get_all_settings(), now)
         except Exception:
             logger.exception("[OPERATIONS] Alarm/snapshot/rapor döngüsü başarısız")

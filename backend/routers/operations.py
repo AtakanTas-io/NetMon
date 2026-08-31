@@ -204,47 +204,43 @@ def create_operations_router(ctx) -> APIRouter:
     def alert_inbox(limit: int = Query(default=100, ge=1, le=500), user: dict = Depends(ctx.get_current_user)):
         conn = ctx.db_conn()
         rows = conn.execute(
-            "SELECT a.ts,a.level,a.message,a.source,COALESCE(s.is_read,0),COALESCE(s.suppressed,0) "
-            "FROM alerts a LEFT JOIN alert_user_states s ON s.alert_ts=a.ts AND s.user_id=? "
+            "SELECT a.id,a.ts,a.level,a.message,a.source,COALESCE(s.is_read,0),COALESCE(s.suppressed,0) "
+            "FROM alerts a LEFT JOIN alert_user_states s ON s.alert_id=a.id AND s.user_id=? "
             "ORDER BY a.ts DESC LIMIT ?",
             (user["id"], limit),
         ).fetchall()
         conn.close()
         alerts = [
             {
-                "id": f"{row[0]:.6f}",
-                "ts": row[0],
-                "level": row[1] or "warning",
-                "message": row[2] or "Alarm ayrıntısı yok.",
-                "source": row[3] or "NetMon",
-                "is_read": bool(row[4]),
-                "suppressed": bool(row[5]),
+                "id": row[0],
+                "ts": row[1],
+                "level": row[2] or "warning",
+                "message": row[3] or "Alarm ayrıntısı yok.",
+                "source": row[4] or "NetMon",
+                "is_read": bool(row[5]),
+                "suppressed": bool(row[6]),
             }
             for row in rows
         ]
         return {"alerts": alerts, "unread": sum(not item["is_read"] and not item["suppressed"] for item in alerts)}
 
     @router.put("/api/alerts/{alert_id}/state")
-    def update_alert_state(alert_id: str, body: AlertStateInput, user: dict = Depends(ctx.get_current_user)):
-        try:
-            alert_ts = float(alert_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail="Geçersiz alarm kimliği.") from exc
+    def update_alert_state(alert_id: int, body: AlertStateInput, user: dict = Depends(ctx.get_current_user)):
         conn = ctx.db_conn()
-        if conn.execute("SELECT 1 FROM alerts WHERE ts=?", (alert_ts,)).fetchone() is None:
+        if conn.execute("SELECT 1 FROM alerts WHERE id=?", (alert_id,)).fetchone() is None:
             conn.close()
             raise HTTPException(status_code=404, detail="Alarm bulunamadı.")
         current = conn.execute(
-            "SELECT is_read,suppressed FROM alert_user_states WHERE user_id=? AND alert_ts=?",
-            (user["id"], alert_ts),
+            "SELECT is_read,suppressed FROM alert_user_states WHERE user_id=? AND alert_id=?",
+            (user["id"], alert_id),
         ).fetchone() or (0, 0)
         is_read = int(body.is_read if body.is_read is not None else bool(current[0]))
         suppressed = int(body.suppressed if body.suppressed is not None else bool(current[1]))
         conn.execute(
-            "INSERT INTO alert_user_states(user_id,alert_ts,is_read,suppressed,updated_at) VALUES(?,?,?,?,?) "
-            "ON CONFLICT(user_id,alert_ts) DO UPDATE SET is_read=excluded.is_read,"
+            "INSERT INTO alert_user_states(user_id,alert_id,is_read,suppressed,updated_at) VALUES(?,?,?,?,?) "
+            "ON CONFLICT(user_id,alert_id) DO UPDATE SET is_read=excluded.is_read,"
             "suppressed=excluded.suppressed,updated_at=excluded.updated_at",
-            (user["id"], alert_ts, is_read, suppressed, time.time()),
+            (user["id"], alert_id, is_read, suppressed, time.time()),
         )
         conn.commit()
         conn.close()

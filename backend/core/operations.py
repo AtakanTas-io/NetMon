@@ -16,6 +16,52 @@ from urllib.request import Request, urlopen
 RULE_TYPES = {"offline_duration", "new_device", "rogue_dhcp", "ip_conflict", "config_diff"}
 
 
+def _migrate_alert_identity(conn: sqlite3.Connection) -> None:
+    alert_columns = {row[1] for row in conn.execute("PRAGMA table_info(alerts)").fetchall()}
+    if "id" not in alert_columns:
+        conn.executescript(
+            """
+            ALTER TABLE alerts RENAME TO alerts_legacy;
+            CREATE TABLE alerts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts REAL NOT NULL UNIQUE,
+                level TEXT,
+                message TEXT,
+                source TEXT
+            );
+            INSERT INTO alerts(ts,level,message,source)
+                SELECT ts,level,message,source FROM alerts_legacy ORDER BY ts;
+            DROP TABLE alerts_legacy;
+            """
+        )
+
+    state_columns = {row[1] for row in conn.execute("PRAGMA table_info(alert_user_states)").fetchall()}
+    if "alert_id" not in state_columns:
+        conn.executescript(
+            """
+            ALTER TABLE alert_user_states RENAME TO alert_user_states_legacy;
+            CREATE TABLE alert_user_states (
+                user_id INTEGER NOT NULL,
+                alert_id INTEGER NOT NULL,
+                is_read INTEGER NOT NULL DEFAULT 0,
+                suppressed INTEGER NOT NULL DEFAULT 0,
+                updated_at REAL NOT NULL,
+                PRIMARY KEY(user_id, alert_id),
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY(alert_id) REFERENCES alerts(id) ON DELETE CASCADE
+            );
+            INSERT INTO alert_user_states(user_id,alert_id,is_read,suppressed,updated_at)
+                SELECT s.user_id,a.id,s.is_read,s.suppressed,s.updated_at
+                FROM alert_user_states_legacy s JOIN alerts a ON a.ts=s.alert_ts;
+            DROP TABLE alert_user_states_legacy;
+            """
+        )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_alert_user_states_user "
+        "ON alert_user_states(user_id, is_read, suppressed)"
+    )
+
+
 def ensure_operations_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(
         """
@@ -119,6 +165,7 @@ def ensure_operations_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id, revoked_at);
         """
     )
+    _migrate_alert_identity(conn)
     asset_columns = {row[1] for row in conn.execute("PRAGMA table_info(inventory_assets)").fetchall()}
     if "site_id" not in asset_columns:
         conn.execute("ALTER TABLE inventory_assets ADD COLUMN site_id INTEGER REFERENCES sites(id) ON DELETE SET NULL")
@@ -270,7 +317,7 @@ def evaluate_rules(
                 "INSERT INTO alert_events(rule_id,ts,level,message,evidence_json) VALUES(?,?,?,?,?)",
                 (rule_id, now, level, message, json.dumps(evidence, ensure_ascii=False)),
             )
-            conn.execute(
+            alert_cursor = conn.execute(
                 "INSERT OR REPLACE INTO alerts(ts,level,message,source) VALUES(?,?,?,?)",
                 (now + rule_id / 1_000_000, level, message, f"alert_rule:{rule_id}"),
             )
@@ -278,6 +325,7 @@ def evaluate_rules(
             events.append(
                 {
                     "id": cursor.lastrowid,
+                    "alert_id": alert_cursor.lastrowid,
                     "rule_id": rule_id,
                     "name": name,
                     "level": level,
