@@ -109,6 +109,12 @@ def test_shared_device_drawer_search_and_virtual_list_contracts():
     assert "performance.now()" in source
     assert "filteredList.length >= 500" in source
     assert "requestAnimationFrame(paint)" in source
+    assert "function bindClickOutside" in source
+    assert 'bindClickOutside("deviceExperienceDrawer"' in source
+    assert 'bindClickOutside("alertInboxPopover"' in source
+    assert 'bindClickOutside("globalSearchResults"' in source
+    assert 'bindClickOutside("topoDetailDrawer"' in source
+    assert "clickOutsideBindings.has(elementId)" in source
 
 
 def test_empty_inventory_onboarding_and_backend_theme_preference_contracts():
