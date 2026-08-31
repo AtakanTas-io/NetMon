@@ -16,6 +16,14 @@ Bu dosya [Keep a Changelog](https://keepachangelog.com/tr-TR/1.1.0/) düzenini i
 - Boş envanterde subnet, isteğe bağlı erişim bilgileri ve ilk taramayı yöneten üç adımlı kurulum sihirbazı eklendi.
 - Renk, boşluk ve tipografi tokenları ile kullanıcı hesabına kaydedilen açık/koyu/sistem tema tercihi eklendi.
 
+### Düzeltildi
+
+- Üst çubuktaki tarih ve saatin uygulama açılır açılmaz başlayıp her saniye yenilenmesi sağlandı.
+- Alarm durumları kayan noktalı zaman damgası yerine kalıcı tamsayı kimliğiyle eşleştirildi.
+- Alarm gizleme işleminin kalıcı silme olmadığı açıklandı ve gizlenen alarmları geri gösterme filtresi eklendi.
+- Cihaz çekmecesi, alarm kutusu, arama paneli ve topoloji ayrıntıları dış tıklama veya Escape ile kapatılabilir hale getirildi.
+- Ağ değiştiğinde eski ağ cihazlarının mevcut topolojiye karışması önlendi ve ana uygulama coverage raporuna dahil edildi.
+
 ## [2.5.0] - 2026-08-30
 
 ### Eklendi

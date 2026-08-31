@@ -6,7 +6,7 @@
 - SNMP, WMI/WinRM ve SSH ayarları için örnek laboratuvar kurulumu yazmak
 - DHCP ve switch port eşleştirmesi için entegrasyon testlerini genişletmek
 - `application.py` içindeki arka plan ve envanter çalışma zamanı yardımcılarını servis modüllerine ayırmak
-- `application.py`, `netdiag_core.py` ve masaüstü girişlerini coverage kapsamına alıp başlangıçtaki yüzde 70 eşiğini kademeli yükseltmek
+- `netdiag_core.py` ve masaüstü girişlerini coverage kapsamına alıp başlangıçtaki yüzde 70 eşiğini kademeli yükseltmek
 - Kalan masaüstü ve çekirdek çalışma zamanı modüllerini tiplendirip Mypy denetimini strict moda taşımak
 
 ## Daha sonra
