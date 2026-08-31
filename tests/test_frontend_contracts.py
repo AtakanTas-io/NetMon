@@ -72,6 +72,10 @@ def test_alarm_inbox_uses_websocket_and_persistent_state_api():
     assert "/api/alerts/${encodeURIComponent(id)}/state" in source
     assert "scheduleSocketReconnect" in source
     assert "Math.pow(2" in source
+    assert "Gizle (tekrar gösterme)" in source
+    assert "Bu, alarmı kalıcı olarak silmez" in source
+    assert "Bastırılmışları göster" in source
+    assert "suppressed:false" in source
 
 
 def test_live_pages_poll_only_as_disconnected_websocket_fallback():
