@@ -218,8 +218,11 @@ async function refreshDevices() {
 
 async function refreshTopology() {
   try {
-    const data = await get("/api/topology");
+    const params = new URLSearchParams({ scope: S.topologyScope || "current_network" });
+    if (S.topologyNetworkId != null) params.set("network_id", String(S.topologyNetworkId));
+    const data = await get(`/api/topology?${params}`);
     S.topology = data.topology || data;
+    S.networkContexts = data.meta?.networks || [];
     drawTopology();
   } catch (e) {
     const drawer = $("topoDetailDrawer");

@@ -534,6 +534,14 @@ function renderTopologyPage() {
           </div>
           <div class="right" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:flex-end;">
             <button class="mini-btn ${!S.activeTopoNodeId ? 'blue' : ''}" onclick="renderNocOverviewDrawer()">📡 NOC Paneli</button>
+            <label style="font-size:11px;color:var(--txt-2);display:flex;align-items:center;gap:5px;cursor:pointer;background:var(--panel-2);border:1px solid var(--line-soft);padding:4px 8px;border-radius:6px" title="Kapalıyken daha önce keşfedilmiş diğer ağlar da seçilebilir.">
+              <input type="checkbox" id="topologyCurrentNetworkOnly" ${S.topologyScope !== "all_known" ? "checked" : ""} onchange="setTopologyScope(this.checked)" />
+              Yalnızca mevcut ağ
+            </label>
+            <select id="topologyNetworkSelect" aria-label="Topoloji ağ bağlamı" onchange="selectTopologyNetwork(this.value)" style="max-width:220px" ${S.topologyScope !== "all_known" ? "disabled" : ""}>
+              <option value="all" ${S.topologyNetworkId == null ? "selected" : ""}>Tüm bilinen ağlar</option>
+              ${(S.networkContexts || []).map(network => `<option value="${Number(network.id)}" ${Number(S.topologyNetworkId) === Number(network.id) ? "selected" : ""}>${esc(network.name || network.subnet_cidr)}${network.current ? " · mevcut" : ""}</option>`).join("")}
+            </select>
             <label style="font-size:11px;color:var(--txt-2);display:flex;align-items:center;gap:5px;cursor:pointer;background:var(--panel-2);border:1px solid var(--line-soft);padding:4px 8px;border-radius:6px">
               <input type="checkbox" id="topoActiveOnly" ${S.topoActiveOnly ? "checked" : ""} onchange="toggleTopoActiveOnly(this.checked)" />
               Sadece Aktif Cihazlar

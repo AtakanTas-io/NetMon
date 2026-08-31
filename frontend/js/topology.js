@@ -93,6 +93,27 @@ function layoutTopology(data) {
 S.topoLayout = S.topoLayout || "tree";
 S.topoActiveOnly = S.topoActiveOnly !== undefined ? S.topoActiveOnly : true;
 
+async function setTopologyScope(currentOnly) {
+  S.topologyScope = currentOnly ? "current_network" : "all_known";
+  S.topologyNetworkId = null;
+  const page = $("page-topology");
+  if (page) page.dataset.built = "";
+  await refreshTopology();
+  renderTopologyPage();
+}
+
+async function selectTopologyNetwork(value) {
+  if (value === "current") {
+    return setTopologyScope(true);
+  }
+  S.topologyScope = "all_known";
+  S.topologyNetworkId = value === "all" ? null : Number(value);
+  const page = $("page-topology");
+  if (page) page.dataset.built = "";
+  await refreshTopology();
+  renderTopologyPage();
+}
+
 function setTopoLayout(layoutMode) {
   S.topoLayout = layoutMode;
   const page = $("page-topology");
@@ -656,6 +677,8 @@ Object.assign(globalThis, {
   layoutTopology,
   setTopoLayout,
   toggleTopoActiveOnly,
+  setTopologyScope,
+  selectTopologyNetwork,
   renderDiscoveryStatus,
   setTopoLayer,
   computeMeshTopologyLayout,
