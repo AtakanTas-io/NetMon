@@ -36,3 +36,38 @@
 
 html[data-theme="light"] { color-scheme: light; }
 html[data-theme="dark"] { color-scheme: dark; }
+
+.traffic-session-group:not(.is-open) .traffic-session-row { display: none; }
+.traffic-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2);
+  text-align: left;
+  flex-wrap: wrap;
+}
+.traffic-group-heading { background: var(--panel-2, var(--color-surface-raised)); }
+.traffic-session-menu {
+  display: none;
+  padding: var(--space-2);
+  margin-top: var(--space-1);
+  gap: var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--panel, var(--color-surface));
+  box-shadow: 0 var(--space-1) var(--space-3) color-mix(in srgb, var(--color-bg) 30%, transparent);
+}
+.traffic-session-actions.is-open .traffic-session-menu { display: grid; }
+.traffic-session-menu .mini-btn { text-align: left; white-space: nowrap; }
+.traffic-direction-outbound { color: var(--color-primary); }
+.traffic-direction-inbound { color: var(--color-success); }
+.traffic-direction-unknown { color: var(--color-text-muted); }
+.traffic-review-label { margin-top: var(--space-1); }
+@keyframes highlight-flash {
+  from { background-color: color-mix(in srgb, var(--color-success) 18%, transparent); }
+  to { background-color: transparent; }
+}
+.highlight-flash { animation: highlight-flash 1.5s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .highlight-flash { animation: none; }
+}

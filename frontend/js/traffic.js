@@ -70,22 +70,92 @@ function renderTopTalkersPage() {
 }
 
 let trafficSessionsSnapshot = [];
+const openTrafficSessionGroups = new Set();
+let trafficSessionIds = null;
+const trafficSessionFlashes = new Map();
+
+function trafficSessionGroupKey(session) {
+  return JSON.stringify([session.process_name || "", session.local_ip || "", session.pid ?? null]);
+}
+
+function trafficSessionKey(session) {
+  return JSON.stringify([trafficSessionGroupKey(session), session.local_port, session.remote_ip,
+    session.remote_port, session.protocol || "TCP"]);
+}
+
+function updateTrafficSessionsSnapshot(sessions) {
+  const now = Date.now();
+  const ids = new Set(sessions.map(trafficSessionKey));
+  for (const id of ids) {
+    if (trafficSessionIds && !trafficSessionIds.has(id)) trafficSessionFlashes.set(id, now + 1500);
+  }
+  for (const [id, until] of trafficSessionFlashes) {
+    if (!ids.has(id) || until <= now) trafficSessionFlashes.delete(id);
+  }
+  trafficSessionIds = ids;
+  trafficSessionsSnapshot = sessions;
+}
+
+function toggleTrafficSessionGroup(button) {
+  const group = button.closest("tbody");
+  const expanded = group.classList.toggle("is-open");
+  if (expanded) openTrafficSessionGroups.add(group.dataset.groupKey);
+  else openTrafficSessionGroups.delete(group.dataset.groupKey);
+  button.setAttribute("aria-expanded", String(expanded));
+  button.querySelector(".traffic-group-arrow").textContent = expanded ? "▾" : "▸";
+  closeTrafficSessionMenus();
+}
+
+function closeTrafficSessionMenus() {
+  document.querySelectorAll(".traffic-session-actions.is-open").forEach(menu => {
+    menu.classList.remove("is-open");
+    menu.querySelector(".traffic-menu-toggle").setAttribute("aria-expanded", "false");
+  });
+}
+
+function toggleTrafficSessionMenu(button) {
+  const menu = button.closest(".traffic-session-actions");
+  const wasOpen = menu.classList.contains("is-open");
+  closeTrafficSessionMenus();
+  menu.classList.toggle("is-open", !wasOpen);
+  button.setAttribute("aria-expanded", String(!wasOpen));
+}
+
+document.addEventListener("click", event => {
+  if (!event.target.closest(".traffic-menu-toggle")) closeTrafficSessionMenus();
+});
+document.addEventListener("keydown", event => {
+  if (event.key === "Escape") {
+    document.querySelector(".traffic-session-actions.is-open .traffic-menu-toggle")?.focus();
+    closeTrafficSessionMenus();
+  }
+});
 
 function renderTrafficSessions() {
   const container = $("topTalkersFullLeaderboard");
   if (!container) return;
 
   const query = ($("trafficSessionSearch")?.value || "").trim().toLocaleLowerCase("tr-TR");
+  const selectedUser = $("trafficUserFilter")?.value || "all";
+  const direction = $("trafficDirectionFilter")?.value || "all";
   const state = $("trafficStateFilter")?.value || "all";
   const scope = $("trafficScopeFilter")?.value || "all";
+  const attention = $("trafficAttentionFilter")?.value || "all";
   const sessions = trafficSessionsSnapshot.filter(s => {
-    const haystack = [s.process_name, s.remote_ip, s.remote_port, s.primary_protocol, s.app_category, s.pid]
+    const haystack = [
+      s.process_username, s.process_name, s.destination_name, ...(s.dns_names || []),
+      s.remote_ip, s.remote_port, s.local_ip, s.primary_protocol, s.app_category,
+      s.attention_reason, s.pid,
+    ]
       .filter(value => value !== null && value !== undefined)
       .join(" ")
       .toLocaleLowerCase("tr-TR");
     return (!query || haystack.includes(query))
+      && (selectedUser === "all" || (s.process_username || "") === selectedUser)
+      && (direction === "all" || s.direction === direction)
       && (state === "all" || s.state === state)
-      && (scope === "all" || s.scope === scope);
+      && (scope === "all" || s.scope === scope)
+      && (attention === "all" || s.attention_level === attention);
   });
 
   const result = $("trafficFilterResult");
@@ -111,34 +181,87 @@ function renderTrafficSessions() {
     SYN_SENT: "Uzak sistemden bağlantı yanıtı bekleniyor.",
     CLOSE_WAIT: "Uzak taraf kapattı; yerel uygulamanın bağlantıyı sonlandırması bekleniyor.",
   };
+  const directionLabel = {
+    outbound: "Giden bağlantı",
+    inbound: "Gelen bağlantı",
+    unknown: "Yön belirsiz",
+  };
+  const destinationSourceLabel = {
+    inventory: "NetMon envanter eşleşmesi",
+    dns_cache: "Windows DNS önbelleği adayı",
+    ip_only: "Yalnızca socket IP bilgisi",
+  };
 
+  const groups = new Map();
+  for (const session of sessions) {
+    const key = trafficSessionGroupKey(session);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(session);
+  }
+  const isNew = session => (trafficSessionFlashes.get(trafficSessionKey(session)) || 0) > Date.now();
   container.innerHTML = `
     <div style="overflow:auto; max-height:590px; border:1px solid var(--line-soft); border-radius:9px">
-      <table style="min-width:960px">
+      <table style="min-width:1260px">
         <thead><tr>
-          <th>Uygulama</th><th>Bağlanılan hedef</th><th>Amaç / servis</th><th>Bağlantı durumu</th><th>Hedef türü</th><th>İşlemler</th>
+          <th>Kullanan hesap</th><th>Yerel uç</th><th>Bağlanılan hedef / Uzak uç</th><th>Servis / port</th><th>Yön</th><th>TCP durumu</th><th>Kapsam</th><th>İşlemler</th>
         </tr></thead>
-        <tbody>${sessions.map(s => {
+        ${[...groups].map(([key, members]) => {
+          const expanded = openTrafficSessionGroups.has(key);
+          const first = members[0];
+          return `<tbody class="traffic-session-group${expanded ? " is-open" : ""}" data-group-key="${esc(key)}">
+            <tr class="traffic-group-heading${members.some(isNew) ? " highlight-flash" : ""}"><td colspan="8">
+              <button class="mini-btn traffic-group-toggle" aria-expanded="${expanded}" onclick="toggleTrafficSessionGroup(this)">
+                <span class="traffic-group-arrow" aria-hidden="true">${expanded ? "▾" : "▸"}</span>
+                <b>${esc(first.process_name || "Uygulama adı okunamadı")}</b>
+                <span>PID ${esc(first.pid ?? "-")}</span><code>${esc(first.local_ip || "-")}</code>
+                <span>${members.length} bağlantı</span>
+              </button>
+            </td></tr>${members.map(s => {
           const remote = endpointText(s.remote_ip, s.remote_port);
           const local = endpointText(s.local_ip, s.local_port);
           const established = s.state === "ESTABLISHED";
-          const processName = s.process_name || "Uygulama adı okunamadı";
-          return `<tr>
-            <td class="traffic-app-cell">
-              <b>${esc(processName)}</b>
-              <small>${s.process_name ? `İşlem kimliği: ${s.pid || "-"}` : "Yönetici yetkisi gerekebilir"}</small>
-              <details class="traffic-tech-details"><summary>Teknik ayrıntıları göster</summary><div>Bu bilgisayar: <code>${esc(local)}</code><br>Uzak uç: <code>${esc(remote)}</code><br>Ham TCP durumu: <code>${esc(s.state || "-")}</code></div></details>
+          const processUser = s.process_username || "Hesap okunamadı";
+          const destinationName = s.destination_name || "Alan adı eşleşmedi";
+          const dnsNames = (s.dns_names || []).join(", ");
+          const isOutbound = s.direction === "outbound";
+          const directionClass = isOutbound ? "traffic-direction-outbound" : s.direction === "inbound" ? "traffic-direction-inbound" : "traffic-direction-unknown";
+          const review = s.attention_level === "review";
+          return `<tr class="traffic-session-row${isNew(s) ? " highlight-flash" : ""}">
+            <td class="traffic-user-cell">
+              <b>${esc(processUser)}</b>
+              <small>${s.process_username ? "İşletim sistemi süreç sahibi" : "Yönetici yetkisi gerekebilir"}</small>
             </td>
-            <td class="traffic-destination-cell"><b><code style="color:var(--txt)">${esc(s.remote_ip || "-")}</code></b><small>Uzak port: ${s.remote_port || "-"}</small></td>
+            <td class="traffic-app-cell">
+              <code>${esc(local)}</code>
+              <details class="traffic-tech-details"><summary>Teknik ayrıntıları göster</summary><div>Bu bilgisayar: <code>${esc(local)}</code><br>Uzak uç: <code>${esc(remote)}</code><br>Hizmet portu: <code>${esc(s.service_port || "-")}</code><br>Yön kanıtı: ${esc(s.direction_evidence || "-")}<br>Ham TCP durumu: <code>${esc(s.state || "-")}</code>${dnsNames ? `<br>DNS adayları: ${esc(dnsNames)}` : ""}</div></details>
+            </td>
+            <td class="traffic-destination-cell">
+              <b>${esc(destinationName)}</b>
+              <code style="color:var(--txt)">${esc(s.remote_ip || "-")}:${esc(s.remote_port || "-")}</code>
+              <small>${esc(destinationSourceLabel[s.destination_source] || destinationSourceLabel.ip_only)}</small>
+              ${review ? `<span class="badge warn traffic-review-label" title="Bu bir kesin tehdit tespiti değildir.">İncele</span><small style="color:var(--orange)">${esc(s.attention_reason || "Bağlantıyı doğrulayın.")}</small>` : ""}
+            </td>
             <td><span class="talker-proto-badge">${esc(s.primary_protocol || `TCP ${s.remote_port || ""}`)}</span><br><small style="color:var(--muted)">${esc(s.app_category || "Tanımlanamayan servis")}</small></td>
-            <td><span class="badge" title="${esc(stateHelp[s.state] || "TCP bağlantı durumu")}" style="background:${established ? "rgba(16,185,129,.10)" : "rgba(245,158,11,.10)"};color:${established ? "#34d399" : "#fbbf24"};border-color:${established ? "rgba(16,185,129,.3)" : "rgba(245,158,11,.3)"}">${esc(stateLabel[s.state] || s.state || "-")}</span></td>
+            <td>
+              <span class="badge ${directionClass}" title="${esc(s.direction_evidence || "Bağlantı yönü")}">${isOutbound ? "→" : s.direction === "inbound" ? "←" : "↔"} ${esc(directionLabel[s.direction] || directionLabel.unknown)}</span>
+            </td>
+            <td><span class="badge ${established ? "ok" : "warn"}" title="${esc(stateHelp[s.state] || "TCP bağlantı durumu")}">${esc(stateLabel[s.state] || s.state || "-")}</span></td>
             <td>${s.scope === "local" ? "Yerel/özel ağ" : s.scope === "internet" ? "İnternet" : "Bilinmiyor"}</td>
-            <td><div style="display:flex;gap:4px"><button class="mini-btn" onclick="quickTraceroute('${esc(s.remote_ip)}')">Yolu izle</button><button class="mini-btn" onclick="copyToClipboard('${esc(remote)}', this)">Adresi kopyala</button></div></td>
+            <td><div class="traffic-session-actions">
+              <button class="mini-btn traffic-menu-toggle" aria-label="Bağlantı işlemleri" aria-expanded="false" onclick="toggleTrafficSessionMenu(this)">⋯</button>
+              <div class="traffic-session-menu">
+                <button class="mini-btn" data-ip="${esc(s.remote_ip)}" onclick="quickPing(this.dataset.ip)">Ping</button>
+                <button class="mini-btn" data-ip="${esc(s.remote_ip)}" onclick="quickTraceroute(this.dataset.ip)">Yolu izle</button>
+                ${s.destination_source === "inventory" ? `<button class="mini-btn" data-ip="${esc(s.remote_ip)}" onclick="openDeviceDrawer('', this.dataset.ip)">Cihaz</button>` : ""}
+                <button class="mini-btn" data-address="${esc(remote)}" onclick="copyToClipboard(this.dataset.address, this)">Adresi kopyala</button>
+              </div>
+            </div></td>
           </tr>`;
-        }).join("")}</tbody>
+        }).join("")}</tbody>`;
+        }).join("")}
       </table>
     </div>
-    <div style="margin-top:8px;color:var(--muted);font-size:10.5px">En fazla 100 açık bağlantı gösterilir. Toplam ağ kullanımı bağlantı satırlarına ayrı ayrı dağıtılamaz.</div>`;
+    <div style="margin-top:8px;color:var(--muted);font-size:10.5px">En fazla 100 açık bağlantı gösterilir. “İncele” etiketi kesin tehdit kararı değildir. Toplam ağ kullanımı bağlantı satırlarına ayrı ayrı dağıtılamaz.</div>`;
 }
 
 async function refreshTopTalkers(manual = false) {
@@ -165,7 +288,7 @@ async function refreshTopTalkers(manual = false) {
     if (!container) return;
 
     const sessions = data?.sessions || [];
-    trafficSessionsSnapshot = sessions;
+    updateTrafficSessionsSnapshot(sessions);
     const setMetric = (id, value) => { const el = $(id); if (el) el.textContent = String(value ?? 0); };
     setMetric("trafficSessionCount", data?.session_count);
     setMetric("trafficRemoteCount", data?.distinct_remote_count);
@@ -205,7 +328,9 @@ async function refreshTopTalkers(manual = false) {
 
 Object.assign(globalThis, {
   renderTopTalkersPage,
-  trafficSessionsSnapshot,
+  updateTrafficSessionsSnapshot,
+  toggleTrafficSessionGroup,
+  toggleTrafficSessionMenu,
   renderTrafficSessions,
   refreshTopTalkers,
 });
