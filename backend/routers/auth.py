@@ -3,6 +3,7 @@
 import re
 import secrets
 import sqlite3
+import ssl
 import time
 
 from fastapi import APIRouter, Depends, Header
@@ -99,7 +100,17 @@ def create_auth_router(ctx) -> APIRouter:
             ad_server = settings.get("ad_server")
             ad_domain = settings.get("ad_domain")
             if ad_server and ad_domain:
-                from ldap3 import ALL, Connection, Server
+                from ldap3 import ALL, AUTO_BIND_NO_TLS, AUTO_BIND_TLS_BEFORE_BIND, Connection, Server, Tls
+
+                ad_server = ad_server.strip()
+                if ad_server.lower().startswith("ldap://"):
+                    ctx.logger.warning("AD sunucusu şifresiz protokol kullanıyor")
+                    raise ValueError("Şifresiz AD bağlantısı reddedildi.")
+                if "://" in ad_server and not ad_server.lower().startswith("ldaps://"):
+                    raise ValueError("Geçersiz AD protokolü.")
+                raw_ssl = settings.get("ad_use_ssl", ctx.RUNTIME_CONFIG.ad_use_ssl)
+                use_ssl = str(raw_ssl).lower() not in ("0", "false", "no", "off")
+                use_ssl = use_ssl or ad_server.lower().startswith("ldaps://")
 
                 if "\\" in body.username:
                     u_clean = body.username.split("\\", 1)[1]
@@ -108,13 +119,18 @@ def create_auth_router(ctx) -> APIRouter:
                     user_dn = body.username
                 else:
                     user_dn = f"{body.username}@{ad_domain}"
-                directory_server = Server(ad_server, get_info=ALL, connect_timeout=2)
-                connection = Connection(directory_server, user=user_dn, password=body.password, auto_bind=True)
+                directory_server = Server(
+                    ad_server, use_ssl=use_ssl, tls=Tls(validate=ssl.CERT_REQUIRED), get_info=ALL, connect_timeout=2,
+                )
+                connection = Connection(
+                    directory_server, user=user_dn, password=body.password, auto_referrals=False,
+                    auto_bind=AUTO_BIND_NO_TLS if use_ssl else AUTO_BIND_TLS_BEFORE_BIND,
+                )
                 connection.unbind()
                 ad_success = True
                 if row is None:
                     new_salt = secrets.token_urlsafe(16)
-                    new_hash = ctx._hash_password(secrets.token_urlsafe(32), new_salt)
+                    _, new_hash = ctx._hash_password(secrets.token_urlsafe(32), new_salt)
                     conn.execute(
                         "INSERT INTO users (username, password_hash, salt, role, created_at, must_change_password) "
                         "VALUES (?, ?, ?, ?, ?, ?)",

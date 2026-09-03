@@ -78,3 +78,64 @@ def test_tool_rate_limit_environment(monkeypatch, value, expected):
     from backend.core.config import load_config
     monkeypatch.setenv("NETMON_TOOL_RATE_LIMIT_PER_MINUTE", value)
     assert load_config().tool_rate_limit_per_minute == expected
+
+
+@pytest.mark.parametrize("address, use_ssl", [("dc.example.com", True), ("dc.example.com", False), ("ldaps://dc.example.com", False)])
+def test_ad_login_requires_verified_tls_and_provisions_user(isolated_server, monkeypatch, address, use_ssl):
+    import ldap3
+    import ssl
+    client, db_path, password_path = isolated_server
+    headers = _bootstrap_admin(client, password_path)
+    response = client.post("/api/settings", headers=headers, json={
+        "ad_server": address, "ad_domain": "example.com", "ad_use_ssl": use_ssl,
+    })
+    assert response.status_code == 200
+    assert client.get("/api/settings", headers=headers).json()["settings"]["ad_use_ssl"] is use_ssl
+    directory = Mock(wraps=ldap3.Server)
+    connection = Mock()
+    monkeypatch.setattr(ldap3, "Server", directory)
+    monkeypatch.setattr(ldap3, "Connection", connection)
+    response = client.post("/api/auth/login", json={"username": "directory-user", "password": "Directory-password!"})
+    assert response.status_code == 200
+    implicit_tls = use_ssl or address.startswith("ldaps://")
+    assert directory.call_args.kwargs["use_ssl"] is implicit_tls
+    assert directory.call_args.kwargs["tls"].validate == ssl.CERT_REQUIRED
+    assert connection.call_args.kwargs["auto_bind"] == (
+        ldap3.AUTO_BIND_NO_TLS if implicit_tls else ldap3.AUTO_BIND_TLS_BEFORE_BIND
+    )
+    assert connection.call_args.kwargs["auto_referrals"] is False
+    connection.return_value.unbind.assert_called_once()
+    with sqlite3.connect(db_path) as conn:
+        assert isinstance(conn.execute("SELECT password_hash FROM users WHERE username='directory-user'").fetchone()[0], str)
+
+
+def test_plain_ldap_is_rejected_without_sending_credentials(isolated_server, monkeypatch, caplog):
+    import ldap3
+    client, db_path, password_path = isolated_server
+    _bootstrap_admin(client, password_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany("INSERT INTO settings (key,value) VALUES (?,?)", [
+            ("ad_server", "ldap://dc.example.com"), ("ad_domain", "example.com"),
+        ])
+    connection = Mock()
+    monkeypatch.setattr(ldap3, "Connection", connection)
+    response = client.post("/api/auth/login", json={"username": "directory-user", "password": "Never-send-this!"})
+    assert response.status_code == 401
+    connection.assert_not_called()
+    assert "AD sunucusu şifresiz protokol kullanıyor" in caplog.text
+    assert "Never-send-this" not in caplog.text
+
+
+def test_ad_ssl_environment_default_and_override(monkeypatch):
+    from backend.core.config import load_config
+    monkeypatch.delenv("NETMON_AD_USE_SSL", raising=False)
+    assert load_config().ad_use_ssl is True
+    monkeypatch.setenv("NETMON_AD_USE_SSL", "false")
+    assert load_config().ad_use_ssl is False
+
+
+def test_ad_ssl_toggle_is_saved_by_frontend():
+    from pathlib import Path
+    source = (Path(__file__).resolve().parents[1] / "frontend/js/administration.js").read_text(encoding="utf-8")
+    assert 'id="setAdUseSsl" type="checkbox"' in source
+    assert 'ad_use_ssl: $("setAdUseSsl")?.checked' in source

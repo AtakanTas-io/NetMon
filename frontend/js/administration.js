@@ -223,6 +223,8 @@ async function loadSettings() {
         <h4 style="margin:0 0 4px;color:var(--purple);font-size:13px">🏢 Active Directory / LDAP Entegrasyonu</h4>
         <div class="field-label">AD Sunucu IP/Hostname</div>
         <input id="setAdServer" type="text" value="${esc(s.ad_server || "")}" placeholder="Örn. 192.168.1.10 veya dc.sirket.local" ${isAdmin ? "" : "disabled"} />
+        <label style="display:flex;align-items:center;gap:8px;margin-top:10px"><input id="setAdUseSsl" type="checkbox" ${s.ad_use_ssl !== false ? "checked" : ""} ${isAdmin ? "" : "disabled"}><span>LDAPS kullan</span></label>
+        <div class="hint">Kapalıysa bağlanmadan önce STARTTLS zorunludur. ldaps:// adresleri her zaman LDAPS kullanır. Sunucu sertifikası güvenilir olmalıdır; ldap:// adresleri reddedilir.</div>
         <div class="field-label" style="margin-top:10px">AD Domain (Kısa veya tam)</div>
         <input id="setAdDomain" type="text" value="${esc(s.ad_domain || "")}" placeholder="Örn. sirket.local veya sirket" ${isAdmin ? "" : "disabled"} />
         <div class="hint">Doldurulduğunda, sisteme giriş yapan kullanıcılar önce Active Directory üzerinde doğrulanır. Başarılı olursa otomatik 'user' rolü ile hesap oluşturulur. Lokal hesaplar çalışmaya devam eder.</div>
@@ -289,6 +291,7 @@ async function saveSettings() {
       ncm_backup_interval: Number($("setNcmInterval")?.value) || undefined,
       authorized_dhcp_servers: $("setAuthDhcp")?.value.trim() ?? undefined,
       ad_server: $("setAdServer")?.value.trim() ?? undefined,
+      ad_use_ssl: $("setAdUseSsl")?.checked ?? true,
       ad_domain: $("setAdDomain")?.value.trim() ?? undefined,
       smtp_host: $("setSmtpHost")?.value.trim() ?? undefined,
       smtp_port: Number($("setSmtpPort")?.value) || undefined,

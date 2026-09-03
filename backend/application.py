@@ -4090,6 +4090,7 @@ DEFAULT_SETTINGS = {
     "ncm_backup_interval": 86400,
     "authorized_dhcp_servers": "",
     "ad_server": "",
+    "ad_use_ssl": RUNTIME_CONFIG.ad_use_ssl,
     "ad_domain": "",
     "smtp_host": "",
     "smtp_port": 587,
@@ -4142,7 +4143,7 @@ def get_all_settings():
             result[k] = DEFAULT_SETTINGS[k]
     for key in SECRET_SETTING_KEYS:
         result[key] = _unprotect_secret(result.get(key, "") or "")
-    for bool_key in ("public_ip_lookup", "winrm_verify_tls", "ncm_auto_backup_enabled", "smtp_tls"):
+    for bool_key in ("public_ip_lookup", "winrm_verify_tls", "ncm_auto_backup_enabled", "smtp_tls", "ad_use_ssl"):
         raw_bool = result.get(bool_key, DEFAULT_SETTINGS[bool_key])
         result[bool_key] = raw_bool if isinstance(raw_bool, bool) else str(raw_bool).lower() in ("1", "true", "yes", "on")
     return result

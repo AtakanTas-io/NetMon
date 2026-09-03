@@ -31,6 +31,7 @@ class SettingsUpdate(BaseModel):
     ncm_backup_interval: int | None = None
     authorized_dhcp_servers: str | None = None
     ad_server: str | None = None
+    ad_use_ssl: bool | None = None
     ad_domain: str | None = None
     smtp_host: str | None = None
     smtp_port: int | None = None
@@ -105,7 +106,12 @@ def _validate_settings_update(ctx, updates: dict) -> str | None:
     for key in ("ad_server", "ad_domain", "smtp_host"):
         if key in updates:
             value = str(updates[key] or "").strip()
-            if value and (len(value) > 253 or re.search(r"[^A-Za-z0-9._:-]", value)):
+            host = value
+            if key == "ad_server" and value.lower().startswith("ldaps://"):
+                host = value[8:]
+                if not host:
+                    return "AD sunucusu boş olamaz."
+            if value and (len(value) > 253 or re.search(r"[^A-Za-z0-9._:-]", host)):
                 return f"{key} geçerli bir IP veya alan adı olmalıdır."
             updates[key] = value
 
