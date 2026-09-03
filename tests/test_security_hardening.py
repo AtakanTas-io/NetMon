@@ -220,3 +220,58 @@ def test_new_password_hash_uses_random_salt_and_600000_iterations():
     assert digest.startswith("pbkdf2_sha256$600000$")
     assert server._verify_password("New-password!", salt, digest)
     assert not server._verify_password("wrong", salt, digest)
+
+
+@pytest.mark.parametrize("change", ["logout", "expired", "inactive", "password_reset"])
+def test_live_websocket_rechecks_idle_session(isolated_server, monkeypatch, change):
+    client, db_path, password_path = isolated_server
+    headers = _bootstrap_admin(client, password_path)
+    token = headers["Authorization"].removeprefix("Bearer ")
+    monkeypatch.setattr(server, "WS_SESSION_CHECK_INTERVAL", 0.02)
+    with client.websocket_connect("/ws/live", subprotocols=["netmon", token]) as ws:
+        assert ws.receive_json()["type"] == "status"
+        if change == "logout":
+            assert client.post("/api/auth/logout", headers=headers).status_code == 200
+        else:
+            statements = {
+                "expired": "UPDATE sessions SET expires_at=0",
+                "inactive": "UPDATE users SET active=0",
+                "password_reset": "UPDATE users SET must_change_password=1",
+            }
+            with sqlite3.connect(db_path) as conn:
+                conn.execute(statements[change])
+        message = ws.receive()
+        assert message["type"] == "websocket.close"
+        assert message["code"] == 4401
+    assert not server.manager.active
+
+
+@pytest.mark.asyncio
+async def test_websocket_messages_cannot_postpone_session_check(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    ticks = [0.0]
+
+    async def receive_text():
+        ticks[0] += 1
+        return "ping"
+
+    ws = SimpleNamespace(
+        headers={"sec-websocket-protocol": "netmon, test-token"},
+        accept=AsyncMock(),
+        send_text=AsyncMock(),
+        close=AsyncMock(),
+        receive_text=receive_text,
+    )
+    validation = Mock(side_effect=[True, True, False])
+    monkeypatch.setattr(server, "_websocket_session_valid", validation)
+    monkeypatch.setattr(server, "WS_SESSION_CHECK_INTERVAL", 2)
+    monkeypatch.setattr(server, "time", SimpleNamespace(monotonic=lambda: ticks[0], time=lambda: 0))
+    monkeypatch.setattr(server, "_devices_cache", {"data": []})
+    monkeypatch.setattr(server, "manager", server.ConnectionManager())
+    await server.ws_live(ws)
+    assert ticks[0] == 4
+    assert validation.call_count == 3
+    ws.close.assert_awaited_once_with(code=4401)
+    assert not server.manager.active

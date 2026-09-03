@@ -4037,28 +4037,34 @@ def get_simulation_state(user: dict = Depends(get_current_user)):
 # ============================================================
 # WEBSOCKET
 # ============================================================
+WS_SESSION_CHECK_INTERVAL = 60.0
+
+
+def _websocket_session_valid(token: str) -> bool:
+    conn = db_conn()
+    try:
+        row = conn.execute(
+            "SELECT s.expires_at, s.created_at, u.active, u.must_change_password "
+            "FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token=?",
+            (token,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return False
+    expires_at, created_at, active, must_change_password = row
+    if expires_at is None:
+        expires_at = created_at + SESSION_TTL_SECONDS
+    return bool(active and not must_change_password and time.time() < expires_at)
+
+
 @app.websocket("/ws/live")
 async def ws_live(websocket: WebSocket):
     # URL/query loglarına oturum anahtarı düşürmemek için token ikinci
     # Sec-WebSocket-Protocol değeri olarak taşınır.
     offered = [item.strip() for item in websocket.headers.get("sec-websocket-protocol", "").split(",") if item.strip()]
     token = offered[1] if len(offered) >= 2 and offered[0] == "netmon" else None
-    if not token:
-        await websocket.close(code=4401)
-        return
-    conn = db_conn()
-    row = conn.execute(
-        "SELECT s.expires_at, s.created_at, u.active, u.must_change_password FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token=?",
-        (token,),
-    ).fetchone()
-    conn.close()
-    if row is None:
-        await websocket.close(code=4401)
-        return
-    expires_at, created_at, active, must_change_password = row
-    if expires_at is None:
-        expires_at = created_at + SESSION_TTL_SECONDS
-    if not active or must_change_password or time.time() > expires_at:
+    if not token or not _websocket_session_valid(token):
         await websocket.close(code=4401)
         return
 
@@ -4067,11 +4073,22 @@ async def ws_live(websocket: WebSocket):
         await websocket.send_text(json.dumps({"type": "status", **_last_status}))
         if _devices_cache.get("data"):
             await websocket.send_text(json.dumps({"type": "devices", "devices": filter_devices_by_scope(_devices_cache["data"]), "ts": _devices_cache.get("ts", time.time())}))
+        next_check = time.monotonic() + WS_SESSION_CHECK_INTERVAL
         while True:
-            await websocket.receive_text()
+            try:
+                await asyncio.wait_for(websocket.receive_text(), timeout=max(0, next_check - time.monotonic()))
+            except asyncio.TimeoutError:
+                pass
+            if time.monotonic() >= next_check:
+                if not _websocket_session_valid(token):
+                    await websocket.close(code=4401)
+                    return
+                next_check = time.monotonic() + WS_SESSION_CHECK_INTERVAL
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
+        pass
     except Exception:
+        pass
+    finally:
         manager.disconnect(websocket)
 
 # ============================================================
