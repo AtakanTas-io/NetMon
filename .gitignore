@@ -40,7 +40,7 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 pytest_netmon/
-pytest_temp/
+pytest_temp*/
 
 # ==============================================================================
 # IDEs, Editors & Operating System Artifacts
