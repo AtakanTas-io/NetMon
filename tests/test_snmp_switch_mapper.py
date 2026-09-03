@@ -76,3 +76,26 @@ def test_switch_without_ip_is_skipped(monkeypatch):
 def test_default_community_is_public_when_server_state_unavailable(monkeypatch):
     monkeypatch.delitem(__import__("sys").modules, "server", raising=False)
     assert module.get_snmp_community() in {"public", None}
+
+
+def test_supported_pysnmp_async_api_maps_bridge_rows(monkeypatch):
+    from pysnmp.hlapi.v3arch.asyncio import ObjectType, SnmpEngine, UdpTransportTarget
+
+    assert module.HAS_PYSNMP
+    assert module.nextCmd is None
+    calls = []
+
+    async def walk(engine, auth, target, context, variable, **options):
+        # Gerçek 7.1 nesnelerini kullan, yalnız ağ yanıtını taklit et.
+        assert isinstance(engine, SnmpEngine)
+        assert isinstance(target, UdpTransportTarget)
+        assert isinstance(variable, ObjectType)
+        assert target.transport_address == ("127.0.0.1", 161)
+        assert options["lexicographicMode"] is False
+        calls.append(target)
+        oid = SimpleNamespace(asTuple=lambda: (1, 3, 6, 1, 2, 1, 17, 4, 3, 1, 2, 170, 187, 204, 221, 238, 255))
+        yield None, 0, 0, [(oid, 7)]
+
+    monkeypatch.setattr(module, "walk_cmd", walk)
+    assert module.fetch_switch_mac_table("127.0.0.1", "public") == {"AA:BB:CC:DD:EE:FF": "7"}
+    assert len(calls) == 1
