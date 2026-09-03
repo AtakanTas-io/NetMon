@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import math
 import smtplib
 import sqlite3
 import time
@@ -13,7 +14,24 @@ from io import BytesIO
 from typing import Any, Iterable
 from urllib.request import Request, urlopen
 
-RULE_TYPES = {"offline_duration", "new_device", "rogue_dhcp", "ip_conflict", "config_diff"}
+RULE_TYPES = {
+    "offline_duration",
+    "new_device",
+    "rogue_dhcp",
+    "ip_conflict",
+    "config_diff",
+    "bandwidth_spike",
+    "connection_burst",
+}
+CONNECTION_BURST_LIMIT = 20
+
+
+def _bandwidth_multiplier(target: str) -> float:
+    try:
+        multiplier = float(target.strip().lower().removesuffix("x"))
+    except ValueError:
+        return 3.0
+    return multiplier if math.isfinite(multiplier) and 1 < multiplier <= 1000 else 3.0
 
 
 def _migrate_alert_identity(conn: sqlite3.Connection) -> None:
@@ -257,6 +275,52 @@ def _rule_evidence(
     devices: list[dict[str, Any]],
     now: float,
 ) -> list[dict[str, Any]]:
+    if rule_type == "bandwidth_spike":
+        window = threshold or 300
+        baseline = conn.execute(
+            "SELECT AVG(wifi_sent+wifi_recv+eth_sent+eth_recv) FROM traffic WHERE ts>? AND ts<=?",
+            (now - 2 * window, now - window),
+        ).fetchone()[0]
+        current = conn.execute(
+            "SELECT ts,wifi_sent+wifi_recv+eth_sent+eth_recv FROM traffic "
+            "WHERE ts>? AND ts<=? ORDER BY ts DESC LIMIT 1",
+            (max(last_evaluated, now - window), now),
+        ).fetchone()
+        if baseline is None or baseline <= 0 or not math.isfinite(baseline) or not current:
+            return []
+        current_bps = current[1]
+        multiplier = _bandwidth_multiplier(target)
+        if current_bps is None or not math.isfinite(current_bps) or current_bps <= baseline * multiplier:
+            return []
+        return [
+            {
+                "ts": current[0],
+                "current_bps": current_bps,
+                "baseline_bps": baseline,
+                "multiplier": multiplier,
+                "window_seconds": window,
+            }
+        ]
+    if rule_type == "connection_burst":
+        window = threshold or 300
+        rows = conn.execute(
+            "SELECT process_name,COUNT(DISTINCT remote_ip),MAX(first_seen) "
+            "FROM connections WHERE first_seen>? AND first_seen<=? "
+            "AND process_name IS NOT NULL AND process_name<>'' AND remote_ip IS NOT NULL AND remote_ip<>'' "
+            "GROUP BY process_name HAVING COUNT(DISTINCT remote_ip)>? "
+            "AND COUNT(DISTINCT CASE WHEN first_seen<=? THEN remote_ip END)<=?",
+            (now - window, now, CONNECTION_BURST_LIMIT, last_evaluated, CONNECTION_BURST_LIMIT),
+        ).fetchall()
+        return [
+            {
+                "process_name": row[0],
+                "distinct_remote_ips": row[1],
+                "ts": row[2],
+                "window_seconds": window,
+                "threshold_count": CONNECTION_BURST_LIMIT,
+            }
+            for row in rows
+        ]
     if rule_type == "offline_duration":
         cutoff = now - max(60, threshold)
         rows = conn.execute(
@@ -298,6 +362,29 @@ def _rule_evidence(
     return []
 
 
+def _rule_message(name: str, rule_type: str, evidence: list[dict[str, Any]]) -> str:
+    if rule_type == "bandwidth_spike":
+        item = evidence[0]
+        window = item["window_seconds"]
+        period = f"{window / 60:g} dakika" if window % 60 == 0 else f"{window} saniye"
+        ratio = item["current_bps"] / item["baseline_bps"]
+        return (
+            f"{name}: Bant genişliği önceki {period} ortalamasının {ratio:.1f} katına çıktı "
+            f"({item['current_bps'] / 1_000_000:.1f} Mbps; ortalama {item['baseline_bps'] / 1_000_000:.1f} Mbps)."
+        )
+    if rule_type == "connection_burst":
+        messages = []
+        for item in evidence:
+            window = item["window_seconds"]
+            period = f"{window / 60:g} dakikada" if window % 60 == 0 else f"{window} saniyede"
+            messages.append(
+                f"{item['process_name']} son {period} {item['distinct_remote_ips']} farklı uzak adrese bağlandı "
+                f"(eşik: {item['threshold_count']})."
+            )
+        return f"{name}: " + " ".join(messages)
+    return f"{name}: {len(evidence)} doğrulanmış eşleşme"
+
+
 def evaluate_rules(
     conn: sqlite3.Connection, devices: list[dict[str, Any]], now: float | None = None
 ) -> list[dict[str, Any]]:
@@ -312,7 +399,7 @@ def evaluate_rules(
         evidence = _rule_evidence(conn, rule_type, threshold, target or "", last_eval or 0, devices, now)
         can_trigger = not last_trigger or now - last_trigger >= cooldown
         if evidence and can_trigger:
-            message = f"{name}: {len(evidence)} doğrulanmış eşleşme"
+            message = _rule_message(name, rule_type, evidence)
             cursor = conn.execute(
                 "INSERT INTO alert_events(rule_id,ts,level,message,evidence_json) VALUES(?,?,?,?,?)",
                 (rule_id, now, level, message, json.dumps(evidence, ensure_ascii=False)),

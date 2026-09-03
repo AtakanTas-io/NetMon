@@ -608,13 +608,26 @@ async function refreshSecurity() {
 }
 
 function openAlertRuleModal() {
-  openModal(`<h3>Alarm Kuralı</h3><div class="field-label">Ad</div><input id="alertRuleName" placeholder="Kritik cihaz çevrimdışı"><div class="field-label" style="margin-top:10px">Tür</div><select id="alertRuleType"><option value="offline_duration">Çevrimdışı süre</option><option value="new_device">Yeni cihaz</option><option value="rogue_dhcp">Rogue DHCP</option><option value="ip_conflict">IP çakışması</option><option value="config_diff">Konfigürasyon farkı</option></select><div class="field-label" style="margin-top:10px">Eşik (saniye)</div><input id="alertRuleThreshold" type="number" min="0" value="1800"><div class="field-label" style="margin-top:10px">Seviye</div><select id="alertRuleLevel"><option value="warning">Uyarı</option><option value="critical">Kritik</option><option value="info">Bilgi</option></select><div class="field-label" style="margin-top:10px">Kanallar</div><label><input id="alertRuleEmail" type="checkbox"> E-posta</label> <label><input id="alertRuleWebhook" type="checkbox"> Webhook</label><div class="field-label" style="margin-top:10px">Tekrar bekleme (saniye)</div><input id="alertRuleCooldown" type="number" min="30" value="900"><div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px"><button class="mini-btn" onclick="closeModalForce()">İptal</button><button class="mini-btn blue" onclick="createAlertRule()">Kaydet</button></div>`);
+  openModal(`<h3>Alarm Kuralı</h3><div class="field-label">Ad</div><input id="alertRuleName" placeholder="Kritik cihaz çevrimdışı"><div class="field-label" style="margin-top:10px">Tür</div><select id="alertRuleType" onchange="updateAlertRuleFields()"><option value="offline_duration">Çevrimdışı süre</option><option value="new_device">Yeni cihaz</option><option value="rogue_dhcp">Rogue DHCP</option><option value="ip_conflict">IP çakışması</option><option value="config_diff">Konfigürasyon farkı</option><option value="bandwidth_spike">Bant genişliği sıçraması</option><option value="connection_burst">Bağlantı patlaması</option></select><div id="alertRuleMultiplierField" hidden><div class="field-label">Bant genişliği çarpanı</div><input id="alertRuleTarget" value="3x" placeholder="Örn. 3x veya 4.5x"></div><div id="alertRuleWindowHint" class="hint" hidden></div><div id="alertRuleThresholdLabel" class="field-label" style="margin-top:10px">Eşik (saniye)</div><input id="alertRuleThreshold" type="number" min="0" value="1800"><div class="field-label" style="margin-top:10px">Seviye</div><select id="alertRuleLevel"><option value="warning">Uyarı</option><option value="critical">Kritik</option><option value="info">Bilgi</option></select><div class="field-label" style="margin-top:10px">Kanallar</div><label><input id="alertRuleEmail" type="checkbox"> E-posta</label> <label><input id="alertRuleWebhook" type="checkbox"> Webhook</label><div class="field-label" style="margin-top:10px">Tekrar bekleme (saniye)</div><input id="alertRuleCooldown" type="number" min="30" value="900"><div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px"><button class="mini-btn" onclick="closeModalForce()">İptal</button><button class="mini-btn blue" onclick="createAlertRule()">Kaydet</button></div>`);
+}
+
+function updateAlertRuleFields() {
+  const type = $("alertRuleType").value;
+  const isWindow = type === "bandwidth_spike" || type === "connection_burst";
+  $("alertRuleThresholdLabel").textContent = isWindow ? "Pencere (saniye)" : "Eşik (saniye)";
+  $("alertRuleThreshold").placeholder = isWindow ? "Örn. 300 (5 dakika)" : "Eşik süresi";
+  $("alertRuleMultiplierField").hidden = type !== "bandwidth_spike";
+  const hint = $("alertRuleWindowHint");
+  hint.hidden = !isWindow;
+  hint.textContent = type === "connection_burst"
+    ? "Aynı uygulama bir pencerede 20'den fazla farklı uzak IP'ye ilk kez bağlandığında alarm üretir. Sıfır saniye: 5 dakika."
+    : "Son ölçüm, önceki eşit pencerenin ortalamasıyla karşılaştırılır. Sıfır saniye: 5 dakika; geçersiz çarpan: 3x.";
 }
 
 async function createAlertRule() {
   try {
     const channels = []; if ($("alertRuleEmail").checked) channels.push("email"); if ($("alertRuleWebhook").checked) channels.push("webhook");
-    await post("/api/alert-rules", {name:$("alertRuleName").value.trim(),rule_type:$("alertRuleType").value,threshold_seconds:Number($("alertRuleThreshold").value),level:$("alertRuleLevel").value,channels,cooldown_seconds:Number($("alertRuleCooldown").value)});
+    await post("/api/alert-rules", {name:$("alertRuleName").value.trim(),rule_type:$("alertRuleType").value,target:$("alertRuleType").value === "bandwidth_spike" ? $("alertRuleTarget").value.trim() : "",threshold_seconds:Number($("alertRuleThreshold").value),level:$("alertRuleLevel").value,channels,cooldown_seconds:Number($("alertRuleCooldown").value)});
     closeModalForce(); toast("Alarm kuralı kaydedildi.", "success"); refreshSecurity();
   } catch (e) { toast(e.message || "Alarm kuralı kaydedilemedi.", "error"); }
 }
@@ -673,6 +686,7 @@ Object.assign(globalThis, {
   refreshSecurity,
   openAlertRuleModal,
   createAlertRule,
+  updateAlertRuleFields,
   evaluateAlertRules,
   showSecurityRule,
   inspectSecurityCapability,
