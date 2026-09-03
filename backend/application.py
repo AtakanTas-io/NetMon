@@ -1127,6 +1127,12 @@ _request_timestamps = deque(maxlen=100_000)
 _request_metrics_lock = threading.Lock()
 _api_key_rate_state: dict[int, deque] = {}
 _api_key_rate_lock = threading.Lock()
+_tool_rate_state: dict[int, deque] = {}
+_tool_rate_lock = threading.Lock()
+TOOL_RATE_LIMIT_PER_MINUTE = RUNTIME_CONFIG.tool_rate_limit_per_minute
+_RATE_LIMITED_TOOL_PATHS = {
+    "/api/tools/traceroute", "/api/tools/portscan", "/api/tools/deep-scan", "/api/tools/network-cmd",
+}
 _server_started_at = time.time()
 
 
@@ -1312,6 +1318,18 @@ def get_current_user(request: Request, authorization: str | None = Header(defaul
         "/api/auth/me", "/api/auth/change-password", "/api/auth/logout"
     }:
         raise _AuthError(428, "Devam etmeden önce ilk kurulum parolanızı değiştirin.")
+    if request.method == "POST" and request.url.path in _RATE_LIMITED_TOOL_PATHS:
+        now = time.monotonic()
+        with _tool_rate_lock:
+            stale_users = [user_id for user_id, stamps in _tool_rate_state.items() if stamps[-1] <= now - 60]
+            for user_id in stale_users:
+                del _tool_rate_state[user_id]
+            timestamps = _tool_rate_state.setdefault(uid, deque())
+            while timestamps and timestamps[0] <= now - 60:
+                timestamps.popleft()
+            if len(timestamps) >= TOOL_RATE_LIMIT_PER_MINUTE:
+                raise _AuthError(429, "Teşhis araçları dakika istek sınırını aştı. Lütfen daha sonra tekrar deneyin.")
+            timestamps.append(now)
     return {
         "id": uid, "username": username, "role": role,
         "role_label": _role_definition(role)["label"],

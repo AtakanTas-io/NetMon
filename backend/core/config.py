@@ -51,6 +51,7 @@ class RuntimeConfig:
     login_max_attempts: int
     login_lockout_seconds: int
     wmi_auth_failure_cooldown_seconds: int
+    tool_rate_limit_per_minute: int
 
 
 def load_config() -> RuntimeConfig:
@@ -84,6 +85,7 @@ def load_config() -> RuntimeConfig:
         login_max_attempts=_env_int("NETMON_LOGIN_MAX_ATTEMPTS", 5, 1, 100),
         login_lockout_seconds=_env_int("NETMON_LOGIN_LOCKOUT_SECONDS", 300, 1, 86400),
         wmi_auth_failure_cooldown_seconds=_env_int("NETMON_WMI_AUTH_COOLDOWN_SECONDS", 900, 1, 86400),
+        tool_rate_limit_per_minute=_env_int("NETMON_TOOL_RATE_LIMIT_PER_MINUTE", 15, 1, 1000),
     )
 
 
