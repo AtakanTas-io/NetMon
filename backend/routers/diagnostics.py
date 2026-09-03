@@ -257,10 +257,15 @@ def create_diagnostics_router(ctx) -> APIRouter:
 
     @router.post("/api/tools/traceroute")
     def run_traceroute_api(req: TraceRequest, user: dict = Depends(ctx.get_current_user)):
+        target = _clean_command_target(req.target)
+        if not target:
+            return JSONResponse(status_code=400, content={"error": "Geçerli bir hedef adresi/hostname girin."})
+        if not 1 <= req.max_hops <= 64:
+            return JSONResponse(status_code=400, content={"error": "Hop sayısı 1-64 aralığında olmalıdır."})
         if ctx.platform.system().lower() == "windows":
-            cmd = ["tracert", "-d", "-h", str(req.max_hops), "-w", "500", req.target]
+            cmd = ["tracert", "-d", "-h", str(req.max_hops), "-w", "500", target]
         else:
-            cmd = ["traceroute", "-n", "-m", str(req.max_hops), "-w", "1", req.target]
+            cmd = ["traceroute", "-n", "-m", str(req.max_hops), "-w", "1", target]
         try:
             output = ctx.subprocess.check_output(
                 cmd,
@@ -299,7 +304,9 @@ def create_diagnostics_router(ctx) -> APIRouter:
                 content={"error": "Ağ yapılandırmasını değiştiren komutlar için yönetici yetkisi gerekir."},
             )
         if key == "nslookup":
-            target = req.target.strip() or "google.com"
+            target = _clean_command_target(req.target)
+            if not target:
+                return JSONResponse(status_code=400, content={"error": "Geçerli bir hedef adresi/hostname girin."})
             record_type = req.record_type.strip().upper()
             if record_type:
                 if record_type not in _NSLOOKUP_RECORD_TYPES:
