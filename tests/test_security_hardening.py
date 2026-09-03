@@ -246,6 +246,30 @@ def test_live_websocket_rechecks_idle_session(isolated_server, monkeypatch, chan
     assert not server.manager.active
 
 
+@pytest.mark.parametrize("ip", ["", "example.com", "/admin", "127.0.0.1 /admin", "999.1.1.1", "1.2.3.4;calc"])
+def test_rdp_rejects_invalid_ip_before_popen(isolated_server, monkeypatch, ip):
+    client, _, password_path = isolated_server
+    headers = _bootstrap_admin(client, password_path)
+    popen = Mock()
+    monkeypatch.setattr(server.subprocess, "Popen", popen)
+    monkeypatch.setattr(server.platform, "system", lambda: "Windows")
+    response = client.post("/api/tools/rdp", params={"ip": ip}, headers=headers)
+    assert response.status_code == 400
+    popen.assert_not_called()
+
+
+@pytest.mark.parametrize("ip, normalized", [("192.168.1.10", "192.168.1.10"), ("2001:0db8::1", "2001:db8::1")])
+def test_rdp_accepts_ipv4_and_ipv6(isolated_server, monkeypatch, ip, normalized):
+    client, _, password_path = isolated_server
+    headers = _bootstrap_admin(client, password_path)
+    popen = Mock()
+    monkeypatch.setattr(server.subprocess, "Popen", popen)
+    monkeypatch.setattr(server.platform, "system", lambda: "Windows")
+    response = client.post("/api/tools/rdp", params={"ip": ip}, headers=headers)
+    assert response.status_code == 200
+    assert popen.call_args.args[0] == ["mstsc.exe", f"/v:{normalized}"]
+
+
 @pytest.mark.asyncio
 async def test_websocket_messages_cannot_postpone_session_check(monkeypatch):
     from types import SimpleNamespace

@@ -3167,6 +3167,10 @@ import platform
 import json
 
 def api_launch_rdp(ip: str, user: dict = Depends(get_current_user)):
+    try:
+        ip = str(ipaddress.ip_address(ip))
+    except ValueError:
+        return JSONResponse(status_code=400, content={"error": "Geçerli bir IPv4 veya IPv6 adresi girin."})
     if platform.system() == "Windows":
         import subprocess
         try:
