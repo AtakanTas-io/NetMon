@@ -166,6 +166,12 @@ def create_auth_router(ctx) -> APIRouter:
             ctx._audit(username, "login", "yanlış şifre", success=False)
             return JSONResponse(status_code=401, content={"error": "Kullanıcı adı veya şifre hatalı."})
 
+        if not ad_success and ctx._password_needs_rehash(pw_hash):
+            new_salt, new_hash = ctx._hash_password(body.password)
+            conn.execute(
+                "UPDATE users SET password_hash=?, salt=? WHERE id=? AND password_hash=? AND salt=?",
+                (new_hash, new_salt, uid, pw_hash, salt),
+            )
         _clear_login_failures(conn, username)
         token = secrets.token_urlsafe(32)
         created_at = time.time()

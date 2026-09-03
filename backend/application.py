@@ -151,18 +151,39 @@ def _unprotect_secret(value: str) -> str:
 
 
 # ============================================================
-# ŞİFRE HASHLEME (PBKDF2-HMAC-SHA256, 200k iterasyon)
+# ŞİFRE HASHLEME (PBKDF2-HMAC-SHA256, 600k iterasyon)
 # ============================================================
+PASSWORD_HASH_ITERATIONS = 600_000
+
+
 def _hash_password(password: str, salt: str | None = None) -> tuple[str, str]:
     if salt is None:
         salt = secrets.token_hex(16)
-    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 200_000)
-    return salt, dk.hex()
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), PASSWORD_HASH_ITERATIONS)
+    return salt, f"pbkdf2_sha256${PASSWORD_HASH_ITERATIONS}${dk.hex()}"
+
+
+def _password_hash_parts(value: str) -> tuple[int, str] | None:
+    if re.fullmatch(r"[0-9a-f]{64}", value):
+        return 200_000, value
+    match = re.fullmatch(r"pbkdf2_sha256\$([0-9]{1,8})\$([0-9a-f]{64})", value)
+    if match and 1 <= int(match[1]) <= 10_000_000:
+        return int(match[1]), match[2]
+    return None
+
+
+def _password_needs_rehash(value: str) -> bool:
+    parts = _password_hash_parts(value)
+    return parts is not None and parts[0] < PASSWORD_HASH_ITERATIONS
 
 
 def _verify_password(password: str, salt: str, expected_hash: str) -> bool:
-    _, computed = _hash_password(password, salt)
-    return hmac.compare_digest(computed, expected_hash)
+    parts = _password_hash_parts(expected_hash)
+    if parts is None:
+        return False
+    iterations, digest = parts
+    computed = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), iterations)
+    return hmac.compare_digest(computed.hex(), digest)
 
 import logging
 
