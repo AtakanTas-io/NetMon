@@ -48,8 +48,8 @@ Tek geliştiricili depoda kendi PR'ınızı onaylamaya çalışmayın. GitHub bu
 Örnek yerel etiket komutları:
 
 ```bash
-git tag -a v2.5.0 -m "NetMon 2.5.0"
-git push origin v2.5.0
+git tag -a v2.6.0 -m "NetMon 2.6.0"
+git push origin v2.6.0
 ```
 
 Etiketi yalnızca aynı sürüm başlığı `CHANGELOG.md` içinde yer aldığında oluşturun. Yayımlanmış bir etiketi farklı commit'e taşımayın; düzeltme gerekiyorsa yeni bir patch sürümü çıkarın.

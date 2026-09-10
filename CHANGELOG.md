@@ -6,6 +6,14 @@ Bu dosya [Keep a Changelog](https://keepachangelog.com/tr-TR/1.1.0/) düzenini i
 
 ### Eklendi
 
+- Birleşik komut araması, alan filtreleri, kayıtlı sorgular ve CSV dışa aktarma eklendi.
+- Bağlantı geçmişi, yeni hedef/bağlantı patlaması/periyodik bağlantı sinyalleri ve filtrelenebilir API uçları eklendi.
+- Yapılandırma uyumluluğu, CVE korelasyonu, varsayılan kimlik bilgisi denetimi ve pasif komşu doğrulaması eklendi.
+- NCM temel çizgileri, uyumluluk sonuçları ve ikinci kullanıcı onaylı değişiklik istekleri eklendi.
+- Ağ kalitesi eğilim grafiği, güvenlik skoru, sertifika/DHCP özeti ve Windows firewall karar geçmişi eklendi.
+- Windows lisans durumu, ekran kartı belleği ve ayrıntılı cihaz envanteri bölümleri eklendi.
+- Yönetici hesabı için veritabanını silmeden çalışan yedekli parola kurtarma aracı eklendi.
+- Ping ve traceroute hedeflerini isteğe bağlı olarak özel/yerel IPv4 kapsamına sınırlayan ayar eklendi.
 - Ağ topolojisi cihaz durumu ve port bağlantılarını gösteren, büyük ağlarda otomatik sadeleşen etkileşimli node-link haritasına dönüştürüldü.
 - Canlı alarm sayacı, kullanıcıya özel kalıcı okundu ve bastırma durumları olan alarm gelen kutusu eklendi.
 - Dashboard, cihaz listesi ve topoloji yenilemeleri WebSocket push akışına taşındı; polling yalnızca bağlantı koptuğunda emniyet yenilemesi olarak bırakıldı.
@@ -18,6 +26,10 @@ Bu dosya [Keep a Changelog](https://keepachangelog.com/tr-TR/1.1.0/) düzenini i
 
 ### Düzeltildi
 
+- Ping, traceroute ve ağ komutu uçları `diagnostics.run` iznine bağlandı; ping istekleri ortak araç kotasına alındı.
+- Ping hedefinde seçenek benzeri girdilerin komuta argüman olarak sızması engellendi.
+- Giriş kilidi kullanıcı adı ve istemci IP'si çiftiyle izlenirken dağıtık denemeler için daha yüksek eşikli genel kilit eklendi.
+- API hata yanıtlarına izlenebilir kimlik eklendi ve dahili hata ayrıntılarının istemciye yansıması engellendi.
 - Üst çubuktaki tarih ve saatin uygulama açılır açılmaz başlayıp her saniye yenilenmesi sağlandı.
 - Alarm durumları kayan noktalı zaman damgası yerine kalıcı tamsayı kimliğiyle eşleştirildi.
 - Alarm gizleme işleminin kalıcı silme olmadığı açıklandı ve gizlenen alarmları geri gösterme filtresi eklendi.

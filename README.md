@@ -20,7 +20,12 @@ Yerel ağdaki cihazları keşfetmek, envanterini tutmak ve temel ağ sorunların
 - SSH ile alınan ağ cihazı yapılandırmalarının yedeği ve farkı
 - Yetkili sunucu listesine göre rogue DHCP uyarısı
 - Yerel ağ arayüzü trafiği ve işletim sistemindeki aktif bağlantılar
+- Kullanıcı, süreç ve hedef bazında filtrelenebilir bağlantı geçmişi ve anomali sinyalleri
 - Kullanıcı rolleri, oturum kontrolü ve işlem kayıtları
+- Alan filtreleri, kayıtlı sorgular ve CSV çıktısı olan birleşik envanter araması
+- Yapılandırma uyumluluğu, CVE korelasyonu ve pasif komşu doğrulaması
+- NCM temel çizgileri ile değişiklik isteği ve onay akışı
+- Ağ kalitesi eğilimleri, güvenlik skoru ve Windows firewall karar geçmişi
 - Kanıta dayalı alarm kuralları ile SMTP ve webhook bildirimi
 - 24 saat, 7 gün ve 30 günlük operasyon geçmişi
 - Zamanlanmış PDF/Excel raporları ve e-posta teslimi
@@ -61,6 +66,9 @@ flowchart LR
     API --> INVENTORY[WMI / WinRM / SSH / SNMP]
     API --> OS[İşletim sistemi sayaçları ve soketleri]
     API --> OPS[Alarm / geçmiş / rapor / site]
+    API --> SEARCH[Arama indeksi ve kayıtlı sorgular]
+    API --> ASSURANCE[Uyumluluk / CVE / komşu doğrulama]
+    API --> NCM[NCM temel çizgisi ve değişiklik onayı]
     OPS --> DELIVERY[SMTP / yönetici tanımlı webhook]
 ```
 
@@ -81,7 +89,7 @@ Gerekenler:
 Windows'ta hızlı başlatma:
 
 ```cmd
-calistir.bat
+scripts\windows\calistir.bat
 ```
 
 Elle çalıştırmak için:
@@ -93,11 +101,23 @@ pip install -r requirements.txt
 python backend\desktop_app.py
 ```
 
-İlk açılışta yönetici parolası otomatik oluşturulur ve `%USERPROFILE%\.netmon\initial_admin_password.txt` dosyasına yazılır. İlk girişte parola değişikliği istenir.
+İlk açılışta yönetici parolası otomatik oluşturulur ve aktif veri dizinindeki `initial_admin_password.txt` dosyasına yazılır. Paketli masaüstü sürümünde bu dizin `%USERPROFILE%\.netmon`, kaynak koddan varsayılan çalıştırmada `backend` klasörüdür. İlk girişte parola değişikliği istenir ve dosya silinir.
+
+Yönetici parolası kaybolursa veritabanını silmeyin. Uygulama kapalıyken `scripts\windows\yonetici-parolasi-kurtar.bat` dosyasını çalıştırın. Araç önce zaman damgalı bir veritabanı yedeği alır, `admin` hesabını etkinleştirir, eski oturum ve giriş kilitlerini kapatır ve tek kullanımlık parolayı aktif veri dizinine yazar. Farklı bir veri dizini kullanan kurulumlarda aynı işlemi şu şekilde çalıştırın:
+
+```cmd
+python backend\admin_recovery.py --database "D:\NetMonData\netmon.db"
+```
 
 Başarısız girişler hem kullanıcı adı ve istemci IP'si çifti için hem de kullanıcı adı genelinde izlenir. Aynı IP'den `NETMON_LOGIN_MAX_ATTEMPTS` başarısız deneme kısa süreli kilit uygular. Farklı IP'lerden gelen toplam denemeler bu değerin üç katına ulaştığında kullanıcı için üç kat daha uzun genel kilit uygulanır ve olay denetim kaydına yazılır. İstemci adresi doğrudan bağlantıdan alınır; `X-Forwarded-For` başlığına güvenilmez.
 
 `NETMON_DIAGNOSTICS_RESTRICT_TO_INVENTORY=false` varsayılanında ping ve traceroute dış hedeflerde çalışmaya devam eder. Değer `true` yapıldığında bu iki araç yalnızca yerel, loopback veya özel IPv4 hedeflerini kabul eder; alan adları önce IPv4 adresine çözümlenir.
+
+### Başka bir Windows bilgisayarda çalıştırma
+
+Son değişiklikleri içeren tek dosyalık uygulamayı üretmek için `scripts\windows\build.bat` çalıştırılır. Oluşan `backend\dist\NetMon.exe` başka bir Windows bilgisayara tek başına kopyalanabilir; hedef bilgisayarda Python gerekmez. İlk çalıştırmada hedef kullanıcının `%USERPROFILE%\.netmon` dizininde yeni veritabanı ve rastgele ilk `admin` parolası oluşturulur. Kaynak bilgisayardaki kullanıcı hesapları EXE içine gömülmez.
+
+Kaynak kod paketi gerekiyorsa `scripts\windows\package_release.ps1` kullanılır. Paket; uygulama kodunu, betikleri, varlıkları, GitHub yapılandırmasını ve kurulum dosyalarını içerir; veritabanı, parola, anahtar, sanal ortam ve derleme çıktıları dışarıda bırakılır.
 
 ## Platform desteği
 
@@ -133,12 +153,13 @@ Windows dışındaki sistemlerde WMI, SSH ve SNMP parolaları `~/.netmon/secret.
 backend/          FastAPI sunucusu ve ağ tarama modülleri
 frontend/         Tarayıcı arayüzü
 tests/            Pytest testleri
+assets/           Uygulama simgesi ve görsel varlıklar
 scripts/windows/  Başlatma, derleme ve GitHub yardımcıları
 scripts/utils/    Envanter ve yönetim yardımcıları
-docs/             Mimari notları ve eski test raporları
+docs/             API örnekleri, ekran görüntüleri ve GitHub kurulum notları
+.github/          CI, lint, güvenlik ve Windows sürüm iş akışları
+dist/             Yerel kaynak paketleri; Git tarafından izlenmez
 ```
-
-Kökteki `calistir.bat`, `build.bat` ve `auto-push.ps1` dosyaları `scripts/windows/` altındaki asıl komutlara yönlendirir.
 
 ## Test
 
@@ -146,7 +167,7 @@ Kökteki `calistir.bat`, `build.bat` ve `auto-push.ps1` dosyaları `scripts/wind
 python -m pytest tests -v
 ```
 
-Mevcut test paketi 193 senaryodan oluşuyor ve toplam ölçülen backend kapsamı için yüzde 70 alt sınırı uyguluyor. GitHub Actions paketi Windows ve Ubuntu üzerinde Python 3.11 ve 3.13 ile çalıştırıyor; Ruff, Mypy, Bandit ve `pip-audit` ayrı iş akışlarında denetleniyor.
+Mevcut test paketi 800'den fazla senaryodan oluşuyor ve toplam ölçülen backend kapsamı için yüzde 70 alt sınırı uyguluyor. GitHub Actions paketi Windows ve Ubuntu üzerinde Python 3.11 ve 3.13 ile çalıştırıyor; Ruff, Mypy, Bandit ve `pip-audit` ayrı iş akışlarında denetleniyor.
 
 ## Notlar
 
