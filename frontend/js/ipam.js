@@ -1,6 +1,7 @@
 import "./topology-details.js";
 
 async function refreshDashboardWidgets() {
+  if (typeof refreshPhase2Visibility === "function") await refreshPhase2Visibility();
   const ttContainer = $("dashboardTopTalkersList");
   if (ttContainer) {
     try {

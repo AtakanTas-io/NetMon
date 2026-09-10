@@ -2,6 +2,77 @@ import "./topology-details.js";
 
 S.alertInbox = S.alertInbox || [];
 S.showSuppressedAlerts = S.showSuppressedAlerts || false;
+S.downloadItems = S.downloadItems || [];
+
+function ensureDownloadCenterUi() {
+  if ($("downloadCenterButton")) return;
+  const host = document.querySelector(".topbar-right");
+  if (!host) return;
+  const wrap = document.createElement("div");
+  wrap.className = "download-center-wrap";
+  wrap.innerHTML = `
+    <button class="icon-btn download-center-button" id="downloadCenterButton" onclick="toggleDownloadCenter()" aria-label="İndirilenler" aria-expanded="false" title="İndirilenler">
+      <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 18h14"/></svg>
+    </button>
+    <section class="download-center-popover" id="downloadCenterPopover" hidden>
+      <header><div><b>İndirilenler</b><small>NetMon tarafından kaydedilen dosyalar</small></div><button class="mini-btn" onclick="openDownloadsFolder()">Klasörü aç</button></header>
+      <div class="download-center-list" id="downloadCenterList"><div class="empty-note">Henüz indirilen dosya yok.</div></div>
+    </section>`;
+  host.prepend(wrap);
+  bindClickOutside("downloadCenterPopover", closeDownloadCenter, "downloadCenterButton");
+}
+
+function formatDownloadSize(bytes) {
+  const value = Number(bytes || 0);
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function renderDownloadCenter() {
+  ensureDownloadCenterUi();
+  const list = $("downloadCenterList");
+  if (!list) return;
+  list.innerHTML = S.downloadItems.length ? S.downloadItems.map(item => `
+    <article class="download-center-item">
+      <span class="download-file-icon">XLSX</span>
+      <div><b title="${esc(item.path)}">${esc(item.filename)}</b><span>${formatDownloadSize(item.sizeBytes)} · ${Number(item.deviceCount || 0)} cihaz${Number(item.connectionCount || 0) ? ` · ${Number(item.connectionCount)} bağlantı` : ""}</span><small>${esc(item.path)}</small></div>
+      <button class="mini-btn" onclick="openDownloadsFolder()">Klasörde göster</button>
+    </article>`).join("") : `<div class="empty-note">Henüz indirilen dosya yok.</div>`;
+}
+
+function recordDownload(result) {
+  ensureDownloadCenterUi();
+  S.downloadItems.unshift({
+    filename: result.filename || "netmon-raporu.xlsx",
+    path: result.saved_path || "",
+    sizeBytes: result.size_bytes || 0,
+    deviceCount: result.count || 0,
+    connectionCount: result.connection_count || 0,
+  });
+  S.downloadItems = S.downloadItems.slice(0, 8);
+  renderDownloadCenter();
+  const popover = $("downloadCenterPopover");
+  const button = $("downloadCenterButton");
+  if (popover) popover.hidden = false;
+  if (button) button.setAttribute("aria-expanded", "true");
+}
+
+function closeDownloadCenter() {
+  const popover = $("downloadCenterPopover");
+  const button = $("downloadCenterButton");
+  if (popover) popover.hidden = true;
+  if (button) button.setAttribute("aria-expanded", "false");
+}
+
+function toggleDownloadCenter() {
+  ensureDownloadCenterUi();
+  const popover = $("downloadCenterPopover");
+  const button = $("downloadCenterButton");
+  if (!popover || !button) return;
+  popover.hidden = !popover.hidden;
+  button.setAttribute("aria-expanded", String(!popover.hidden));
+}
 
 function ensureAlertInboxUi() {
   if ($("alertInboxButton")) return;
@@ -117,7 +188,8 @@ function openAlertDevice(id) {
 
 function initAlarmInbox() {
   ensureAlertInboxUi();
+  ensureDownloadCenterUi();
   refreshAlertInbox();
 }
 
-Object.assign(globalThis, { ensureAlertInboxUi, closeAlertInbox, renderAlertInbox, refreshAlertInbox, toggleAlertInbox, setAlertState, markAllAlertsRead, receiveLiveAlert, openAlertDevice, initAlarmInbox });
+Object.assign(globalThis, { ensureAlertInboxUi, closeAlertInbox, renderAlertInbox, refreshAlertInbox, toggleAlertInbox, setAlertState, markAllAlertsRead, receiveLiveAlert, openAlertDevice, initAlarmInbox, ensureDownloadCenterUi, renderDownloadCenter, recordDownload, closeDownloadCenter, toggleDownloadCenter });

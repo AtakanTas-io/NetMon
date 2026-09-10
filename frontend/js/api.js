@@ -44,21 +44,25 @@ async function apiFetch(path, options) {
   }
 
   const res = await fetch(path, opts);
-  if (res.status === 401) {
-    clearToken();
-    S.user = null;
-    showLogin();
-    throw new Error("Oturum sona erdi, lütfen tekrar giriş yapın.");
-  }
-
   let data = null;
   try {
     data = await res.json();
   } catch (e) {}
-  if (!res.ok)
-    throw new Error(
-      (data && (data.error || data.detail)) || "İstek başarısız oldu.",
+  if (res.status === 401) {
+    clearToken();
+    S.user = null;
+    showLogin();
+  }
+  if (!res.ok) {
+    const requestError = new Error(
+      (data && (data.message || data.error || data.detail)) ||
+        "İstek başarısız oldu.",
     );
+    requestError.code = data?.code || `HTTP_${res.status}`;
+    requestError.traceId = data?.trace_id || res.headers.get("X-Trace-ID") || "";
+    requestError.detail = data?.detail;
+    throw requestError;
+  }
   return data;
 }
 

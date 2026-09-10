@@ -1,6 +1,8 @@
 import "./administration.js";
 
 let _trafficChartInstance = null;
+let _networkQualityChartInstance = null;
+S.visibilityRange = S.visibilityRange || "24h";
 
 function drawTrafficChart() {
   const canvas = $("trafficChart");
@@ -96,6 +98,177 @@ function drawTrafficChart() {
   });
 }
 
+function visibilityValue(value, suffix, digits = 1) {
+  if (value == null || Number.isNaN(Number(value))) return "Ölçülmedi";
+  return `${Number(value).toFixed(digits)}${suffix}`;
+}
+
+function drawNetworkQualityChart(points) {
+  const canvas = $("networkQualityChart");
+  if (!canvas || typeof Chart === "undefined") return;
+  let empty = $("networkQualityEmptyState");
+  if (!points.length) {
+    canvas.style.display = "none";
+    if (!empty) {
+      empty = document.createElement("div");
+      empty.id = "networkQualityEmptyState";
+      empty.className = "load-state";
+      empty.innerHTML = "<b>Henüz kalite trendi yok</b><span>Periyodik tanı görevi en az bir gerçek ölçüm kaydettiğinde grafik oluşacak.</span>";
+      canvas.parentNode.appendChild(empty);
+    }
+    if (_networkQualityChartInstance) {
+      _networkQualityChartInstance.destroy();
+      _networkQualityChartInstance = null;
+    }
+    return;
+  }
+  canvas.style.display = "block";
+  if (empty) empty.remove();
+  const labels = points.map((point) => new Date(Number(point.ts) * 1000).toLocaleString("tr-TR", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }));
+  const data = {
+    labels,
+    datasets: [
+      {
+        label: "İnternet RTT (ms)",
+        data: points.map((point) => point.internet_latency_ms),
+        borderColor: "#8b5cf6",
+        backgroundColor: "rgba(139,92,246,.12)",
+        yAxisID: "latency",
+        fill: true,
+        tension: 0.25,
+        pointRadius: 0,
+        borderWidth: 2,
+      },
+      {
+        label: "Gateway RTT (ms)",
+        data: points.map((point) => point.gateway_latency_ms),
+        borderColor: "#38bdf8",
+        yAxisID: "latency",
+        tension: 0.25,
+        pointRadius: 0,
+        borderWidth: 1.5,
+      },
+      {
+        label: "Paket kaybı (%)",
+        data: points.map((point) => point.packet_loss_pct),
+        borderColor: "#ef4444",
+        backgroundColor: "rgba(239,68,68,.08)",
+        yAxisID: "loss",
+        tension: 0.2,
+        pointRadius: 0,
+        borderWidth: 1.5,
+      },
+    ],
+  };
+  if (_networkQualityChartInstance) {
+    _networkQualityChartInstance.data = data;
+    _networkQualityChartInstance.update("none");
+    return;
+  }
+  _networkQualityChartInstance = new Chart(canvas.getContext("2d"), {
+    type: "line",
+    data,
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: "#64748b", maxTicksLimit: 8, maxRotation: 0 } },
+        latency: {
+          beginAtZero: true,
+          position: "left",
+          title: { display: true, text: "ms", color: "#94a3b8" },
+          grid: { color: "rgba(255,255,255,.05)" },
+          ticks: { color: "#94a3b8" },
+        },
+        loss: {
+          beginAtZero: true,
+          suggestedMax: 100,
+          position: "right",
+          title: { display: true, text: "% kayıp", color: "#f87171" },
+          grid: { drawOnChartArea: false },
+          ticks: { color: "#f87171" },
+        },
+      },
+      plugins: { legend: { labels: { color: "#e7eefb" } } },
+    },
+  });
+}
+
+function renderSecurityScore(security) {
+  const container = $("dashboardSecurityScore");
+  if (!container) return;
+  const score = Math.max(0, Math.min(100, Number(security.score || 0)));
+  const color = score >= 85 ? "var(--green)" : score >= 65 ? "var(--orange)" : "var(--red)";
+  const deductions = security.deductions || [];
+  container.innerHTML = `<div class="score-layout">
+    <div class="security-score-ring" style="--score:${score};--score-color:${color}"><div><b style="color:${color}">${score}</b><span>${esc(security.label || "-")}</span></div></div>
+    <div class="score-deductions">
+      ${deductions.slice(0, 4).map((item) => `<div class="score-deduction"><span>${esc(item.label)} <small>(${Number(item.count || 0)})</small></span><b>-${Number(item.points || 0)}</b></div>`).join("") || '<div class="hint">Skoru düşüren doğrulanmış bir kanıt bulunmadı.</div>'}
+      <div class="hint">${Number(security.assets_evaluated || 0)} cihaz · ${Number(security.findings_count || 0)} bulgu</div>
+    </div>
+  </div>`;
+}
+
+function renderCertificateDhcp(certificates, dhcp) {
+  const container = $("dashboardCertificateDhcp");
+  if (!container) return;
+  const attention = certificates.attention || [];
+  const dhcpState = dhcp.error ? "Hata" : dhcp.running ? "Dinliyor" : "Çalışmıyor";
+  const dhcpColor = dhcp.error || !dhcp.running ? "var(--orange)" : dhcp.rogue_detected_count ? "var(--red)" : "var(--green)";
+  container.innerHTML = `<div class="attention-grid">
+    <section class="attention-card">
+      <header><b>SSL Sertifikaları</b><span>${Number(certificates.total || 0)} kayıt</span></header>
+      <div class="hint" style="margin-bottom:6px"><b style="color:var(--red)">${Number(certificates.expired || 0)} süresi dolmuş</b> · ${Number(certificates.expiring_30d || 0)} yakında dolacak</div>
+      ${attention.slice(0, 3).map((cert) => `<div class="attention-item"><span>${esc(cert.hostname || cert.ip || "Bilinmeyen")}</span><b style="color:${Number(cert.days_left) < 0 ? "var(--red)" : "var(--orange)"}">${Number(cert.days_left)} gün</b></div>`).join("") || '<div class="hint">30 gün içinde sona erecek sertifika yok.</div>'}
+    </section>
+    <section class="attention-card">
+      <header><b>DHCP İzleyicisi</b><span style="color:${dhcpColor}">${dhcpState}</span></header>
+      <div class="attention-item"><span>Yetkili sunucu</span><b>${Number(dhcp.authorized_server_count || 0)}</b></div>
+      <div class="attention-item"><span>Rogue teklif</span><b style="color:${dhcp.rogue_detected_count ? "var(--red)" : "var(--green)"}">${Number(dhcp.rogue_detected_count || 0)}</b></div>
+      ${dhcp.last_rogue_source ? `<div class="hint">Son yetkisiz kaynak: <b>${esc(dhcp.last_rogue_source)}</b></div>` : `<div class="hint">${esc(dhcp.pool_note || "DHCP olayı bekleniyor.")}</div>`}
+    </section>
+  </div>`;
+}
+
+async function refreshPhase2Visibility() {
+  const container = $("networkQualitySummary");
+  if (!container) return;
+  try {
+    const data = await get(`/api/visibility/summary?range=${encodeURIComponent(S.visibilityRange || "24h")}`);
+    S.visibilitySummary = data;
+    const quality = data.network_quality || {};
+    const stats = quality.stats || {};
+    container.innerHTML = [
+      ["Ortalama RTT", visibilityValue(stats.average_latency_ms, " ms")],
+      ["Jitter", visibilityValue(stats.jitter_ms, " ms")],
+      ["Paket kaybı", visibilityValue(stats.average_packet_loss_pct, "%")],
+      ["Örnek", String(Number(stats.samples || 0))],
+    ].map(([label, value]) => `<div><span>${label}</span><b>${value}</b></div>`).join("");
+    const source = $("networkQualitySource");
+    if (source) source.textContent = `${quality.source || "Tanı snapshot'ları"} · en fazla 240 nokta`;
+    drawNetworkQualityChart(quality.points || []);
+    renderSecurityScore(data.security || {});
+    renderCertificateDhcp(data.certificates || {}, data.dhcp || {});
+  } catch (error) {
+    renderLoadError(container, "Faz 2 görünürlük verisi yüklenemedi", error, "refreshPhase2Visibility()");
+  }
+}
+
+function setVisibilityRange(range) {
+  if (!["1h", "24h", "7d"].includes(range)) return;
+  S.visibilityRange = range;
+  document.querySelectorAll("#networkQualityRange button").forEach((button) => {
+    button.classList.toggle("blue", button.getAttribute("onclick")?.includes(`'${range}'`));
+  });
+  refreshPhase2Visibility();
+}
+
 S.deviceTab = S.deviceTab || "all";
 S.deviceViewMode = S.deviceViewMode || "table";
 
@@ -179,49 +352,18 @@ window.downloadRdp = async function(ip) {
 
 window.exportDevicesExcel = async function() {
     try {
-        const token = S.token || localStorage.getItem("token") || "";
-
-        // 1. Try direct disk save to Downloads / Desktop & open in Windows Explorer
-        let saveResult = null;
-        try {
-            const saveRes = await fetch("/api/export/devices/save", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    ...(token ? { "Authorization": `Bearer ${token}` } : {})
-                }
-            });
-            if (saveRes.ok) {
-                saveResult = await saveRes.json();
-            }
-        } catch(e) {
-            console.debug("Direct save fallback:", e);
+        const token = getToken();
+        if (!token) throw new Error("Oturum bulunamadı. Yeniden giriş yapın.");
+        const saveRes = await fetch("/api/export/devices/save", {
+            method: "POST",
+            headers: {"Authorization": `Bearer ${token}`}
+        });
+        const saveResult = await saveRes.json().catch(() => ({}));
+        if (!saveRes.ok || !saveResult.ok || !saveResult.saved_path) {
+            throw new Error(saveResult.message || saveResult.error || "Excel dosyası kaydedilemedi.");
         }
-
-        // 2. Also trigger standard browser Blob download
-        try {
-            const res = await fetch(`/api/export/devices?token=${encodeURIComponent(token)}`, {
-                headers: token ? { "Authorization": `Bearer ${token}` } : {}
-            });
-            if (res.ok) {
-                const blob = await res.blob();
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                const nowStr = new Date().toISOString().slice(0,10);
-                a.download = `netmon_envanter_${nowStr}.csv`;
-                document.body.appendChild(a);
-                a.click();
-                a.remove();
-                window.URL.revokeObjectURL(url);
-            }
-        } catch(e) {}
-
-        if (saveResult && saveResult.ok) {
-            toast(`✅ Excel dosyası kaydedildi: ${saveResult.saved_path} (Dosya Gezgini'nde açıldı)`, "ok");
-        } else {
-            toast("Envanter Excel/CSV dosyası İndirilenler klasörünüze kaydedildi.", "ok");
-        }
+        recordDownload(saveResult);
+        toast(`Excel kaydedildi: ${saveResult.saved_path} · ${saveResult.count} cihaz`, "ok");
     } catch(err) {
         toast("Dışa aktarma hatası: " + err.message, "err");
     }
@@ -229,7 +371,8 @@ window.exportDevicesExcel = async function() {
 
 window.openDownloadsFolder = async function() {
     try {
-        const token = S.token || localStorage.getItem("token") || "";
+        const token = getToken();
+        if (!token) throw new Error("Oturum bulunamadı. Yeniden giriş yapın.");
         const res = await fetch("/api/tools/open-downloads", {
             method: "POST",
             headers: token ? { "Authorization": `Bearer ${token}` } : {}
@@ -246,7 +389,11 @@ window.openDownloadsFolder = async function() {
 
 Object.assign(globalThis, {
   _trafficChartInstance,
+  _networkQualityChartInstance,
   drawTrafficChart,
+  drawNetworkQualityChart,
+  refreshPhase2Visibility,
+  setVisibilityRange,
   copyToClipboard,
   copyBtnHtml,
   handleGlobalSearch,

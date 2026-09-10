@@ -11,7 +11,7 @@ function renderTopTalkersPage() {
             <span style="font-size:20px; color:var(--cyan)">📊</span>
             <div>
               <h2 style="margin:0">Bu Bilgisayarın Canlı Ağ Bağlantıları</h2>
-              <small style="color:var(--txt-2)">Hangi uygulamanın internet veya yerel ağdaki hangi adresle iletişim kurduğunu gösterir.</small>
+              <small style="color:var(--txt-2)">Hangi işletim sistemi hesabının, hangi uygulamayla, hangi IP veya DNS hedefine bağlandığını gösterir.</small>
             </div>
           </div>
           <div class="right" style="display:flex;align-items:center;gap:10px">
@@ -22,7 +22,8 @@ function renderTopTalkersPage() {
           <div class="traffic-page-intro">
             <div class="traffic-explainer">
               <b>Bu sayfa ne gösterir?</b>
-              <p>Aşağıdaki her satır, bu bilgisayardaki bir uygulamanın açık TCP bağlantısını temsil eder. Bir uygulama aynı hedefe birden fazla bağlantı açabilir; bağlantı sayısı cihaz veya kullanıcı sayısı değildir.</p>
+              <p>Aşağıdaki her satır bu bilgisayardaki gerçek bir TCP bağlantısını temsil eder. Kullanıcı, süreç, giden/gelen yön, uzak IP, envanter adı ve varsa Windows DNS önbelleği eşleşmesi birlikte gösterilir.</p>
+              <p><b>Veri sınırı:</b> DNS adı bir önbellek adayıdır; kullanıcının tarayıcıya yazdığı URL olduğunun kesin kanıtı değildir. Diğer bilgisayarların kullanıcı trafiği için o cihazlarda ajan veya merkezi akış kaynağı gerekir.</p>
             </div>
             <div class="traffic-live-card">
               <b>Bilgisayarın anlık ağ kullanımı</b>
@@ -39,10 +40,20 @@ function renderTopTalkersPage() {
           <div class="traffic-metric-grid">
             <div class="traffic-metric-card"><small>Açık TCP bağlantısı</small><strong id="trafficSessionCount" style="color:var(--cyan)">-</strong><p>Şu anda iletişime açık bağlantılar</p></div>
             <div class="traffic-metric-card"><small>Bağlanılan farklı adres</small><strong id="trafficRemoteCount">-</strong><p>Tekrarsız uzak IP adresi sayısı</p></div>
-            <div class="traffic-metric-card"><small>Tespit edilen uygulama</small><strong id="trafficProcessCount">-</strong><p>Bağlantı sahibi görülebilen programlar</p></div>
+            <div class="traffic-metric-card"><small>Etkin işletim sistemi hesabı</small><strong id="trafficUserCount">-</strong><p>Bağlantı sahibi görülebilen kullanıcılar</p></div>
+            <div class="traffic-metric-card"><small>İncelenecek bağlantı</small><strong id="trafficAttentionCount" style="color:var(--orange)">-</strong><p>Hassas dış port veya kapanmayan oturum</p></div>
           </div>
           <div class="traffic-filter-bar">
-            <input id="trafficSessionSearch" type="search" placeholder="Uygulama, IP veya servis ara…" oninput="renderTrafficSessions()">
+            <input id="trafficSessionSearch" type="search" placeholder="Kullanıcı, uygulama, DNS adı, IP veya servis ara…" oninput="renderTrafficSessions()">
+            <select id="trafficUserFilter" onchange="renderTrafficSessions()">
+              <option value="all">Tüm kullanıcılar</option>
+            </select>
+            <select id="trafficDirectionFilter" onchange="renderTrafficSessions()">
+              <option value="all">Tüm bağlantı yönleri</option>
+              <option value="outbound">Giden bağlantılar</option>
+              <option value="inbound">Gelen bağlantılar</option>
+              <option value="unknown">Yönü belirsiz</option>
+            </select>
             <select id="trafficStateFilter" onchange="renderTrafficSessions()">
               <option value="all">Tüm bağlantı durumları</option>
               <option value="ESTABLISHED">Bağlantı açık</option>
@@ -55,6 +66,11 @@ function renderTopTalkersPage() {
               <option value="local">Yerel/özel ağ</option>
               <option value="unknown">Bilinmeyen</option>
             </select>
+            <select id="trafficAttentionFilter" onchange="renderTrafficSessions()">
+              <option value="all">Tüm inceleme durumları</option>
+              <option value="review">İncelenmesi önerilenler</option>
+              <option value="normal">Standart bağlantılar</option>
+            </select>
             <span class="traffic-filter-result" id="trafficFilterResult">- bağlantı gösteriliyor</span>
           </div>
           <div id="topTalkersFullLeaderboard">
@@ -62,6 +78,38 @@ function renderTopTalkersPage() {
             <div class="skeleton-box skeleton-line" style="height:55px; margin-bottom:8px"></div>
             <div class="skeleton-box skeleton-line" style="height:55px; margin-bottom:8px"></div>
             <div class="skeleton-box skeleton-line" style="height:55px"></div>
+          </div>
+          <div class="panel" style="box-shadow:none; margin-top:16px">
+            <div class="panel-head" style="height:auto; flex-wrap:wrap; gap:10px">
+              <div>
+                <h2 style="margin:0">Bağlantı Geçmişi</h2>
+                <small class="hint">Kapanmış ve halen açık bağlantıları kullanıcı, uygulama, hedef ve zaman aralığına göre arayın.</small>
+              </div>
+              <div class="right"><button class="mini-btn blue" onclick="exportDevicesExcel()">Excel raporuna aktar</button></div>
+            </div>
+            <div class="panel-body">
+              <div class="traffic-evidence-note" data-testid="connection-evidence-scope">
+                <b>Kanıt kapsamı ve veri minimizasyonu</b>
+                <span>NetMon; işletim sistemi soket tablosundan hesap, uygulama, hedef IP/DNS, port ve zaman bilgisini kaydeder. URL, sayfa içeriği, mesaj, parola veya paket içeriği toplamaz. DNS adı tek başına ziyaret edilen sayfanın kesin kanıtı değildir. Uzak cihaz kullanıcıları için yetkili uç nokta, proxy veya güvenlik duvarı kimlik günlükleri gerekir; kurum politikası, çalışan bilgilendirmesi ve geçerli hukuki dayanakla kullanın.</span>
+              </div>
+              <div class="traffic-filter-bar">
+                <input id="connectionHistoryUsername" type="search" placeholder="Kullanıcı" onkeydown="if(event.key==='Enter') refreshConnectionHistory(true)">
+                <input id="connectionHistoryProcess" type="search" placeholder="Uygulama / süreç" onkeydown="if(event.key==='Enter') refreshConnectionHistory(true)">
+                <input id="connectionHistoryTarget" type="search" placeholder="Hedef IP veya hostname" onkeydown="if(event.key==='Enter') refreshConnectionHistory(true)">
+                <select id="connectionHistoryRange" onchange="refreshConnectionHistory()">
+                  <option value="15m">Son 15 dakika</option>
+                  <option value="24h" selected>Son 24 saat</option>
+                  <option value="7d">Son 7 gün</option>
+                </select>
+                <button class="mini-btn blue" id="connectionHistoryRefreshBtn" onclick="refreshConnectionHistory(true)">Filtrele</button>
+                <span class="traffic-filter-result" id="connectionHistoryResult">Geçmiş yükleniyor…</span>
+              </div>
+              <div id="connectionHistoryTable">
+                <div class="skeleton-box skeleton-line" style="height:44px; margin-bottom:8px"></div>
+                <div class="skeleton-box skeleton-line" style="height:44px; margin-bottom:8px"></div>
+                <div class="skeleton-box skeleton-line" style="height:44px"></div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -264,6 +312,100 @@ function renderTrafficSessions() {
     <div style="margin-top:8px;color:var(--muted);font-size:10.5px">En fazla 100 açık bağlantı gösterilir. “İncele” etiketi kesin tehdit kararı değildir. Toplam ağ kullanımı bağlantı satırlarına ayrı ayrı dağıtılamaz.</div>`;
 }
 
+function formatConnectionHistoryTime(timestamp) {
+  const value = Number(timestamp);
+  if (!Number.isFinite(value) || value <= 0) return "-";
+  return new Date(value * 1000).toLocaleString("tr-TR");
+}
+
+function formatConnectionDuration(firstSeen, lastSeen) {
+  const seconds = Math.max(0, Math.round(Number(lastSeen || 0) - Number(firstSeen || 0)));
+  if (seconds < 60) return `${seconds} sn`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} dk ${seconds % 60} sn`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} sa ${minutes % 60} dk`;
+  const days = Math.floor(hours / 24);
+  return `${days} gün ${hours % 24} sa`;
+}
+
+function renderConnectionHistory(connections) {
+  const container = $("connectionHistoryTable");
+  const result = $("connectionHistoryResult");
+  if (!container) return;
+  if (result) result.textContent = `${connections.length} kayıt gösteriliyor`;
+  if (!connections.length) {
+    container.innerHTML = `<div class="hint" style="padding:28px;text-align:center">Seçilen filtreler ve zaman aralığında bağlantı geçmişi bulunamadı.</div>`;
+    return;
+  }
+
+  container.innerHTML = `
+    <div style="overflow:auto; max-height:520px; border:1px solid var(--line-soft); border-radius:9px">
+      <table style="min-width:980px">
+        <thead><tr><th>Kullanıcı</th><th>Uygulama</th><th>Hedef</th><th>İlk görülme</th><th>Son görülme</th><th>Süre</th><th>Durum</th></tr></thead>
+        <tbody>${connections.map(connection => {
+          const remote = `${String(connection.remote_ip || "").includes(":") ? `[${connection.remote_ip}]` : connection.remote_ip || "-"}:${connection.remote_port || 0}`;
+          const hostname = connection.resolved_hostname || "";
+          const isOpen = connection.closed_at === null || connection.closed_at === undefined;
+          return `<tr>
+            <td class="traffic-user-cell"><b>${esc(connection.username || "Hesap okunamadı")}</b></td>
+            <td class="traffic-app-cell"><b>${esc(connection.process_name || "Uygulama adı okunamadı")}</b></td>
+            <td class="traffic-destination-cell"><b>${esc(hostname || remote)}</b>${hostname ? `<small><code>${esc(remote)}</code></small>` : ""}</td>
+            <td>${esc(formatConnectionHistoryTime(connection.first_seen))}</td>
+            <td>${esc(formatConnectionHistoryTime(connection.last_seen))}</td>
+            <td>${esc(formatConnectionDuration(connection.first_seen, connection.last_seen))}</td>
+            <td><span class="badge ${isOpen ? "ok" : "gray"}">${isOpen ? "Açık" : "Kapalı"}</span></td>
+          </tr>`;
+        }).join("")}</tbody>
+      </table>
+    </div>`;
+}
+
+async function refreshConnectionHistory(manual = false) {
+  const container = $("connectionHistoryTable");
+  const result = $("connectionHistoryResult");
+  const button = $("connectionHistoryRefreshBtn");
+  if (!container) return;
+
+  button?.setAttribute("disabled", "disabled");
+  if (button) button.textContent = "Yükleniyor…";
+  if (result) result.textContent = "Geçmiş yükleniyor…";
+  container.innerHTML = `
+    <div class="skeleton-box skeleton-line" style="height:44px; margin-bottom:8px"></div>
+    <div class="skeleton-box skeleton-line" style="height:44px; margin-bottom:8px"></div>
+    <div class="skeleton-box skeleton-line" style="height:44px"></div>`;
+
+  const rangeSeconds = { "15m": 15 * 60, "24h": 24 * 60 * 60, "7d": 7 * 24 * 60 * 60 };
+  const selectedRange = $("connectionHistoryRange")?.value || "24h";
+  const until = Math.floor(Date.now() / 1000);
+  const params = new URLSearchParams({
+    since: String(until - (rangeSeconds[selectedRange] || rangeSeconds["24h"])),
+    until: String(until),
+    limit: "200",
+  });
+  const filters = {
+    username: $("connectionHistoryUsername")?.value?.trim(),
+    process_name: $("connectionHistoryProcess")?.value?.trim(),
+    target: $("connectionHistoryTarget")?.value?.trim(),
+  };
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value) params.set(key, value);
+  });
+
+  try {
+    const data = await get(`/api/connections/history?${params.toString()}`);
+    renderConnectionHistory(data?.connections || []);
+    if (manual) toast("Bağlantı geçmişi güncellendi.", "info");
+  } catch (error) {
+    container.innerHTML = `<div class="hint" style="padding:28px;text-align:center">Bağlantı geçmişi yüklenemedi.</div>`;
+    if (result) result.textContent = "Geçmiş alınamadı";
+    toast(`Bağlantı geçmişi alınamadı: ${error.message}`, "warn");
+  } finally {
+    button?.removeAttribute("disabled");
+    if (button) button.textContent = "Filtrele";
+  }
+}
+
 async function refreshTopTalkers(manual = false) {
   const btn = $("talkersRefreshBtn");
   if (manual && btn) {
@@ -292,7 +434,17 @@ async function refreshTopTalkers(manual = false) {
     const setMetric = (id, value) => { const el = $(id); if (el) el.textContent = String(value ?? 0); };
     setMetric("trafficSessionCount", data?.session_count);
     setMetric("trafficRemoteCount", data?.distinct_remote_count);
-    setMetric("trafficProcessCount", data?.distinct_process_count);
+    setMetric("trafficUserCount", data?.distinct_user_count);
+    setMetric("trafficAttentionCount", data?.attention_count);
+
+    const userFilter = $("trafficUserFilter");
+    if (userFilter) {
+      const selectedUser = userFilter.value || "all";
+      const users = [...new Set(sessions.map(item => item.process_username).filter(Boolean))]
+        .sort((left, right) => left.localeCompare(right, "tr-TR"));
+      userFilter.innerHTML = `<option value="all">Tüm kullanıcılar</option>${users.map(username => `<option value="${esc(username)}">${esc(username)}</option>`).join("")}`;
+      userFilter.value = users.includes(selectedUser) ? selectedUser : "all";
+    }
 
     const visibility = data?.runtime_visibility || {};
     const privilegeBanner = $("trafficPrivilegeBanner");
@@ -303,10 +455,11 @@ async function refreshTopTalkers(manual = false) {
       privilegeBanner.style.border = `1px solid ${elevated ? "rgba(16,185,129,.30)" : "rgba(245,158,11,.35)"}`;
       privilegeBanner.style.color = elevated ? "#34d399" : "#fbbf24";
       privilegeBanner.innerHTML = elevated
-        ? `<b>Tüm uygulama bilgileri okunabiliyor.</b><div style="margin-top:3px;color:var(--txt-2)">NetMon yönetici yetkisiyle çalışıyor. Windows hesabı: <code>${esc(visibility.identity || "-")}</code></div>`
-        : `<b>Bazı uygulama adları görünmeyebilir.</b><div style="margin-top:3px;color:var(--txt-2)">NetMon yönetici yetkisiyle çalışmıyor. Daha eksiksiz sonuç için uygulamayı “Yönetici olarak çalıştır” seçeneğiyle yeniden başlatın. Windows hesabı: <code>${esc(visibility.identity || "-")}</code></div>`;
+        ? `<b>Süreç sahipleri ve uygulama bilgileri okunabiliyor.</b><div style="margin-top:3px;color:var(--txt-2)">NetMon yönetici yetkisiyle çalışıyor. İzleme hesabı: <code>${esc(visibility.identity || "-")}</code> · Giden: <b>${Number(data?.outbound_session_count || 0)}</b> · Gelen: <b>${Number(data?.inbound_session_count || 0)}</b> · Yönü belirsiz: <b>${Number(data?.unknown_direction_count || 0)}</b></div>`
+        : `<b>Bazı kullanıcı ve uygulama adları görünmeyebilir.</b><div style="margin-top:3px;color:var(--txt-2)">Daha eksiksiz sonuç için NetMon'u “Yönetici olarak çalıştır” seçeneğiyle yeniden başlatın. İzleme hesabı: <code>${esc(visibility.identity || "-")}</code> · Giden: <b>${Number(data?.outbound_session_count || 0)}</b> · Gelen: <b>${Number(data?.inbound_session_count || 0)}</b></div>`;
     }
     renderTrafficSessions();
+    if (!manual) await refreshConnectionHistory();
 
     if (manual) {
       updateLastScan();
@@ -332,5 +485,7 @@ Object.assign(globalThis, {
   toggleTrafficSessionGroup,
   toggleTrafficSessionMenu,
   renderTrafficSessions,
+  renderConnectionHistory,
+  refreshConnectionHistory,
   refreshTopTalkers,
 });

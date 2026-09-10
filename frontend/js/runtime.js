@@ -728,17 +728,19 @@ async function handleNetworkMessage(message) {
 
   if (type === "alert") {
     receiveLiveAlert(message);
+    const alertLevel = String(message.level || "warning").toLowerCase();
+    if (alertLevel === "info") return;
     const banner = document.getElementById("securityBannerContainer");
     if (banner) {
         banner.innerHTML = `<div style="background-color: var(--fail); color: #fff; padding: 12px; margin-bottom: 15px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 4px 12px rgba(239,68,68,0.2);">
             <div>
                 <strong style="display:block; margin-bottom: 4px;">⚠️ Güvenlik Uyarısı</strong>
-                <span style="font-size: 13px;">${message.message || "Bilinmeyen Güvenlik Uyarısı"}</span>
+                <span style="font-size: 13px;">${esc(message.message || "Bilinmeyen Güvenlik Uyarısı")}</span>
             </div>
             <button onclick="this.parentElement.style.display='none'" style="background: rgba(255,255,255,0.2); border: none; color: white; padding: 4px 10px; border-radius: 4px; cursor: pointer;">Kapat</button>
         </div>`;
     }
-    toast("⚠️ " + (message.message || "Güvenlik uyarısı"), message.level === "critical" ? "fail" : "warn");
+    toast("⚠️ " + (message.message || "Güvenlik uyarısı"), alertLevel === "critical" ? "fail" : "warn");
     return;
   }
 

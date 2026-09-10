@@ -19,6 +19,7 @@ function renderNcmPage() {
               <option value="">Cihaz seçin...</option>
             </select>
             <button class="mini-btn blue" data-permission="ncm.manage" onclick="takeNcmBackup()" id="ncmBackupBtn">⚡ Şimdi Yedek Al</button>
+            <button class="mini-btn" data-permission="ncm.manage" onclick="runNcmCompliance()" id="ncmComplianceBtn">🛡 Temel Çizgiyi Denetle</button>
           </div>
         </div>
         <div class="panel-body">
@@ -48,6 +49,8 @@ function renderNcmPage() {
             </div>
             <button class="mini-btn blue" style="margin-top:16px; height:36px; padding:0 18px" onclick="compareNcmDiff()">🔍 Farkları Karşılaştır</button>
           </div>
+          <div id="ncmComplianceArea" style="margin-bottom:16px"></div>
+          <div id="ncmChangeApprovalArea" style="margin-bottom:16px"></div>
 
           <div id="ncmDiffViewerArea">
             <div style="text-align:center; padding:40px 20px; color:var(--muted); border:1px dashed var(--line-soft); border-radius:10px">
@@ -57,6 +60,24 @@ function renderNcmPage() {
         </div>
       </div>
     `;
+  }
+}
+
+async function runNcmCompliance() {
+  const ip = $("ncmDeviceSelect")?.value;
+  const configId = $("ncmVer2Select")?.value || _ncmConfigsCache[0]?.id;
+  const container = $("ncmComplianceArea");
+  if (!ip || !configId) return toast("Önce kayıtlı konfigürasyonu olan bir cihaz seçin.", "warn");
+  if (container) container.innerHTML = `<div class="skeleton-box" style="height:90px;width:100%"></div>`;
+  try {
+    const result = await post("/api/ncm/compliance", {ip, config_id:Number(configId), baseline_id:"network_device_level1"});
+    if (container) container.innerHTML = `
+      <div style="padding:14px;border:1px solid ${result.failed?'rgba(245,158,11,.4)':'rgba(16,185,129,.35)'};border-radius:10px;background:var(--panel-2)">
+        <div style="display:flex;justify-content:space-between;gap:10px"><div><b>${esc(result.baseline_name)}</b><div class="hint">${esc(result.version_label)} · tarama #${result.run_id}</div></div><span class="badge ${result.score>=85?'ok':result.score>=60?'warn':'fail'}">${result.score}/100</span></div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:7px;margin-top:10px">${result.controls.map(control=>`<div class="info-card"><span>${esc(control.title)}</span><b class="${control.status==='pass'?'c-green':'c-red'}">${control.status==='pass'?'GEÇTİ':'SAPMA'}</b><small>${esc(control.severity)} · ${esc(control.evidence)}</small></div>`).join('')}</div>
+      </div>`;
+  } catch (err) {
+    if (container) renderLoadError(container, "Uyumluluk denetimi çalıştırılamadı", err, "runNcmCompliance()");
   }
 }
 
@@ -80,6 +101,7 @@ async function refreshNcm() {
         loadNcmDeviceVersions(netDevs[0].ip);
       }
     }
+    await loadNcmChangeRequests(devSelect?.value || "");
   } catch (e) {
     console.error("NCM refresh error:", e);
   }
@@ -89,6 +111,7 @@ async function loadNcmDeviceVersions(ip) {
   if (!ip) return;
   try {
     const data = await get(`/api/ncm/configs?ip=${encodeURIComponent(ip)}`);
+    await loadNcmChangeRequests(ip);
     _ncmConfigsCache = data?.configs || [];
 
     const v1 = $("ncmVer1Select");
@@ -118,6 +141,34 @@ async function loadNcmDeviceVersions(ip) {
   } catch (err) {
     console.error("NCM load versions error:", err);
   }
+}
+
+async function loadNcmChangeRequests(ip = "") {
+  const area = $("ncmChangeApprovalArea");
+  if (!area) return;
+  try {
+    const data = await get(`/api/ncm/change-requests${ip ? `?ip=${encodeURIComponent(ip)}` : ""}`);
+    const rows = data.requests || [];
+    area.innerHTML = `<div class="panel" style="box-shadow:none"><div class="panel-head"><div><h3 style="margin:0">Değişiklik Onayı</h3><small class="hint">Talep sahibi kendi değişikliğini onaylayamaz.</small></div>${hasPermission("ncm.manage") && _ncmConfigsCache[0] ? '<button class="mini-btn blue" onclick="openNcmChangeRequest()">Onay Talebi Oluştur</button>' : ""}</div><div class="panel-body drawer-list">${rows.map(item => `<div class="info-card"><div style="display:flex;justify-content:space-between;gap:8px"><b>${esc(item.title)}</b><span class="badge ${item.status==='approved'?'ok':item.status==='rejected'?'fail':'warn'}">${item.status==='approved'?'ONAYLANDI':item.status==='rejected'?'REDDEDİLDİ':'BEKLİYOR'}</span></div><small>${esc(item.hostname || item.ip)} · ${esc(item.version_label)} · ${esc(item.risk)} · Talep: ${esc(item.requested_by)}</small><p class="hint">${esc(item.reason || 'Gerekçe belirtilmedi.')}</p>${item.status==='pending' && item.requested_by !== data.current_user && hasPermission('ncm.manage') ? `<button class="mini-btn" onclick="decideNcmChange(${item.id},'approved')">Onayla</button> <button class="mini-btn" onclick="decideNcmChange(${item.id},'rejected')">Reddet</button>` : ''}</div>`).join('') || '<div class="hint">Bu cihaz için değişiklik talebi yok.</div>'}</div></div>`;
+  } catch (error) { renderLoadError(area, "Değişiklik talepleri alınamadı", error); }
+}
+
+function openNcmChangeRequest() {
+  const configId = Number($("ncmVer2Select")?.value || _ncmConfigsCache[0]?.id);
+  if (!configId) return toast("Önce bir konfigürasyon sürümü seçin.", "warn");
+  openModal(`<h3>Değişiklik Onay Talebi</h3><div class="field-label">Başlık</div><input id="ncmChangeTitle" maxlength="120" placeholder="Örn. VLAN 20 erişim değişikliği"><div class="field-label" style="margin-top:10px">Risk</div><select id="ncmChangeRisk"><option value="low">Düşük</option><option value="medium" selected>Orta</option><option value="high">Yüksek</option><option value="critical">Kritik</option></select><div class="field-label" style="margin-top:10px">Gerekçe</div><textarea id="ncmChangeReason" maxlength="1000" rows="4"></textarea><div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px"><button class="mini-btn" onclick="closeModalForce()">İptal</button><button class="mini-btn blue" onclick="createNcmChangeRequest(${configId})">Talep Oluştur</button></div>`);
+}
+
+async function createNcmChangeRequest(configId) {
+  try {
+    await post("/api/ncm/change-requests", {config_id:configId,title:$("ncmChangeTitle").value.trim(),reason:$("ncmChangeReason").value.trim(),risk:$("ncmChangeRisk").value});
+    closeModalForce(); toast("Değişiklik onaya gönderildi.", "success"); await loadNcmChangeRequests($("ncmDeviceSelect")?.value || "");
+  } catch (error) { toast(error.message, "error"); }
+}
+
+async function decideNcmChange(id, decision) {
+  try { await post(`/api/ncm/change-requests/${id}/decision`, {decision,note:""}); toast(decision === "approved" ? "Talep onaylandı." : "Talep reddedildi.", "success"); await loadNcmChangeRequests($("ncmDeviceSelect")?.value || ""); }
+  catch (error) { toast(error.message, "error"); }
 }
 
 async function takeNcmBackup() {
@@ -257,8 +308,13 @@ Object.assign(globalThis, {
   refreshNcm,
   loadNcmDeviceVersions,
   takeNcmBackup,
+  runNcmCompliance,
   compareNcmDiff,
   buildNcmDiffRows,
   expandUnchangedBlock,
   copyDiffToClipboard,
+  loadNcmChangeRequests,
+  openNcmChangeRequest,
+  createNcmChangeRequest,
+  decideNcmChange,
 });

@@ -587,6 +587,7 @@ async function refreshSecurity() {
       <h3 style="margin:0 0 12px; font-size:14px; color:var(--txt); border-bottom:1px solid var(--line-soft); padding-bottom:8px;">Politika İhlalleri & Güvenlik Logları</h3>
       ${rulesHtml}
       <div id="securityPostureBody" style="margin-top:18px"></div>
+      <div id="securityAssuranceBody" style="margin-top:20px;padding-top:16px;border-top:1px solid var(--line-soft)"></div>
       <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--line-soft)">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><div><h3 style="margin:0">Otomatik Alarm Kuralları</h3><div class="hint">Çevrimdışı süre, yeni cihaz, rogue DHCP, IP çakışması ve config farkı gerçek kanıttan değerlendirilir.</div></div>${hasPermission("security.manage")?'<div><button class="mini-btn" onclick="evaluateAlertRules()">Şimdi Değerlendir</button> <button class="mini-btn blue" onclick="openAlertRuleModal()">Kural Ekle</button></div>':''}</div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;margin-top:10px">${(alertRules.rules||[]).map(rule=>`<div class="info-card"><span>${esc(rule.name)}</span><b>${esc(rule.rule_type.replaceAll('_',' '))}</b><small>${esc(rule.level)} · bekleme ${Math.round(rule.cooldown_seconds/60)} dk · ${rule.enabled?'etkin':'kapalı'}</small></div>`).join('')||'<div class="hint">Henüz otomatik alarm kuralı yok.</div>'}</div>
@@ -601,10 +602,86 @@ async function refreshSecurity() {
       postureEl.innerHTML = `<h3>Kanıta Dayalı Risk Bulguları</h3><div class="hint" style="margin-bottom:10px">${esc(posture.scope_note)}</div>
         ${(posture.findings||[]).map(f=>`<div style="padding:12px;border:1px solid ${f.severity==='high'?'rgba(239,68,68,.35)':'rgba(245,158,11,.35)'};border-radius:9px;margin-bottom:8px"><div style="display:flex;justify-content:space-between"><b>${esc(f.asset)}</b><span class="badge ${f.severity==='high'?'fail':'warn'}">${esc(f.severity)}</span></div><div>${esc(f.title)}</div><div class="hint">Kanıt: ${esc(f.evidence)}</div><div class="hint"><b>Öneri:</b> ${esc(f.recommendation)}</div></div>`).join('') || '<div class="hint">Mevcut keşif kanıtlarında risk bulgusu oluşmadı.</div>'}`;
     }
+    await refreshPhase3Assurance();
   } catch (e) {
     console.warn("Güvenlik verisi alınamadı:", e);
     renderLoadError("securityBody", "Güvenlik görünürlüğü alınamadı", e, "refreshSecurity()");
   }
+}
+
+async function refreshPhase3Assurance() {
+  const el = $("securityAssuranceBody");
+  if (!el) return;
+  if (!hasPermission("security.manage")) {
+    el.innerHTML = `<h3>Faz 3 Güvence Taramaları</h3><div class="hint">CVE ve kimlik denetimi için <code>security.manage</code> izni gerekir.</div>`;
+    return;
+  }
+  try {
+    const [summary, exemptions] = await Promise.all([
+      get("/api/security/assurance/summary"), get("/api/discovery/exemptions")
+    ]);
+    const kindLabel = {cve_correlation:"CVE Korelasyonu",default_credential_audit:"Varsayılan Kimlik",passive_neighbor_snapshot:"Pasif Keşif",ncm_compliance:"NCM Uyumluluk"};
+    el.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+        <div><h3 style="margin:0">Faz 3 Güvence Taramaları</h3><div class="hint">${esc(summary.scope_note)}</div></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="mini-btn blue" onclick="runCveCorrelation()">CVE Korelasyonu</button>
+          ${hasPermission("inventory.scan")?'<button class="mini-btn" onclick="runPassiveDiscovery()">Pasif Keşif</button>':''}
+          <button class="mini-btn" onclick="runDefaultCredentialAudit()">Varsayılan SNMP Denetimi</button>
+        </div>
+      </div>
+      <div class="hint" style="margin:8px 0">Katalog: ${esc(summary.cve_catalog.source)} · ${summary.cve_catalog.rules} kural · canlı akış ${summary.cve_catalog.live_feed?'bağlı':'bağlı değil'}</div>
+      <div id="phase3ScanResult"></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px;margin-top:10px">
+        ${(summary.runs||[]).slice(0,8).map(run=>`<div class="info-card"><span>${esc(kindLabel[run.kind]||run.kind)}</span><b>${run.finding_count} bulgu</b><small>${run.target_count} hedef · ${new Date(run.started_at*1000).toLocaleString('tr-TR')}</small></div>`).join('')||'<div class="hint">Henüz güvence taraması çalıştırılmadı.</div>'}
+      </div>
+      <div style="margin-top:14px;padding:12px;border:1px solid var(--line-soft);border-radius:9px">
+        <b>Aktif tarama muafiyetleri</b><div class="hint">IP veya CIDR; otomatik keşif, Nmap ve varsayılan kimlik denetiminden çıkarılır.</div>
+        ${hasPermission("discovery.schedule.manage")?'<div style="display:flex;gap:8px;margin:8px 0;flex-wrap:wrap"><input id="scanExemptionTarget" placeholder="10.0.0.25 veya 10.0.5.0/24"><input id="scanExemptionReason" placeholder="Muafiyet nedeni"><button class="mini-btn" onclick="addScanExemption()">Ekle</button></div>':''}
+        <div>${(exemptions.exemptions||[]).map(item=>`<span class="badge gray" style="margin:3px">${esc(item.target)} · ${esc(item.reason||'')}${hasPermission("discovery.schedule.manage")?` <button aria-label="Muafiyeti kaldır" style="border:0;background:none;color:inherit;cursor:pointer" onclick="removeScanExemption(${item.id})">×</button>`:''}</span>`).join('')||'<span class="hint">Muafiyet yok.</span>'}</div>
+      </div>`;
+  } catch (e) {
+    renderLoadError(el, "Faz 3 güvence durumu alınamadı", e, "refreshPhase3Assurance()");
+  }
+}
+
+function renderPhase3Findings(data, emptyMessage) {
+  const el = $("phase3ScanResult");
+  if (!el) return;
+  const findings = data.findings || data.new_devices || [];
+  el.innerHTML = `<div class="hint" style="margin:10px 0">Tarama #${esc(data.run_id)} · ${findings.length} bulgu</div>${findings.map(item=>`
+    <div style="padding:10px;border:1px solid ${item.severity==='critical'?'rgba(239,68,68,.4)':'var(--line-soft)'};border-radius:8px;margin-bottom:6px">
+      <b>${esc(item.cve_id||item.title||item.ip||'Bulgu')}</b> ${item.severity?`<span class="badge ${item.severity==='critical'?'fail':'warn'}">${esc(item.severity)}</span>`:''}
+      <div>${esc(item.asset||item.ip||'')}</div><div class="hint">${esc(item.evidence||item.mac||'')}</div>
+    </div>`).join('') || `<div class="hint">${esc(emptyMessage)}</div>`}`;
+}
+
+async function runCveCorrelation() {
+  try { renderPhase3Findings(await post("/api/security/cve-scan", {}), "Banner kanıtlarında katalogla eşleşen CVE bulunmadı."); }
+  catch (e) { toast(e.message || "CVE korelasyonu çalıştırılamadı.", "error"); }
+}
+
+async function runPassiveDiscovery() {
+  try { renderPhase3Findings(await post("/api/discovery/passive-snapshot", {}), "Komşu tablosunda yeni cihaz bulunmadı."); }
+  catch (e) { toast(e.message || "Pasif keşif çalıştırılamadı.", "error"); }
+}
+
+async function runDefaultCredentialAudit() {
+  if (!confirm("Yalnız yönetme yetkiniz bulunan yerel cihazlarda public/private SNMP denemesi yapılacağını onaylıyor musunuz?")) return;
+  try { renderPhase3Findings(await post("/api/security/credential-audit", {acknowledge_authorized:true}), "Varsayılan SNMP community kabul eden cihaz bulunmadı."); }
+  catch (e) { toast(e.message || "Kimlik denetimi çalıştırılamadı.", "error"); }
+}
+
+async function addScanExemption() {
+  try {
+    await post("/api/discovery/exemptions", {target:$("scanExemptionTarget").value.trim(),reason:$("scanExemptionReason").value.trim()});
+    toast("Tarama muafiyeti kaydedildi.", "success"); await refreshPhase3Assurance();
+  } catch (e) { toast(e.message || "Muafiyet kaydedilemedi.", "error"); }
+}
+
+async function removeScanExemption(id) {
+  try { await del(`/api/discovery/exemptions/${id}`); toast("Tarama muafiyeti kaldırıldı.", "success"); await refreshPhase3Assurance(); }
+  catch (e) { toast(e.message || "Muafiyet kaldırılamadı.", "error"); }
 }
 
 function openAlertRuleModal() {
@@ -684,6 +761,12 @@ Object.assign(globalThis, {
   refreshAnalyst,
   renderSecurityPage,
   refreshSecurity,
+  refreshPhase3Assurance,
+  runCveCorrelation,
+  runPassiveDiscovery,
+  runDefaultCredentialAudit,
+  addScanExemption,
+  removeScanExemption,
   openAlertRuleModal,
   createAlertRule,
   updateAlertRuleFields,

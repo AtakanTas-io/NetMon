@@ -343,10 +343,32 @@ function bindClickOutside(elementId, closeFn, triggerButtonId = null, openMode =
     if (event?.type !== "keydown" || event.key === "Escape") closeFn();
   };
   setTimeout(() => {
-    document.addEventListener("click", closeWhenOpen);
+    // Capture aşamasında panelin tıklamadan önceki durumuna bak. Dinleyici
+    // bubble aşamasında çalışırsa dışarıdaki bir "Detay" düğmesi paneli açar,
+    // aynı tıklama document'a ulaştığında da paneli anında yeniden kapatır.
+    document.addEventListener("click", closeWhenOpen, true);
     document.addEventListener("keydown", closeWhenOpen);
   }, 0);
 }
+
+function applyStableTestSelectors(root = document) {
+  const elements = [];
+  if (root?.nodeType === 1 && root.id) elements.push(root);
+  root?.querySelectorAll?.("[id]").forEach((element) => elements.push(element));
+  elements.forEach((element) => {
+    if (!element.dataset.testid) element.dataset.testid = element.id;
+  });
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  applyStableTestSelectors();
+  const observer = new MutationObserver((records) => {
+    records.forEach((record) => {
+      record.addedNodes.forEach((node) => applyStableTestSelectors(node));
+    });
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+});
 
 /* ---------- Oturum / token yönetimi ---------- */
 
@@ -373,4 +395,5 @@ Object.assign(globalThis, {
   ICON,
   ico,
   bindClickOutside,
+  applyStableTestSelectors,
 });
