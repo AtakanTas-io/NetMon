@@ -1152,7 +1152,7 @@ _tool_rate_state: dict[int, deque] = {}
 _tool_rate_lock = threading.Lock()
 TOOL_RATE_LIMIT_PER_MINUTE = RUNTIME_CONFIG.tool_rate_limit_per_minute
 _RATE_LIMITED_TOOL_PATHS = {
-    "/api/tools/traceroute", "/api/tools/portscan", "/api/tools/deep-scan", "/api/tools/network-cmd",
+    "/api/tools/ping", "/api/tools/traceroute", "/api/tools/portscan", "/api/tools/deep-scan", "/api/tools/network-cmd",
 }
 _server_started_at = time.time()
 

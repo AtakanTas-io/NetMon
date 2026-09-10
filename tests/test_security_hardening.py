@@ -120,6 +120,24 @@ def test_tool_limit_is_shared_across_sessions_and_endpoints(isolated_server, mon
     assert client.post("/api/tools/deep-scan", headers=headers).status_code == 200
 
 
+def test_ping_is_rate_limited_for_same_user(isolated_server, monkeypatch):
+    client, _, password_path = isolated_server
+    headers = _bootstrap_admin(client, password_path)
+    monkeypatch.setattr(server, "TOOL_RATE_LIMIT_PER_MINUTE", 2)
+    monkeypatch.setattr(
+        server.subprocess,
+        "run",
+        Mock(return_value=Mock(stdout="Reply time=1ms", stderr="", returncode=0)),
+    )
+
+    responses = [
+        client.post("/api/tools/ping", headers=headers, json={"target": "127.0.0.1", "count": 1})
+        for _ in range(server.TOOL_RATE_LIMIT_PER_MINUTE + 1)
+    ]
+
+    assert [response.status_code for response in responses] == [200, 200, 429]
+
+
 @pytest.mark.parametrize("value, expected", [("20", 20), ("0", 15), ("-1", 15), ("bad", 15), ("1001", 15)])
 def test_tool_rate_limit_environment(monkeypatch, value, expected):
     from backend.core.config import load_config
