@@ -12,6 +12,43 @@ def reset_tool_rate_state(monkeypatch):
     monkeypatch.setattr(server, "_tool_rate_state", {}, raising=False)
 
 
+def _headers_for_role(db_path, role: str) -> dict[str, str]:
+    token = f"{role}-diagnostics-token"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO users (username,password_hash,salt,role,active,must_change_password,created_at) "
+            "VALUES (?,?,?,?,1,0,0)",
+            (f"{role}-diagnostics", "unused", "unused", role),
+        )
+        conn.execute(
+            "INSERT INTO sessions (token,user_id,created_at,expires_at) "
+            "SELECT ?,id,0,? FROM users WHERE username=?",
+            (token, server.time.time() + 3600, f"{role}-diagnostics"),
+        )
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.mark.parametrize(
+    "path,payload",
+    [
+        ("/api/tools/ping", {"target": "127.0.0.1", "count": 1}),
+        ("/api/tools/traceroute", {"target": "127.0.0.1", "max_hops": 1}),
+        ("/api/tools/network-cmd", {"action": "hostname"}),
+    ],
+)
+def test_active_diagnostics_require_permission(isolated_server, monkeypatch, path, payload):
+    client, db_path, _ = isolated_server
+    run = Mock(return_value=Mock(stdout="Reply time=1ms", stderr="", returncode=0))
+    monkeypatch.setattr(server.subprocess, "run", run)
+    monkeypatch.setattr(server.subprocess, "check_output", Mock(return_value=""))
+
+    viewer_response = client.post(path, headers=_headers_for_role(db_path, "viewer"), json=payload)
+    assert viewer_response.status_code == 403
+
+    operator_response = client.post(path, headers=_headers_for_role(db_path, "noc_operator"), json=payload)
+    assert operator_response.status_code == 200
+
+
 @pytest.mark.parametrize("target", ["", "   ", "-help", "example.com;whoami", "host name"])
 @pytest.mark.parametrize("endpoint", ["traceroute", "network-cmd"])
 def test_diagnostic_targets_rejected_before_subprocess(isolated_server, monkeypatch, target, endpoint):

@@ -488,13 +488,13 @@ def test_nslookup_without_record_type_still_works_as_before(isolated_server, mon
 
 
 def test_route_print_and_nbtstat_do_not_require_admin_role(isolated_server, monkeypatch):
-    """Bunlar salt-okunur teşhis komutları; sadece ipconfig release/renew/flushdns admin-only olmalı."""
+    """Teşhis izni admin rolü gerektirmez; sadece release/renew/flushdns admin-only olmalı."""
     client, _, password_path = isolated_server
     admin_headers = _bootstrap_admin(client, password_path)
     created = client.post(
         "/api/admin/users",
         headers=admin_headers,
-        json={"username": "readonly.viewer", "password": "Temporary-Pass-2026!", "role": "user"},
+        json={"username": "readonly.viewer", "password": "Temporary-Pass-2026!", "role": "noc_operator"},
     )
     assert created.status_code == 200
     login = client.post("/api/auth/login", json={"username": "readonly.viewer", "password": "Temporary-Pass-2026!"})

@@ -62,7 +62,7 @@ def create_diagnostics_router(ctx) -> APIRouter:
     router = APIRouter()
 
     @router.post("/api/tools/ping")
-    def run_ping(req: PingRequest, user: dict = Depends(ctx.get_current_user)):
+    def run_ping(req: PingRequest, user: dict = Depends(ctx.require_permission("diagnostics.run"))):
         target = req.target.strip().split(":")[0].split("/")[0]
         count = max(1, min(req.count, 20))
         if not target:
@@ -256,7 +256,7 @@ def create_diagnostics_router(ctx) -> APIRouter:
         return {"scanned_hosts": len(results), "results": results, "generated_at": ctx.time.time()}
 
     @router.post("/api/tools/traceroute")
-    def run_traceroute_api(req: TraceRequest, user: dict = Depends(ctx.get_current_user)):
+    def run_traceroute_api(req: TraceRequest, user: dict = Depends(ctx.require_permission("diagnostics.run"))):
         target = _clean_command_target(req.target)
         if not target:
             return JSONResponse(status_code=400, content={"error": "Geçerli bir hedef adresi/hostname girin."})
@@ -296,7 +296,7 @@ def create_diagnostics_router(ctx) -> APIRouter:
             return {"error": "Traceroute işlemi başarısız.", "hops": []}
 
     @router.post("/api/tools/network-cmd")
-    def run_network_cmd_api(req: NetworkCmdRequest, user: dict = Depends(ctx.get_current_user)):
+    def run_network_cmd_api(req: NetworkCmdRequest, user: dict = Depends(ctx.require_permission("diagnostics.run"))):
         key = req.action.strip().lower()
         if key in {"release", "renew", "flushdns"} and user.get("role") != "admin":
             return JSONResponse(
