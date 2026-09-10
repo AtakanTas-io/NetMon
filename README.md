@@ -97,6 +97,8 @@ python backend\desktop_app.py
 
 Başarısız girişler hem kullanıcı adı ve istemci IP'si çifti için hem de kullanıcı adı genelinde izlenir. Aynı IP'den `NETMON_LOGIN_MAX_ATTEMPTS` başarısız deneme kısa süreli kilit uygular. Farklı IP'lerden gelen toplam denemeler bu değerin üç katına ulaştığında kullanıcı için üç kat daha uzun genel kilit uygulanır ve olay denetim kaydına yazılır. İstemci adresi doğrudan bağlantıdan alınır; `X-Forwarded-For` başlığına güvenilmez.
 
+`NETMON_DIAGNOSTICS_RESTRICT_TO_INVENTORY=false` varsayılanında ping ve traceroute dış hedeflerde çalışmaya devam eder. Değer `true` yapıldığında bu iki araç yalnızca yerel, loopback veya özel IPv4 hedeflerini kabul eder; alan adları önce IPv4 adresine çözümlenir.
+
 ## Platform desteği
 
 NetMon'un FastAPI sunucusu ve tarayıcı arayüzü Windows, Linux ve macOS üzerinde çalışabilir. İşletim sistemine veya harici araçlara bağlı özellikler aşağıdaki gibidir:

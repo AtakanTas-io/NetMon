@@ -53,6 +53,7 @@ class RuntimeConfig:
     wmi_auth_failure_cooldown_seconds: int
     tool_rate_limit_per_minute: int
     ad_use_ssl: bool
+    diagnostics_restrict_to_inventory: bool
 
 
 def load_config() -> RuntimeConfig:
@@ -88,6 +89,10 @@ def load_config() -> RuntimeConfig:
         wmi_auth_failure_cooldown_seconds=_env_int("NETMON_WMI_AUTH_COOLDOWN_SECONDS", 900, 1, 86400),
         tool_rate_limit_per_minute=_env_int("NETMON_TOOL_RATE_LIMIT_PER_MINUTE", 15, 1, 1000),
         ad_use_ssl=os.environ.get("NETMON_AD_USE_SSL", "true").strip().lower() not in ("0", "false", "no", "off"),
+        diagnostics_restrict_to_inventory=os.environ.get("NETMON_DIAGNOSTICS_RESTRICT_TO_INVENTORY", "false")
+        .strip()
+        .lower()
+        not in ("0", "false", "no", "off"),
     )
 
 

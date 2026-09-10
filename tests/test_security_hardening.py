@@ -62,6 +62,44 @@ def test_ping_rejects_option_like_targets_before_subprocess(isolated_server, mon
     run.assert_not_called()
 
 
+@pytest.mark.parametrize("endpoint", ["ping", "traceroute"])
+def test_diagnostics_inventory_restriction_rejects_public_ip(isolated_server, monkeypatch, endpoint):
+    client, _, password_path = isolated_server
+    headers = _bootstrap_admin(client, password_path)
+    monkeypatch.setattr(server, "DIAGNOSTICS_RESTRICT_TO_INVENTORY", True)
+    monkeypatch.setattr(server.socket, "gethostbyname", Mock(return_value="8.8.8.8"))
+    run = Mock()
+    monkeypatch.setattr(server.subprocess, "run", run)
+    monkeypatch.setattr(server.subprocess, "check_output", run)
+
+    response = client.post(f"/api/tools/{endpoint}", headers=headers, json={"target": "8.8.8.8"})
+
+    assert response.status_code == 400
+    run.assert_not_called()
+
+
+def test_ping_allows_public_ip_when_inventory_restriction_is_disabled(isolated_server, monkeypatch):
+    client, _, password_path = isolated_server
+    headers = _bootstrap_admin(client, password_path)
+    monkeypatch.setattr(server, "DIAGNOSTICS_RESTRICT_TO_INVENTORY", False)
+    run = Mock(return_value=Mock(stdout="Reply time=1ms", stderr="", returncode=0))
+    monkeypatch.setattr(server.subprocess, "run", run)
+
+    response = client.post("/api/tools/ping", headers=headers, json={"target": "8.8.8.8", "count": 1})
+
+    assert response.status_code == 200
+    run.assert_called_once()
+
+
+def test_diagnostics_inventory_restriction_environment(monkeypatch):
+    from backend.core.config import load_config
+
+    monkeypatch.delenv("NETMON_DIAGNOSTICS_RESTRICT_TO_INVENTORY", raising=False)
+    assert load_config().diagnostics_restrict_to_inventory is False
+    monkeypatch.setenv("NETMON_DIAGNOSTICS_RESTRICT_TO_INVENTORY", "true")
+    assert load_config().diagnostics_restrict_to_inventory is True
+
+
 @pytest.mark.parametrize("target", ["", "   ", "-help", "example.com;whoami", "host name"])
 @pytest.mark.parametrize("endpoint", ["traceroute", "network-cmd"])
 def test_diagnostic_targets_rejected_before_subprocess(isolated_server, monkeypatch, target, endpoint):

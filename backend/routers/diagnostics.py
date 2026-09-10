@@ -61,12 +61,30 @@ def _clean_command_target(raw: str) -> str:
 def create_diagnostics_router(ctx) -> APIRouter:
     router = APIRouter()
 
+    def inventory_restriction_error(target: str):
+        if not ctx.DIAGNOSTICS_RESTRICT_TO_INVENTORY:
+            return None
+        try:
+            resolved_target = ctx.socket.gethostbyname(target)
+            parsed_target = ctx.ipaddress.ip_address(resolved_target)
+        except (OSError, ValueError):
+            return JSONResponse(status_code=400, content={"error": "Hedef çözümlenemedi."})
+        if not ctx._is_allowed_inventory_ip(parsed_target):
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Teşhis yalnızca yerel/özel IPv4 hedeflerinde kullanılabilir."},
+            )
+        return None
+
     @router.post("/api/tools/ping")
     def run_ping(req: PingRequest, user: dict = Depends(ctx.require_permission("diagnostics.run"))):
         target = _clean_command_target(req.target)
         count = max(1, min(req.count, 20))
         if not target:
             return JSONResponse(status_code=400, content={"error": "Hedef adresi boş olamaz."})
+        restriction_error = inventory_restriction_error(target)
+        if restriction_error:
+            return restriction_error
 
         if ctx.platform.system().lower() == "windows":
             cmd = ["ping", "-n", str(count), "-w", "1200", target]
@@ -260,6 +278,9 @@ def create_diagnostics_router(ctx) -> APIRouter:
         target = _clean_command_target(req.target)
         if not target:
             return JSONResponse(status_code=400, content={"error": "Geçerli bir hedef adresi/hostname girin."})
+        restriction_error = inventory_restriction_error(target)
+        if restriction_error:
+            return restriction_error
         if not 1 <= req.max_hops <= 64:
             return JSONResponse(status_code=400, content={"error": "Hop sayısı 1-64 aralığında olmalıdır."})
         if ctx.platform.system().lower() == "windows":
