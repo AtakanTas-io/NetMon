@@ -444,15 +444,36 @@ def init_db():
         )
     """)
 
-    # Brute-force koruması: kullanıcı adına göre başarısız giriş denemeleri.
+    # Brute-force koruması: kullanıcı ve istemci IP'sine göre başarısız giriş denemeleri.
     conn.execute("""
         CREATE TABLE IF NOT EXISTS login_attempts (
-            username TEXT PRIMARY KEY,
+            username TEXT NOT NULL,
+            client_ip TEXT NOT NULL,
             fail_count INTEGER NOT NULL DEFAULT 0,
             last_attempt REAL,
-            locked_until REAL
+            locked_until REAL,
+            PRIMARY KEY (username, client_ip)
         )
     """)
+    login_attempt_columns = {row[1] for row in conn.execute("PRAGMA table_info(login_attempts)").fetchall()}
+    if "client_ip" not in login_attempt_columns:
+        conn.execute("ALTER TABLE login_attempts RENAME TO login_attempts_legacy")
+        conn.execute("""
+            CREATE TABLE login_attempts (
+                username TEXT NOT NULL,
+                client_ip TEXT NOT NULL,
+                fail_count INTEGER NOT NULL DEFAULT 0,
+                last_attempt REAL,
+                locked_until REAL,
+                PRIMARY KEY (username, client_ip)
+            )
+        """)
+        conn.execute(
+            "INSERT INTO login_attempts (username, client_ip, fail_count, last_attempt, locked_until) "
+            "SELECT username, '*', fail_count, last_attempt, locked_until FROM login_attempts_legacy"
+        )
+        conn.execute("DROP TABLE login_attempts_legacy")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_login_attempts_username ON login_attempts(username)")
 
     # Denetim (audit) kaydı: admin'e özel / hassas işlemlerin izi.
     conn.execute("""

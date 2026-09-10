@@ -6,7 +6,7 @@ import sqlite3
 import ssl
 import time
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -38,27 +38,51 @@ def _valid_username(value: str) -> bool:
     return bool(re.fullmatch(r"[\w.@\\-]{3,64}", (value or "").strip(), re.UNICODE))
 
 
-def _check_login_lock(conn, username: str) -> float | None:
-    row = conn.execute("SELECT fail_count, locked_until FROM login_attempts WHERE username=?", (username,)).fetchone()
-    if row is None:
-        return None
-    _, locked_until = row
-    if locked_until and time.time() < locked_until:
-        return locked_until - time.time()
-    return None
+_GLOBAL_CLIENT_IP = "*"
 
 
-def _register_login_failure(ctx, conn, username: str):
-    row = conn.execute("SELECT fail_count FROM login_attempts WHERE username=?", (username,)).fetchone()
-    fail_count = (row[0] if row else 0) + 1
-    locked_until = time.time() + ctx.LOGIN_LOCKOUT_SECONDS if fail_count >= ctx.LOGIN_MAX_ATTEMPTS else None
-    conn.execute(
-        "INSERT INTO login_attempts (username, fail_count, last_attempt, locked_until) VALUES (?, ?, ?, ?) "
-        "ON CONFLICT(username) DO UPDATE SET fail_count=excluded.fail_count, "
-        "last_attempt=excluded.last_attempt, locked_until=excluded.locked_until",
-        (username, fail_count, time.time(), locked_until),
-    )
+def _check_login_lock(conn, username: str, client_ip: str) -> float | None:
+    now = time.time()
+    rows = conn.execute(
+        "SELECT locked_until FROM login_attempts WHERE username=? AND client_ip IN (?, ?)",
+        (username, client_ip, _GLOBAL_CLIENT_IP),
+    ).fetchall()
+    remaining = [float(row[0]) - now for row in rows if row[0] and now < float(row[0])]
+    return max(remaining) if remaining else None
+
+
+def _register_login_failure(ctx, conn, username: str, client_ip: str):
+    now = time.time()
+    global_threshold = ctx.LOGIN_MAX_ATTEMPTS * 3
+    global_lock_started = False
+    for attempt_ip, threshold, lock_seconds in (
+        (client_ip, ctx.LOGIN_MAX_ATTEMPTS, ctx.LOGIN_LOCKOUT_SECONDS),
+        (_GLOBAL_CLIENT_IP, global_threshold, ctx.LOGIN_LOCKOUT_SECONDS * 3),
+    ):
+        row = conn.execute(
+            "SELECT fail_count FROM login_attempts WHERE username=? AND client_ip=?",
+            (username, attempt_ip),
+        ).fetchone()
+        fail_count = (int(row[0]) if row else 0) + 1
+        locked_until = now + lock_seconds if fail_count >= threshold else None
+        conn.execute(
+            "INSERT INTO login_attempts (username, client_ip, fail_count, last_attempt, locked_until) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(username, client_ip) DO UPDATE SET fail_count=excluded.fail_count, "
+            "last_attempt=excluded.last_attempt, locked_until=excluded.locked_until",
+            (username, attempt_ip, fail_count, now, locked_until),
+        )
+        if attempt_ip == _GLOBAL_CLIENT_IP and fail_count == global_threshold:
+            global_lock_started = True
     conn.commit()
+    if global_lock_started:
+        ctx.logger.warning("Kullanıcı genel giriş kilidi etkinleştirildi: username=%s", username)
+        ctx._audit(
+            username,
+            "login_global_lock",
+            f"Farklı istemci IP'lerinden {global_threshold} başarısız giriş denemesi",
+            success=False,
+        )
 
 
 def _clear_login_failures(conn, username: str):
@@ -71,13 +95,14 @@ def create_auth_router(ctx) -> APIRouter:
     router = APIRouter()
 
     @router.post("/api/auth/login")
-    def api_login(body: LoginRequest):
+    def api_login(body: LoginRequest, request: Request):
         if not _valid_username(body.username) or not body.password or len(body.password) > 512:
             return JSONResponse(status_code=401, content={"error": "Kullanıcı adı veya şifre hatalı."})
         body.username = body.username.strip()
+        client_ip = request.client.host if request.client else "unknown"
         conn = ctx.db_conn()
 
-        remaining = _check_login_lock(conn, body.username)
+        remaining = _check_login_lock(conn, body.username, client_ip)
         if remaining is not None:
             conn.close()
             ctx._audit(body.username, "login", "kilitli hesapla giriş denemesi", success=False)
@@ -150,7 +175,7 @@ def create_auth_router(ctx) -> APIRouter:
             )
 
         if row is None:
-            _register_login_failure(ctx, conn, body.username)
+            _register_login_failure(ctx, conn, body.username, client_ip)
             conn.close()
             ctx._audit(body.username, "login", "kullanıcı bulunamadı", success=False)
             return JSONResponse(status_code=401, content={"error": "Kullanıcı adı veya şifre hatalı."})
@@ -161,7 +186,7 @@ def create_auth_router(ctx) -> APIRouter:
             ctx._audit(username, "login", "devre dışı hesap", success=False)
             return JSONResponse(status_code=403, content={"error": "Bu hesap devre dışı bırakılmış."})
         if not ad_success and not ctx._verify_password(body.password, salt, pw_hash):
-            _register_login_failure(ctx, conn, body.username)
+            _register_login_failure(ctx, conn, body.username, client_ip)
             conn.close()
             ctx._audit(username, "login", "yanlış şifre", success=False)
             return JSONResponse(status_code=401, content={"error": "Kullanıcı adı veya şifre hatalı."})

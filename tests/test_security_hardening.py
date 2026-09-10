@@ -222,6 +222,40 @@ def test_plain_ldap_is_rejected_without_sending_credentials(isolated_server, mon
     assert "Never-send-this" not in caplog.text
 
 
+def test_login_lock_applies_per_username_and_ip(isolated_server, monkeypatch):
+    client, _, password_path = isolated_server
+    _bootstrap_admin(client, password_path)
+    monkeypatch.setattr(server, "LOGIN_MAX_ATTEMPTS", 2)
+    monkeypatch.setattr(server, "LOGIN_LOCKOUT_SECONDS", 60)
+    client._transport.client = ("10.0.0.10", 50000)
+
+    for _ in range(server.LOGIN_MAX_ATTEMPTS):
+        response = client.post("/api/auth/login", json={"username": "admin", "password": "wrong"})
+        assert response.status_code == 401
+
+    assert client.post("/api/auth/login", json={"username": "admin", "password": "wrong"}).status_code == 429
+
+
+def test_login_lock_applies_globally_across_ips(isolated_server, monkeypatch):
+    client, db_path, password_path = isolated_server
+    _bootstrap_admin(client, password_path)
+    monkeypatch.setattr(server, "LOGIN_MAX_ATTEMPTS", 2)
+    monkeypatch.setattr(server, "LOGIN_LOCKOUT_SECONDS", 60)
+
+    for offset in range(server.LOGIN_MAX_ATTEMPTS * 3):
+        client._transport.client = (f"10.0.1.{offset + 1}", 50000)
+        response = client.post("/api/auth/login", json={"username": "admin", "password": "wrong"})
+        assert response.status_code == 401
+
+    client._transport.client = ("10.0.2.1", 50000)
+    assert client.post("/api/auth/login", json={"username": "admin", "password": "wrong"}).status_code == 429
+    with sqlite3.connect(db_path) as conn:
+        audit = conn.execute(
+            "SELECT success FROM audit_log WHERE username='admin' AND action='login_global_lock'"
+        ).fetchone()
+    assert audit == (0,)
+
+
 def test_ad_ssl_environment_default_and_override(monkeypatch):
     from backend.core.config import load_config
 
