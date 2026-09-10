@@ -5,6 +5,7 @@ import json
 import logging
 import math
 import socket
+import subprocess
 import threading
 import time
 from typing import Any
@@ -41,6 +42,83 @@ if not logger.handlers:
     logger.addHandler(ch)
 
 _com_state = threading.local()
+
+WINDOWS_LICENSE_STATUS = {
+    0: "Lisanssız",
+    1: "Etkinleştirildi",
+    2: "İlk kullanım süresi",
+    3: "Ek süre",
+    4: "Orijinal değil",
+    5: "Bildirim modu",
+    6: "Uzatılmış ek süre",
+}
+
+
+def _windows_license_details(connection) -> dict[str, Any]:
+    """Windows aktivasyon durumunu anahtarın tamamını açığa çıkarmadan döndür."""
+    try:
+        products = connection.SoftwareLicensingProduct()
+        windows = [
+            item
+            for item in products
+            if str(getattr(item, "ApplicationID", "")).lower() == "55c92734-d682-4d71-983e-d6ec3f16059f"
+            and getattr(item, "PartialProductKey", None)
+        ]
+        if not windows:
+            return {"status": "Bulunamadı", "licensed": None}
+        item = sorted(windows, key=lambda value: int(getattr(value, "LicenseStatus", 0) == 1), reverse=True)[0]
+        status_code = int(getattr(item, "LicenseStatus", 0) or 0)
+        return {
+            "status": WINDOWS_LICENSE_STATUS.get(status_code, "Bilinmiyor"),
+            "status_code": status_code,
+            "licensed": status_code == 1,
+            "name": getattr(item, "Name", None),
+            "description": getattr(item, "Description", None),
+            "channel": getattr(item, "ProductKeyChannel", None),
+            "partial_product_key": getattr(item, "PartialProductKey", None),
+            "grace_minutes": getattr(item, "GracePeriodRemaining", None),
+        }
+    except Exception:
+        return {"status": "Okunamadı", "licensed": None}
+
+
+def _local_windows_license_details() -> dict[str, Any]:
+    """Yerel lisansı hızlı CIM sorgusuyla oku; ürün anahtarının tamamını hiçbir zaman isteme."""
+    script = r"""
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+$item = Get-CimInstance SoftwareLicensingProduct -ErrorAction Stop |
+  Where-Object { $_.ApplicationID -eq '55c92734-d682-4d71-983e-d6ec3f16059f' -and $_.PartialProductKey } |
+  Sort-Object @{Expression={if ($_.LicenseStatus -eq 1) {0} else {1}}} | Select-Object -First 1
+if ($null -eq $item) { [ordered]@{status='Bulunamadı';licensed=$null} | ConvertTo-Json -Compress; exit }
+$labels = @('Lisanssız','Etkinleştirildi','İlk kullanım süresi','Ek süre','Orijinal değil','Bildirim modu','Uzatılmış ek süre')
+[ordered]@{
+  status = if ($item.LicenseStatus -le 6) {$labels[$item.LicenseStatus]} else {'Bilinmiyor'}
+  status_code = $item.LicenseStatus
+  licensed = $item.LicenseStatus -eq 1
+  name = $item.Name
+  description = $item.Description
+  channel = $item.ProductKeyChannel
+  partial_product_key = $item.PartialProductKey
+  grace_minutes = $item.GracePeriodRemaining
+} | ConvertTo-Json -Compress
+"""
+    try:
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        result = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=12,
+            creationflags=flags,
+        )
+        return json.loads(result.stdout.strip())
+    except subprocess.CalledProcessError:
+        return {"status": "Yönetici yetkisi gerekli", "licensed": None}
+    except Exception:
+        return {"status": "Okunamadı", "licensed": None}
 
 
 def classify_wmi_error(error: object) -> tuple[str, str]:
@@ -134,6 +212,17 @@ def _local_ips() -> set[str]:
     except Exception:
         pass
     return ips
+
+
+def _adapter_ram_gb(value: Any) -> float | None:
+    """Win32_VideoController.AdapterRAM'in signed uint32 taşmasını düzelt."""
+    try:
+        raw = int(value)
+    except (TypeError, ValueError):
+        return None
+    if raw < 0:
+        raw += 1 << 32
+    return round(raw / (1024**3), 2) if raw > 0 else None
 
 
 class WmiNetworkScanner:
@@ -278,12 +367,54 @@ $cs = Get-CimInstance Win32_ComputerSystem
 $os = Get-CimInstance Win32_OperatingSystem
 $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
 $board = Get-CimInstance Win32_BaseBoard | Select-Object -First 1
+$bios = Get-CimInstance Win32_BIOS | Select-Object -First 1
 $chassisTypes = @()
 try { $chassisTypes = @((Get-CimInstance Win32_SystemEnclosure | Select-Object -First 1).ChassisTypes) } catch {}
-$gpus = @(Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name })
+$gpuItems = @(Get-CimInstance Win32_VideoController)
+$gpus = @($gpuItems | ForEach-Object { $_.Name })
+$gpuDetails = @($gpuItems | ForEach-Object {
+    [ordered]@{
+        name = $_.Name
+        adapter_ram_gb = if ($_.AdapterRAM) { [math]::Round($_.AdapterRAM / 1GB, 2) } else { $null }
+        driver_version = $_.DriverVersion
+        video_processor = $_.VideoProcessor
+        current_resolution = if ($_.CurrentHorizontalResolution -and $_.CurrentVerticalResolution) { "$($_.CurrentHorizontalResolution)x$($_.CurrentVerticalResolution)" } else { $null }
+    }
+})
+$memoryModules = @(Get-CimInstance Win32_PhysicalMemory | ForEach-Object {
+    [ordered]@{
+        bank = $_.BankLabel
+        capacity_gb = [math]::Round($_.Capacity / 1GB, 2)
+        speed_mhz = $_.ConfiguredClockSpeed
+        manufacturer = $_.Manufacturer
+        part_number = if ($_.PartNumber) { $_.PartNumber.Trim() } else { $null }
+        serial_number = if ($_.SerialNumber) { $_.SerialNumber.Trim() } else { $null }
+    }
+})
+$physicalDisks = @(Get-CimInstance Win32_DiskDrive | ForEach-Object {
+    [ordered]@{
+        model = $_.Model
+        size_gb = if ($_.Size) { [math]::Round($_.Size / 1GB, 2) } else { $null }
+        interface_type = $_.InterfaceType
+        media_type = $_.MediaType
+        serial_number = if ($_.SerialNumber) { $_.SerialNumber.Trim() } else { $null }
+    }
+})
+$networkAdapters = @(Get-CimInstance Win32_NetworkAdapterConfiguration -Filter "IPEnabled=True" | ForEach-Object {
+    [ordered]@{
+        description = $_.Description
+        mac_address = $_.MACAddress
+        ip_addresses = @($_.IPAddress)
+        dhcp_enabled = $_.DHCPEnabled
+        default_gateway = @($_.DefaultIPGateway)
+        dns_servers = @($_.DNSServerSearchOrder)
+    }
+})
 $disks = @(Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | ForEach-Object {
     [ordered]@{
         drive_letter = $_.DeviceID
+        volume_name = $_.VolumeName
+        file_system = $_.FileSystem
         total_gb = [math]::Round($_.Size / 1GB, 2)
         free_gb = [math]::Round($_.FreeSpace / 1GB, 2)
         used_gb = [math]::Round(($_.Size - $_.FreeSpace) / 1GB, 2)
@@ -296,7 +427,7 @@ $uninstallPaths = @(
 $programs = @(Get-ItemProperty -Path $uninstallPaths -ErrorAction SilentlyContinue |
     Where-Object DisplayName | Sort-Object DisplayName -Unique |
     Select-Object -First 500 | ForEach-Object {
-        [ordered]@{ name = $_.DisplayName; version = $_.DisplayVersion }
+        [ordered]@{ name = $_.DisplayName; version = $_.DisplayVersion; publisher = $_.Publisher; install_date = $_.InstallDate }
     })
 $firewall = 'Bilinmiyor'
 try {
@@ -308,10 +439,17 @@ try {
     $names = @(Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct -ErrorAction Stop | ForEach-Object displayName)
     if ($names.Count -gt 0) { $antivirus = $names -join ', ' }
 } catch {}
+$licenseProduct = Get-CimInstance SoftwareLicensingProduct -ErrorAction SilentlyContinue |
+    Where-Object { $_.ApplicationID -eq '55c92734-d682-4d71-983e-d6ec3f16059f' -and $_.PartialProductKey } |
+    Sort-Object @{Expression={if ($_.LicenseStatus -eq 1) {0} else {1}}} | Select-Object -First 1
+$licenseLabels = @('Lisanssız','Etkinleştirildi','İlk kullanım süresi','Ek süre','Orijinal değil','Bildirim modu','Uzatılmış ek süre')
+$licenseStatus = if ($null -eq $licenseProduct) { 'Bulunamadı' } elseif ($licenseProduct.LicenseStatus -le 6) { $licenseLabels[$licenseProduct.LicenseStatus] } else { 'Bilinmiyor' }
 [ordered]@{
     computer_name = $cs.Name
     system = [ordered]@{
         computer_name = $cs.Name
+        manufacturer = $cs.Manufacturer
+        model = $cs.Model
         pc_system_type = $cs.PCSystemType
         domain_role = $cs.DomainRole
         os_product_type = $os.ProductType
@@ -321,17 +459,42 @@ try {
         motherboard_maker = $board.Manufacturer
         motherboard_model = $board.Product
         cpu_model = $cpu.Name
-        cores = $cpu.NumberOfLogicalProcessors
+        cores = $cpu.NumberOfCores
+        logical_processors = $cpu.NumberOfLogicalProcessors
+        max_clock_mhz = $cpu.MaxClockSpeed
         ram_gb = [math]::Ceiling($cs.TotalPhysicalMemory / 1GB)
         gpu = $gpus -join ', '
+        gpus = $gpuDetails
+        memory_modules = $memoryModules
+        physical_disks = $physicalDisks
+        network_adapters = $networkAdapters
+        bios = [ordered]@{
+            manufacturer = $bios.Manufacturer
+            version = $bios.SMBIOSBIOSVersion
+            serial_number = $bios.SerialNumber
+            release_date = if ($bios.ReleaseDate) { $bios.ReleaseDate.ToString('o') } else { $null }
+        }
     }
     storage = $disks
     software = [ordered]@{
         os_name = $os.Caption
         os_build = $os.BuildNumber
+        os_version = $os.Version
         os_architecture = $os.OSArchitecture
+        registered_user = $os.RegisteredUser
+        install_date = if ($os.InstallDate) { $os.InstallDate.ToString('o') } else { $null }
+        last_boot_time = if ($os.LastBootUpTime) { $os.LastBootUpTime.ToString('o') } else { $null }
         installed_programs = $programs
-        product_key = (Get-CimInstance SoftwareLicensingService | Select-Object -ExpandProperty OA3xOriginalProductKey -ErrorAction SilentlyContinue)
+        license = [ordered]@{
+            status = $licenseStatus
+            status_code = $licenseProduct.LicenseStatus
+            licensed = if ($null -eq $licenseProduct) { $null } else { $licenseProduct.LicenseStatus -eq 1 }
+            name = $licenseProduct.Name
+            description = $licenseProduct.Description
+            channel = $licenseProduct.ProductKeyChannel
+            partial_product_key = $licenseProduct.PartialProductKey
+            grace_minutes = $licenseProduct.GracePeriodRemaining
+        }
     }
     security = [ordered]@{
         active_user = $cs.UserName
@@ -381,7 +544,18 @@ try {
                         continue
                     seen.add(normalized_name.casefold())
                     _, version = registry.GetStringValue(hDefKey=hDefKey, sSubKeyName=path, sValueName="DisplayVersion")
-                    software_list.append({"name": normalized_name, "version": version or None})
+                    _, publisher = registry.GetStringValue(hDefKey=hDefKey, sSubKeyName=path, sValueName="Publisher")
+                    _, install_date = registry.GetStringValue(
+                        hDefKey=hDefKey, sSubKeyName=path, sValueName="InstallDate"
+                    )
+                    software_list.append(
+                        {
+                            "name": normalized_name,
+                            "version": version or None,
+                            "publisher": publisher or None,
+                            "install_date": install_date or None,
+                        }
+                    )
         except Exception as e:
             logger.debug(f"Registry okuma hatası: {e}")
         return software_list
@@ -463,9 +637,24 @@ try {
             os_info = connection.Win32_OperatingSystem()[0]
             cpu = connection.Win32_Processor()[0]
 
+            gpu_details = []
             try:
-                gpu_list = [g.Name for g in connection.Win32_VideoController()]
-                gpu_name = gpu_list[0] if gpu_list else "Bilinmiyor"
+                for gpu in connection.Win32_VideoController():
+                    gpu_details.append(
+                        {
+                            "name": getattr(gpu, "Name", None),
+                            "adapter_ram_gb": _adapter_ram_gb(getattr(gpu, "AdapterRAM", None)),
+                            "driver_version": getattr(gpu, "DriverVersion", None),
+                            "video_processor": getattr(gpu, "VideoProcessor", None),
+                            "current_resolution": (
+                                f"{gpu.CurrentHorizontalResolution}x{gpu.CurrentVerticalResolution}"
+                                if getattr(gpu, "CurrentHorizontalResolution", None)
+                                and getattr(gpu, "CurrentVerticalResolution", None)
+                                else None
+                            ),
+                        }
+                    )
+                gpu_name = ", ".join(str(item["name"]) for item in gpu_details if item.get("name")) or "Bilinmiyor"
             except Exception:
                 gpu_name = "Bilinmiyor"
 
@@ -482,6 +671,69 @@ try {
             except Exception:
                 chassis_types = []
 
+            bios_details = {}
+            try:
+                bios = connection.Win32_BIOS()[0]
+                bios_details = {
+                    "manufacturer": getattr(bios, "Manufacturer", None),
+                    "version": getattr(bios, "SMBIOSBIOSVersion", None),
+                    "serial_number": getattr(bios, "SerialNumber", None),
+                    "release_date": str(getattr(bios, "ReleaseDate", "") or "") or None,
+                }
+            except Exception:
+                pass
+
+            memory_modules = []
+            try:
+                for memory in connection.Win32_PhysicalMemory():
+                    memory_modules.append(
+                        {
+                            "bank": getattr(memory, "BankLabel", None),
+                            "capacity_gb": round(int(memory.Capacity) / (1024**3), 2)
+                            if getattr(memory, "Capacity", None)
+                            else None,
+                            "speed_mhz": getattr(memory, "ConfiguredClockSpeed", None),
+                            "manufacturer": getattr(memory, "Manufacturer", None),
+                            "part_number": str(getattr(memory, "PartNumber", "") or "").strip() or None,
+                            "serial_number": str(getattr(memory, "SerialNumber", "") or "").strip() or None,
+                        }
+                    )
+            except Exception:
+                pass
+
+            physical_disks = []
+            try:
+                for physical_disk in connection.Win32_DiskDrive():
+                    physical_disks.append(
+                        {
+                            "model": getattr(physical_disk, "Model", None),
+                            "size_gb": round(int(physical_disk.Size) / (1024**3), 2)
+                            if getattr(physical_disk, "Size", None)
+                            else None,
+                            "interface_type": getattr(physical_disk, "InterfaceType", None),
+                            "media_type": getattr(physical_disk, "MediaType", None),
+                            "serial_number": str(getattr(physical_disk, "SerialNumber", "") or "").strip() or None,
+                        }
+                    )
+            except Exception:
+                pass
+
+            network_adapters = []
+            try:
+                for adapter in connection.Win32_NetworkAdapterConfiguration(IPEnabled=True):
+                    network_adapters.append(
+                        {
+                            "description": getattr(adapter, "Description", None),
+                            "mac_address": getattr(adapter, "MACAddress", None),
+                            "ip_addresses": list(getattr(adapter, "IPAddress", None) or []),
+                            "dhcp_enabled": getattr(adapter, "DHCPEnabled", None),
+                            "default_gateway": list(getattr(adapter, "DefaultIPGateway", None) or []),
+                            "dns_servers": list(getattr(adapter, "DNSServerSearchOrder", None) or []),
+                        }
+                    )
+            except Exception:
+                pass
+
             # Disk Bilgileri
             disks = []
             for disk in connection.Win32_LogicalDisk(DriveType=3):
@@ -490,6 +742,8 @@ try {
                 disks.append(
                     {
                         "drive_letter": disk.DeviceID,
+                        "volume_name": getattr(disk, "VolumeName", None),
+                        "file_system": getattr(disk, "FileSystem", None),
                         "total_gb": total_gb,
                         "free_gb": free_gb,
                         "used_gb": round(total_gb - free_gb, 2),
@@ -536,6 +790,9 @@ try {
             fw_status = "Bilinmiyor"
 
             # Verileri Topla
+            license_details = (
+                _local_windows_license_details() if ip in _local_ips() else _windows_license_details(connection)
+            )
             device_data.update(
                 {
                     "status": "Success",
@@ -543,6 +800,8 @@ try {
                     "computer_name": cs.Name,
                     "system": {
                         "computer_name": cs.Name,
+                        "manufacturer": getattr(cs, "Manufacturer", None),
+                        "model": getattr(cs, "Model", None),
                         "pc_system_type": getattr(cs, "PCSystemType", None),
                         "domain_role": getattr(cs, "DomainRole", None),
                         "os_product_type": getattr(os_info, "ProductType", None),
@@ -552,19 +811,28 @@ try {
                         "motherboard_maker": mb_maker,
                         "motherboard_model": mb_model,
                         "cpu_model": cpu.Name.strip(),
-                        "cores": cpu.NumberOfLogicalProcessors or cpu.NumberOfCores,
+                        "cores": getattr(cpu, "NumberOfCores", None),
+                        "logical_processors": getattr(cpu, "NumberOfLogicalProcessors", None),
+                        "max_clock_mhz": getattr(cpu, "MaxClockSpeed", None),
                         "ram_gb": math.ceil(int(cs.TotalPhysicalMemory) / (1024**3)),
                         "gpu": gpu_name,
+                        "gpus": gpu_details,
+                        "memory_modules": memory_modules,
+                        "physical_disks": physical_disks,
+                        "network_adapters": network_adapters,
+                        "bios": bios_details,
                     },
                     "storage": disks,
                     "software": {
                         "os_name": os_info.Caption,
                         "os_build": os_info.BuildNumber,
+                        "os_version": getattr(os_info, "Version", None),
                         "os_architecture": os_info.OSArchitecture,
+                        "registered_user": getattr(os_info, "RegisteredUser", None),
+                        "install_date": str(getattr(os_info, "InstallDate", "") or "") or None,
+                        "last_boot_time": str(getattr(os_info, "LastBootUpTime", "") or "") or None,
                         "installed_programs": software_list,
-                        "product_key": getattr(connection.SoftwareLicensingService()[0], "OA3xOriginalProductKey", None)
-                        if connection.SoftwareLicensingService()
-                        else None,
+                        "license": license_details,
                     },
                     "security": {"active_user": active_user, "firewall": fw_status, "antivirus": av_name},
                 }

@@ -9,6 +9,7 @@ ROLE_DEFINITIONS = {
             "discovery.schedule.manage",
             "devices.manage",
             "diagnostics.run",
+            "connections.view",
             "logs.manage",
             "ncm.manage",
             "reports.view",
@@ -27,7 +28,13 @@ ROLE_DEFINITIONS = {
     },
     "security_analyst": {
         "label": "Güvenlik Analisti",
-        "permissions": {"diagnostics.run", "security.manage", "reports.view", "locations.view"},
+        "permissions": {
+            "diagnostics.run",
+            "connections.view",
+            "security.manage",
+            "reports.view",
+            "locations.view",
+        },
     },
     "viewer": {"label": "Salt Okunur", "permissions": set()},
     "user": {"label": "Standart Kullanıcı", "permissions": set()},

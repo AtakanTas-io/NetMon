@@ -173,8 +173,9 @@ def create_diagnostics_router(ctx) -> APIRouter:
                 "server": server_name,
                 "ts": timestamp,
             }
-        except Exception as exc:
-            return {"error": f"Hız testi başarısız: {exc}"}
+        except Exception:
+            ctx.logger.exception("[DIAGNOSTICS] Hız testi başarısız")
+            return {"error": "Hız testi tamamlanamadı."}
 
     @router.get("/api/tools/speedtest/history")
     def speedtest_history(limit: int = 15, user: dict = Depends(ctx.get_current_user)):
@@ -367,29 +368,157 @@ def create_diagnostics_router(ctx) -> APIRouter:
                 "returncode": result.returncode,
                 "ts": ctx.time.time(),
             }
-        except Exception as exc:
-            return {"error": f"Komut çalıştırılamadı: {exc}"}
+        except Exception:
+            ctx.logger.exception("[DIAGNOSTICS] Ağ komutu çalıştırılamadı")
+            return {"error": "Ağ komutu çalıştırılamadı."}
 
     @router.get("/api/diagnostics")
     def get_diagnostics(user: dict = Depends(ctx.get_current_user)):
         try:
             return ctx.diag.run_troubleshooting_wizard(ctx.PING_TARGET, ctx.DNS_DOMAIN, ctx.PING_COUNT)
-        except Exception as exc:
+        except Exception:
+            ctx.logger.exception("[DIAGNOSTICS] Sorun giderme sihirbazı çalıştırılamadı")
             return {
                 "adapter": False,
                 "gateway": False,
                 "dns": False,
                 "internet": False,
                 "issue": "Teşhis çalıştırılamadı",
-                "recommendation": str(exc),
+                "recommendation": "Sunucu günlüklerindeki trace ID ile ayrıntıyı inceleyin.",
             }
 
     @router.get("/api/flow")
     def get_flow(user: dict = Depends(ctx.get_current_user)):
         try:
             return {"steps": ctx.diag.simulate_connection_flow(), "simulated": True}
-        except Exception as exc:
-            return {"steps": [], "error": str(exc)}
+        except Exception:
+            ctx.logger.exception("[DIAGNOSTICS] Bağlantı akışı üretilemedi")
+            return {"steps": [], "error": "Bağlantı akışı şu anda üretilemiyor."}
+
+    @router.get("/api/connections/history")
+    def get_connection_history(
+        username: str | None = None,
+        process_name: str | None = None,
+        target: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        limit: str = "200",
+        user: dict = Depends(ctx.require_permission("connections.view")),
+    ):
+        try:
+            parsed_limit = int(limit)
+            parsed_since = float(since) if since not in (None, "") else None
+            parsed_until = float(until) if until not in (None, "") else None
+        except (TypeError, ValueError):
+            return JSONResponse(
+                status_code=400,
+                content={"error": "since, until ve limit sayısal olmalıdır."},
+            )
+        if parsed_limit < 1 or parsed_limit > 1000:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "limit 1 ile 1000 arasında olmalıdır."},
+            )
+        if parsed_since is not None and parsed_until is not None and parsed_since > parsed_until:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "since değeri until değerinden büyük olamaz."},
+            )
+
+        query = (
+            "SELECT id,username,process_name,local_ip,remote_ip,remote_port,protocol,"
+            "direction,status,resolved_hostname,first_seen,last_seen,closed_at "
+            "FROM connections WHERE 1=1"
+        )
+        params: list[object] = []
+        if username and username.strip():
+            query += " AND LOWER(username)=LOWER(?)"
+            params.append(username.strip())
+        if process_name and process_name.strip():
+            query += " AND LOWER(process_name)=LOWER(?)"
+            params.append(process_name.strip())
+        if target and target.strip():
+            query += " AND (LOWER(remote_ip) LIKE LOWER(?) OR LOWER(COALESCE(resolved_hostname, '')) LIKE LOWER(?))"
+            target_pattern = f"%{target.strip()}%"
+            params.extend((target_pattern, target_pattern))
+        if parsed_since is not None:
+            query += " AND last_seen>=?"
+            params.append(parsed_since)
+        if parsed_until is not None:
+            query += " AND first_seen<=?"
+            params.append(parsed_until)
+        query += " ORDER BY last_seen DESC, id DESC LIMIT ?"
+        params.append(parsed_limit)
+
+        conn = ctx.db_conn()
+        try:
+            rows = conn.execute(query, params).fetchall()
+        finally:
+            conn.close()
+        fields = (
+            "id",
+            "username",
+            "process_name",
+            "local_ip",
+            "remote_ip",
+            "remote_port",
+            "protocol",
+            "direction",
+            "status",
+            "resolved_hostname",
+            "first_seen",
+            "last_seen",
+            "closed_at",
+        )
+        connections = [dict(zip(fields, row)) for row in rows]
+        return {"connections": connections, "count": len(connections), "limit": parsed_limit}
+
+    @router.get("/api/connections/anomalies")
+    def get_connection_anomalies(
+        limit: int = 100,
+        user: dict = Depends(ctx.require_permission("connections.view")),
+    ):
+        parsed_limit = max(1, min(limit, 1000))
+        conn = ctx.db_conn()
+        try:
+            rows = conn.execute(
+                """
+                SELECT ts,level,message,source
+                FROM alerts
+                WHERE LOWER(COALESCE(source, ''))='connections'
+                ORDER BY ts DESC
+                LIMIT ?
+                """,
+                (parsed_limit,),
+            ).fetchall()
+        finally:
+            conn.close()
+        return {
+            "anomalies": [
+                {
+                    "ts": row[0],
+                    "severity": row[1],
+                    "message": row[2],
+                    "source": row[3],
+                }
+                for row in rows
+            ]
+        }
+
+    @router.get("/api/security/firewall-decisions")
+    def get_firewall_decisions(
+        limit: int = 100,
+        user: dict = Depends(ctx.require_permission("security.manage")),
+    ):
+        if ctx.platform.system().lower() != "windows":
+            return {
+                "status": "unavailable",
+                "scope": "local_machine",
+                "source": "windows_security_event_log",
+                "decisions": [],
+                "reason": "Firewall karar geçmişi Windows gerektirir; bu veri yalnız yerel Windows makinesinden okunabilir.",
+            }
+        return ctx.diag.get_firewall_decisions(limit=limit)
 
     router.add_api_route("/api/tools/rdp", ctx.api_launch_rdp, methods=["POST"])
     router.add_api_route("/api/tools/open-downloads", ctx.open_downloads_folder, methods=["POST"])

@@ -145,10 +145,17 @@ def create_auth_router(ctx) -> APIRouter:
                 else:
                     user_dn = f"{body.username}@{ad_domain}"
                 directory_server = Server(
-                    ad_server, use_ssl=use_ssl, tls=Tls(validate=ssl.CERT_REQUIRED), get_info=ALL, connect_timeout=2,
+                    ad_server,
+                    use_ssl=use_ssl,
+                    tls=Tls(validate=ssl.CERT_REQUIRED),
+                    get_info=ALL,
+                    connect_timeout=2,
                 )
                 connection = Connection(
-                    directory_server, user=user_dn, password=body.password, auto_referrals=False,
+                    directory_server,
+                    user=user_dn,
+                    password=body.password,
+                    auto_referrals=False,
                     auto_bind=AUTO_BIND_NO_TLS if use_ssl else AUTO_BIND_TLS_BEFORE_BIND,
                 )
                 connection.unbind()

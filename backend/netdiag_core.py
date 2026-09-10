@@ -894,7 +894,9 @@ class NetworkDiagnostics:
                 continue
         return None
 
-    def _get_connected_devices_generic(self, subnet_override: str = "", fast: bool = False):
+    def _get_connected_devices_generic(
+        self, subnet_override: str = "", fast: bool = False, excluded_targets: tuple[str, ...] = ()
+    ):
         """Cross-platform L2/L3 discovery for Linux/macOS and other Unix-like OSes.
 
         This intentionally discovers only networks attached to local interfaces.
@@ -918,9 +920,21 @@ class NetworkDiagnostics:
         gateway = self._get_gateway_cross_platform()
         local_hostname = socket.gethostname() or None
 
+        def is_exempt(ip):
+            address = ipaddress.ip_address(ip)
+            for target in excluded_targets:
+                try:
+                    if "/" in target and address in ipaddress.ip_network(target, strict=False):
+                        return True
+                    if address == ipaddress.ip_address(target):
+                        return True
+                except ValueError:
+                    continue
+            return False
+
         def allowed(ip):
             obj = ipaddress.ip_address(ip)
-            return obj.version == 4 and any(obj in n for n in networks)
+            return obj.version == 4 and any(obj in n for n in networks) and not is_exempt(ip)
 
         # Read the kernel ARP/neighbour table first. This is the strongest
         # source for devices that are actually present on the local L2 segment.
@@ -949,7 +963,7 @@ class NetworkDiagnostics:
         # cap the fallback sweep; Nmap can perform the full local CIDR discovery.
         discovered = set(neigh)
         for network in networks:
-            hosts = list(network.hosts())
+            hosts = [ip for ip in network.hosts() if not is_exempt(str(ip))]
             if len(hosts) > self.MAX_SCAN_HOSTS:
                 # Avoid an accidental massive scan when Nmap is unavailable.
                 hosts = hosts[:self.MAX_SCAN_HOSTS]
@@ -974,7 +988,7 @@ class NetworkDiagnostics:
             # attached CIDR (not service scanning) to catch ICMP-filtered hosts.
             if self.nmap_available():
                 try:
-                    for ip in self.nmap_discover(network):
+                    for ip in self.nmap_discover(network, excluded_targets=excluded_targets):
                         if allowed(ip):
                             discovered.add(ip)
                 except Exception as exc:
@@ -1010,9 +1024,15 @@ class NetworkDiagnostics:
         logger.info("[DISCOVERY] Cross-platform discovery found %d devices across %d local networks.", len(results), len(networks))
         return results
 
-    def get_connected_devices(self, subnet_override: str = "", fast: bool = False):
+    def get_connected_devices(
+        self, subnet_override: str = "", fast: bool = False, excluded_targets: tuple[str, ...] = ()
+    ):
         logger.info("[DISCOVERY] Starting enhanced scan")
         if self.os_name != "Windows":
+            if excluded_targets:
+                return self._get_connected_devices_generic(
+                    subnet_override, fast=fast, excluded_targets=excluded_targets
+                )
             if fast:
                 return self._get_connected_devices_generic(subnet_override, fast=True)
             return self._get_connected_devices_generic(subnet_override)
@@ -1042,7 +1062,19 @@ class NetworkDiagnostics:
                     scan_network = local_net24
             except ValueError:
                 pass
-        hosts = list(scan_network.hosts())
+        def is_exempt(ip):
+            address = ipaddress.ip_address(ip)
+            for target in excluded_targets:
+                try:
+                    if "/" in target and address in ipaddress.ip_network(target, strict=False):
+                        return True
+                    if address == ipaddress.ip_address(target):
+                        return True
+                except ValueError:
+                    continue
+            return False
+
+        hosts = [ip for ip in scan_network.hosts() if not is_exempt(str(ip))]
         if len(hosts) > self.MAX_SCAN_HOSTS:
             hosts = hosts[: self.MAX_SCAN_HOSTS]
         logger.info("[NETWORK] Discovery subnet: %s | ICMP sweep: %s | hosts: %d", network, scan_network, len(hosts))
@@ -1123,7 +1155,7 @@ class NetworkDiagnostics:
         if nmap_exists:
             # Nmap tam CIDR'yi keşfedebilir; böylece /16 ağlarda yalnızca
             # ilk 1024 adresi değil tüm ağ kapsanabilir.
-            for ip in self.nmap_discover(scan_network):
+            for ip in self.nmap_discover(scan_network, excluded_targets=excluded_targets):
                 if valid_discovery_ip(ip):
                     raw_map.setdefault(ip, "")
 
@@ -1139,7 +1171,7 @@ class NetworkDiagnostics:
         discovered_set = set(raw_map) | set(active_arps) | set(mdns_map) | set(ssdp_map) | {ip for ip, info in ping_results.items() if info.get("success")} | {x for x in (local_ip, gateway) if x}
         discovery_ips = []
         for ip in discovered_set:
-            if valid_discovery_ip(ip):
+            if valid_discovery_ip(ip) and not is_exempt(ip):
                 discovery_ips.append(ip)
 
         def resolve(ip):
@@ -1379,6 +1411,140 @@ class NetworkDiagnostics:
             logger.warning("[FIREWALL] detection failed: %s", exc)
             return {"state": "unknown", "profiles": {}, "source": "error", "error": str(exc)[:200]}
 
+    def get_firewall_decisions(self, limit: int = 100) -> dict:
+        """Bu Windows makinesinin WFP kararlarını Security Event Log'dan oku."""
+        parsed_limit = max(1, min(int(limit), 1000))
+        base = {
+            "scope": "local_machine",
+            "source": "windows_security_event_log",
+            "decisions": [],
+        }
+        if self.os_name != "Windows":
+            return {
+                **base,
+                "status": "unavailable",
+                "reason": "Firewall karar geçmişi Windows gerektirir; bu veri yalnız yerel Windows makinesinden okunabilir.",
+            }
+
+        try:
+            import win32evtlog
+        except ImportError:
+            return {
+                **base,
+                "status": "unavailable",
+                "reason": "Windows Event Log erişimi kullanılamıyor; pywin32 kurulumu gerekli.",
+            }
+
+        event_log = None
+        raw_decisions = []
+        inspected = 0
+        max_inspected = max(1000, parsed_limit * 20)
+        try:
+            event_log = win32evtlog.OpenEventLog(None, "Security")
+            flags = win32evtlog.EVENTLOG_BACKWARDS_READ | win32evtlog.EVENTLOG_SEQUENTIAL_READ
+            while inspected < max_inspected:
+                events = win32evtlog.ReadEventLog(event_log, flags, 0)
+                if not events:
+                    break
+                for event in events:
+                    inspected += 1
+                    event_id = int(event.EventID) & 0xFFFF
+                    if event_id not in {5152, 5156, 5157}:
+                        if inspected >= max_inspected:
+                            break
+                        continue
+                    values = [str(value or "").strip() for value in (event.StringInserts or [])]
+                    values.extend([""] * max(0, 11 - len(values)))
+                    try:
+                        event_ts = float(event.TimeGenerated.timestamp())
+                    except Exception:
+                        event_ts = time.mktime(event.TimeGenerated.timetuple())
+                    filter_id = values[8] or "unknown"
+                    raw_decisions.append({
+                        "event_id": event_id,
+                        "rule_name": f"WFP filter {filter_id}" if filter_id != "unknown" else "Windows Filtering Platform",
+                        "interface": values[9] or "Windows Filtering Platform",
+                        "interface_source": "wfp_layer",
+                        "application": values[1] or None,
+                        "direction": values[2] or "unknown",
+                        "protocol": {"6": "TCP", "17": "UDP"}.get(values[7], values[7] or "unknown"),
+                        "source_address": values[3] or None,
+                        "source_port": values[4] or None,
+                        "target_address": values[5] or None,
+                        "target_port": values[6] or None,
+                        "decision": "allowed" if event_id == 5156 else "blocked",
+                        "ts": event_ts,
+                    })
+                    if len(raw_decisions) >= parsed_limit * 10:
+                        break
+                if inspected >= max_inspected or len(raw_decisions) >= parsed_limit * 10:
+                    break
+        except Exception as exc:
+            logger.warning("[FIREWALL] Security Event Log okunamadı: %s", exc)
+            return {
+                **base,
+                "status": "unavailable",
+                "reason": "Security Event Log okunamıyor. NetMon'u yönetici olarak çalıştırın ve olay günlüğü erişimini doğrulayın.",
+                "error": str(exc)[:200],
+            }
+        finally:
+            if event_log is not None:
+                try:
+                    win32evtlog.CloseEventLog(event_log)
+                except Exception:
+                    pass
+
+        if not raw_decisions:
+            return {
+                **base,
+                "status": "unavailable",
+                "reason": (
+                    "Security kanalında 5152, 5156 veya 5157 olayı bulunamadı. "
+                    "Gelişmiş Denetim İlkesi'ndeki Filtering Platform Connection ve Packet Drop denetimleri kapalı olabilir."
+                ),
+            }
+
+        grouped = {}
+        for decision in raw_decisions:
+            key = (
+                decision["rule_name"],
+                decision["interface"],
+                decision["application"],
+                decision["direction"],
+                decision["protocol"],
+                decision["source_address"],
+                decision["source_port"],
+                decision["target_address"],
+                decision["target_port"],
+                decision["decision"],
+            )
+            existing = grouped.get(key)
+            if existing:
+                existing["repeat_count"] += 1
+                existing["first_seen"] = min(existing["first_seen"], decision["ts"])
+                existing["last_seen"] = max(existing["last_seen"], decision["ts"])
+                if decision["event_id"] not in existing["event_ids"]:
+                    existing["event_ids"].append(decision["event_id"])
+                continue
+            grouped[key] = {
+                **{name: value for name, value in decision.items() if name not in {"event_id", "ts"}},
+                "event_ids": [decision["event_id"]],
+                "repeat_count": 1,
+                "first_seen": decision["ts"],
+                "last_seen": decision["ts"],
+            }
+
+        decisions = sorted(grouped.values(), key=lambda item: item["last_seen"], reverse=True)[:parsed_limit]
+        return {
+            **base,
+            "status": "measured",
+            "decisions": decisions,
+            "note": (
+                "Yalnız bu Windows makinesinin Security Event Log kayıtlarıdır. "
+                "interface alanı fiziksel NIC değil, olayın Windows Filtering Platform katmanını gösterir."
+            ),
+        }
+
     def nmap_available(self) -> bool:
         """nmap PATH'te var mı diye bakar. Binary'yi projeye gömmüyoruz,
         yalnızca kullanıcının kendi kurduğu nmap'i (varsa) çağırıyoruz."""
@@ -1387,7 +1553,7 @@ class NetworkDiagnostics:
         result = self.run_command(["nmap", "--version"])
         return result.returncode == 0
 
-    def nmap_discover(self, network) -> set[str]:
+    def nmap_discover(self, network, excluded_targets: tuple[str, ...] = ()) -> set[str]:
         """`nmap -sn SUBNET` ile host discovery. Başarısız olursa boş set
         döner (çağıran taraf ARP/ping sweep sonucuna geri düşer).
 
@@ -1398,7 +1564,11 @@ class NetworkDiagnostics:
         artık ağ boyutuna göre ölçeklenir."""
         timeout = min(90.0, max(15.0, network.num_addresses * 0.05))
         try:
-            result = self.run_command(["nmap", "-sn", str(network)], timeout=timeout)
+            command = ["nmap", "-sn"]
+            if excluded_targets:
+                command.extend(["--exclude", ",".join(excluded_targets)])
+            command.append(str(network))
+            result = self.run_command(command, timeout=timeout)
         except Exception as exc:
             logger.warning("[NMAP] host discovery failed: %s", exc)
             return set()

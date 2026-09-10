@@ -37,6 +37,7 @@ except ImportError:
     psutil = None
     HAS_PSUTIL = False
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, Header, Request, HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
@@ -48,6 +49,7 @@ try:
     from .core.access import ROLE_DEFINITIONS, has_permission, role_definition, role_permissions
     from .core.config import RUNTIME_CONFIG
     from .core.database import connect_sqlite
+    from .core.errors import api_error_response, ensure_trace_id, normalize_error_response
     from .core.operations import collect_snapshot, deliver_events, ensure_operations_schema, evaluate_rules, run_due_reports
     from .netdiag_core import NetworkDiagnostics, NetworkDiscoveryError
     from .wmi_scanner import WmiNetworkScanner
@@ -57,6 +59,7 @@ except ImportError:
     from core.access import ROLE_DEFINITIONS, has_permission, role_definition, role_permissions
     from core.config import RUNTIME_CONFIG
     from core.database import connect_sqlite
+    from core.errors import api_error_response, ensure_trace_id, normalize_error_response
     from core.operations import collect_snapshot, deliver_events, ensure_operations_schema, evaluate_rules, run_due_reports
     from netdiag_core import NetworkDiagnostics, NetworkDiscoveryError
     from wmi_scanner import WmiNetworkScanner
@@ -223,7 +226,7 @@ def _hidden_subprocess_kwargs() -> dict:
 # AYARLAR VE VERİTABANI YOLU
 # ============================================================
 DB_PATH = RUNTIME_CONFIG.db_path
-USER_DATA_DIR = RUNTIME_CONFIG.data_dir if os.environ.get("NETMON_DATA_DIR", "").strip() else Path(os.path.expanduser("~")) / ".netmon"
+USER_DATA_DIR = RUNTIME_CONFIG.data_dir
 USER_DATA_DIR.mkdir(exist_ok=True)
 INITIAL_PASSWORD_PATH = USER_DATA_DIR / "initial_admin_password.txt"
 
@@ -264,6 +267,13 @@ ANOMALY_MIN_SAMPLES = RUNTIME_CONFIG.anomaly_min_samples
 ANOMALY_MIN_BASELINE_BPS = RUNTIME_CONFIG.anomaly_min_baseline_bps
 ANOMALY_RATIO = RUNTIME_CONFIG.anomaly_ratio
 ANOMALY_COOLDOWN_SECONDS = RUNTIME_CONFIG.anomaly_cooldown_seconds
+CONNECTION_ANOMALY_COOLDOWN_SECONDS = 10 * 60
+CONNECTION_TARGET_BURST_WINDOW_SECONDS = 5 * 60
+CONNECTION_TARGET_BURST_THRESHOLD = 10
+CONNECTION_BEACON_WINDOW_SECONDS = 60 * 60
+CONNECTION_BEACON_MIN_SAMPLES = 5
+CONNECTION_BEACON_MAX_STDDEV_SECONDS = 10.0
+CONNECTION_ALERT_SOURCE = "connections"
 
 def simulated_traffic_sample():
     _sim_tick["n"] += 1
@@ -360,6 +370,27 @@ def init_db():
         )
     """)
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS connections (
+            id INTEGER PRIMARY KEY,
+            username TEXT,
+            process_name TEXT,
+            local_ip TEXT,
+            remote_ip TEXT,
+            remote_port INTEGER,
+            protocol TEXT,
+            direction TEXT,
+            status TEXT,
+            resolved_hostname TEXT,
+            first_seen REAL,
+            last_seen REAL,
+            closed_at REAL
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_connections_remote_first_seen "
+        "ON connections(remote_ip, first_seen)"
+    )
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS snapshots (
             ts REAL PRIMARY KEY,
             data TEXT
@@ -395,6 +426,64 @@ def init_db():
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_device_configs_ip ON device_configs(ip)")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS assurance_scan_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind TEXT NOT NULL,
+            started_at REAL NOT NULL,
+            finished_at REAL,
+            requested_by TEXT,
+            status TEXT NOT NULL,
+            target_count INTEGER DEFAULT 0,
+            finding_count INTEGER DEFAULT 0,
+            result_json TEXT NOT NULL DEFAULT '[]'
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_assurance_scan_runs_kind_started "
+        "ON assurance_scan_runs(kind, started_at DESC)"
+    )
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS scan_exemptions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            target TEXT UNIQUE NOT NULL,
+            reason TEXT,
+            created_by TEXT,
+            created_at REAL NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS search_documents (
+            document_id TEXT PRIMARY KEY,
+            category TEXT NOT NULL,
+            title TEXT,
+            ip TEXT,
+            mac TEXT,
+            hostname TEXT,
+            device_type TEXT,
+            vendor TEXT,
+            status TEXT,
+            last_seen REAL,
+            document_json TEXT NOT NULL,
+            updated_at REAL NOT NULL
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_search_documents_ip ON search_documents(ip)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_search_documents_hostname ON search_documents(hostname)")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS saved_searches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            query TEXT NOT NULL,
+            sort_field TEXT NOT NULL DEFAULT 'last_seen',
+            sort_order TEXT NOT NULL DEFAULT 'desc',
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+            UNIQUE(user_id, name)
+        )
+    """)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS ssl_certificates (
             ip TEXT PRIMARY KEY,
@@ -658,6 +747,8 @@ def init_db():
         conn.execute("ALTER TABLE known_devices ADD COLUMN last_packet_loss REAL")
     # Stage 4 & Port Alarm & Subnet Tracking: kanıt zamanlarını ve durum ayrımını sakla.
     for col, sql_type in (
+        ("owner", "TEXT DEFAULT ''"),
+        ("notes", "TEXT DEFAULT ''"),
         ("last_arp_seen", "REAL"),
         ("last_icmp_seen", "REAL"),
         ("last_hostname_seen", "REAL"),
@@ -805,6 +896,117 @@ def _check_traffic_anomaly(now: float, total_bps: float, conn: sqlite3.Connectio
         manager.broadcast_threadsafe({"type": "alert", "id": cursor.lastrowid, "ts": now, "level": "warning",
                                        "message": message, "simulated": False})
 
+
+def _check_connection_anomalies(now: float, conn: sqlite3.Connection) -> list[dict]:
+    """Bağlantı geçmişinden basit, eşik tabanlı sinyaller üret."""
+    recent_messages = [
+        str(row[0] or "")
+        for row in conn.execute(
+            "SELECT message FROM alerts WHERE source=? AND ts>=?",
+            (CONNECTION_ALERT_SOURCE, now - CONNECTION_ANOMALY_COOLDOWN_SECONDS),
+        ).fetchall()
+    ]
+    generated = []
+
+    def emit(level: str, signature: str, message: str):
+        if any(existing == signature or existing.startswith(f"{signature} ") for existing in recent_messages):
+            return
+        alert_ts = now + len(generated) * 0.000001
+        while conn.execute("SELECT 1 FROM alerts WHERE ts=?", (alert_ts,)).fetchone():
+            alert_ts += 0.000001
+        full_message = message
+        cursor = conn.execute(
+            "INSERT INTO alerts (ts, level, message, source) VALUES (?, ?, ?, ?)",
+            (alert_ts, level, full_message, CONNECTION_ALERT_SOURCE),
+        )
+        recent_messages.append(full_message)
+        alert = {
+            "id": cursor.lastrowid,
+            "ts": alert_ts,
+            "level": level,
+            "message": full_message,
+            "source": CONNECTION_ALERT_SOURCE,
+        }
+        generated.append(alert)
+        manager.broadcast_threadsafe({"type": "alert", **alert, "simulated": False})
+
+    new_targets = conn.execute(
+        """
+        SELECT DISTINCT current.remote_ip
+        FROM connections AS current
+        WHERE current.first_seen=?
+          AND current.remote_ip IS NOT NULL
+          AND current.remote_ip<>''
+          AND NOT EXISTS (
+              SELECT 1 FROM connections AS older
+              WHERE older.remote_ip=current.remote_ip
+                AND older.first_seen<current.first_seen
+          )
+        """,
+        (now,),
+    ).fetchall()
+    for row in new_targets:
+        remote_ip = str(row[0])
+        emit(
+            "info",
+            f"İlk kez görülen bağlantı hedefi: {remote_ip}.",
+            f"İlk kez görülen bağlantı hedefi: {remote_ip}.",
+        )
+
+    burst_rows = conn.execute(
+        """
+        SELECT username, COUNT(DISTINCT remote_ip)
+        FROM connections
+        WHERE first_seen>=?
+          AND COALESCE(username, '')<>''
+          AND COALESCE(remote_ip, '')<>''
+        GROUP BY username
+        HAVING COUNT(DISTINCT remote_ip)>?
+        """,
+        (now - CONNECTION_TARGET_BURST_WINDOW_SECONDS, CONNECTION_TARGET_BURST_THRESHOLD),
+    ).fetchall()
+    for username, target_count in burst_rows:
+        emit(
+            "warning",
+            f"Kısa sürede çok sayıda hedef: kullanıcı={username}.",
+            f"Kısa sürede çok sayıda hedef: kullanıcı={username}. "
+            f"Son {CONNECTION_TARGET_BURST_WINDOW_SECONDS // 60} dakikada "
+            f"{target_count} farklı uzak hedef görüldü.",
+        )
+
+    beacon_rows = conn.execute(
+        """
+        SELECT username, remote_ip, first_seen
+        FROM connections
+        WHERE first_seen>=?
+          AND COALESCE(username, '')<>''
+          AND COALESCE(remote_ip, '')<>''
+        ORDER BY username, remote_ip, first_seen
+        """,
+        (now - CONNECTION_BEACON_WINDOW_SECONDS,),
+    ).fetchall()
+    timestamps_by_pair: dict[tuple[str, str], set[float]] = {}
+    for username, remote_ip, first_seen in beacon_rows:
+        timestamps_by_pair.setdefault((str(username), str(remote_ip)), set()).add(float(first_seen))
+    for (username, remote_ip), timestamp_set in timestamps_by_pair.items():
+        timestamps = sorted(timestamp_set)
+        if len(timestamps) < CONNECTION_BEACON_MIN_SAMPLES:
+            continue
+        intervals = [right - left for left, right in zip(timestamps, timestamps[1:])]
+        mean_interval = sum(intervals) / len(intervals)
+        variance = sum((interval - mean_interval) ** 2 for interval in intervals) / len(intervals)
+        stddev = math.sqrt(variance)
+        if stddev < CONNECTION_BEACON_MAX_STDDEV_SECONDS:
+            emit(
+                "warning",
+                f"Düzenli aralıklı bağlantı: kullanıcı={username}, hedef={remote_ip}.",
+                f"Düzenli aralıklı bağlantı: kullanıcı={username}, hedef={remote_ip}. "
+                f"Standart sapma {stddev:.1f} sn.",
+            )
+
+    conn.commit()
+    return generated
+
 # ============================================================
 # ARKA PLAN THREAD: TRAFİK ÖRNEKLEME
 # ============================================================
@@ -863,6 +1065,150 @@ def traffic_sampler_loop(stop_event: threading.Event):
 
         if now - last_prune > 3600:
             _prune_operational_data(conn, now)
+            last_prune = now
+
+    conn.close()
+
+
+_CONNECTION_DNS_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=4,
+    thread_name_prefix="netmon-connection-rdns",
+)
+
+
+def _resolve_connection_hostname(remote_ip: str, timeout: float = 0.25) -> str | None:
+    """Ters DNS sorgusunu örnekleme döngüsünü bekletmeden kısa sürede sonuçlandır."""
+    try:
+        future = _CONNECTION_DNS_EXECUTOR.submit(socket.gethostbyaddr, remote_ip)
+        hostname = future.result(timeout=timeout)[0]
+        return str(hostname).strip().rstrip(".") or None
+    except Exception:
+        return None
+
+
+def _store_connection_sample(conn: sqlite3.Connection, sessions: list[dict], now: float) -> dict:
+    """Tek aktif bağlantı örneğini geçmiş tablosuna uygula."""
+    current: dict[tuple[str, str, int, str], dict] = {}
+    for session in sessions:
+        remote_ip = str(session.get("remote_ip") or "").strip()
+        if not remote_ip:
+            continue
+        username = str(session.get("process_username") or session.get("username") or "").strip()
+        process_name = str(session.get("process_name") or session.get("local_process_name") or "").strip()
+        try:
+            remote_port = int(session.get("remote_port") or 0)
+        except (TypeError, ValueError):
+            remote_port = 0
+        key = (username, remote_ip, remote_port, process_name)
+        current[key] = {
+            "username": username,
+            "process_name": process_name,
+            "local_ip": str(session.get("local_ip") or "").strip(),
+            "remote_ip": remote_ip,
+            "remote_port": remote_port,
+            "protocol": str(session.get("protocol") or "TCP").strip(),
+            "direction": str(session.get("direction") or "unknown").strip(),
+            "status": str(session.get("state") or session.get("status") or "").strip(),
+        }
+
+    active_rows = conn.execute(
+        """
+        SELECT id, username, remote_ip, remote_port, process_name, resolved_hostname
+        FROM connections
+        WHERE closed_at IS NULL
+        """
+    ).fetchall()
+    active_by_key = {
+        (
+            str(row[1] or ""),
+            str(row[2] or ""),
+            int(row[3] or 0),
+            str(row[4] or ""),
+        ): row
+        for row in active_rows
+    }
+
+    inserted = 0
+    updated = 0
+    for key, sample in current.items():
+        existing = active_by_key.get(key)
+        hostname = None
+        if not existing or not existing[5]:
+            hostname = _resolve_connection_hostname(sample["remote_ip"])
+        if existing:
+            conn.execute(
+                """
+                UPDATE connections
+                SET local_ip=?, protocol=?, direction=?, status=?,
+                    resolved_hostname=COALESCE(resolved_hostname, ?), last_seen=?
+                WHERE id=?
+                """,
+                (
+                    sample["local_ip"],
+                    sample["protocol"],
+                    sample["direction"],
+                    sample["status"],
+                    hostname,
+                    now,
+                    existing[0],
+                ),
+            )
+            updated += 1
+        else:
+            conn.execute(
+                """
+                INSERT INTO connections (
+                    username, process_name, local_ip, remote_ip, remote_port,
+                    protocol, direction, status, resolved_hostname,
+                    first_seen, last_seen, closed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                """,
+                (
+                    sample["username"],
+                    sample["process_name"],
+                    sample["local_ip"],
+                    sample["remote_ip"],
+                    sample["remote_port"],
+                    sample["protocol"],
+                    sample["direction"],
+                    sample["status"],
+                    hostname,
+                    now,
+                    now,
+                ),
+            )
+            inserted += 1
+
+    closed = 0
+    for key, row in active_by_key.items():
+        if key not in current:
+            conn.execute("UPDATE connections SET closed_at=? WHERE id=?", (now, row[0]))
+            closed += 1
+    conn.commit()
+    return {"inserted": inserted, "updated": updated, "closed": closed}
+
+
+def connections_sampler_loop(stop_event: threading.Event):
+    conn = db_conn()
+    last_prune = 0
+
+    while not stop_event.is_set():
+        time.sleep(TRAFFIC_SAMPLE_INTERVAL)
+        now = time.time()
+        sim = simulation_state["active"] and SCENARIOS.get(
+            simulation_state["scenario"], {}
+        ).get("affects") in ("traffic", "both")
+
+        if not sim:
+            _store_connection_sample(conn, get_active_sessions(), now)
+        _check_connection_anomalies(now, conn)
+
+        if now - last_prune > 3600:
+            conn.execute(
+                "DELETE FROM connections WHERE closed_at IS NOT NULL AND closed_at < ?",
+                (now - 30 * 24 * 3600,),
+            )
+            conn.commit()
             last_prune = now
 
     conn.close()
@@ -1152,6 +1498,7 @@ async def lifespan(app: FastAPI):
     if HAS_PSUTIL:
         workers.extend([
             threading.Thread(target=traffic_sampler_loop, args=(_stop_event,), daemon=True),
+            threading.Thread(target=connections_sampler_loop, args=(_stop_event,), daemon=True),
             threading.Thread(target=system_stats_loop, args=(_stop_event,), daemon=True),
         ])
     else:
@@ -1181,7 +1528,10 @@ _server_started_at = time.time()
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
+    trace_id = ensure_trace_id(request)
+    started_at = time.monotonic()
     response = await call_next(request)
+    response = await normalize_error_response(request, response)
     if request.url.path.startswith("/api/"):
         now = time.time()
         with _request_metrics_lock:
@@ -1193,8 +1543,18 @@ async def security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-    if request.url.path.startswith("/api/"):
+    if request.url.path.startswith("/api/") or request.url.path.startswith("/static/"):
         response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Trace-ID"] = trace_id
+    if request.url.path.startswith("/api/"):
+        logger.info(
+            "trace_id=%s method=%s path=%s status=%s duration_ms=%.1f",
+            trace_id,
+            request.method,
+            request.url.path,
+            response.status_code,
+            (time.monotonic() - started_at) * 1000,
+        )
     return response
 
 # ============================================================
@@ -1212,8 +1572,56 @@ class _AuthError(Exception):
 
 
 @app.exception_handler(_AuthError)
-async def _auth_error_handler(request, exc: _AuthError):
-    return JSONResponse(status_code=exc.status_code, content={"error": exc.message})
+async def _auth_error_handler(request: Request, exc: _AuthError):
+    return api_error_response(request, exc.status_code, message=exc.message)
+
+
+@app.exception_handler(HTTPException)
+async def _http_error_handler(request: Request, exc: HTTPException):
+    message = exc.detail if isinstance(exc.detail, str) else None
+    return api_error_response(request, exc.status_code, message=message, detail=exc.detail)
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_error_handler(request: Request, exc: RequestValidationError):
+    detail = [
+        {"type": item.get("type"), "location": list(item.get("loc") or ()), "message": item.get("msg")}
+        for item in exc.errors()
+    ]
+    return api_error_response(
+        request,
+        422,
+        code="VALIDATION_ERROR",
+        message="İstek alanları doğrulanamadı.",
+        detail=detail,
+    )
+
+
+@app.exception_handler(Exception)
+async def _unexpected_error_handler(request: Request, exc: Exception):
+    trace_id = ensure_trace_id(request)
+    logger.exception("trace_id=%s işlenmeyen API hatası", trace_id, exc_info=exc)
+    return api_error_response(request, 500, code="INTERNAL_ERROR")
+
+
+@app.get("/healthz", include_in_schema=False)
+def healthz():
+    """Harici izleme için hızlı, kimlik doğrulamasız ve hassas veri içermeyen sağlık kontrolü."""
+    conn = None
+    try:
+        conn = db_conn()
+        conn.execute("SELECT 1").fetchone()
+    except Exception as exc:
+        logger.warning("Sağlık kontrolünde veritabanı kullanılamıyor: %s", type(exc).__name__)
+        return JSONResponse(status_code=503, content={"status": "degraded", "database": "unavailable"})
+    finally:
+        if conn is not None:
+            conn.close()
+    return {
+        "status": "ok",
+        "database": "ready",
+        "uptime_seconds": max(0, round(time.time() - _server_started_at)),
+    }
 
 
 SESSION_TTL_SECONDS = RUNTIME_CONFIG.session_ttl_seconds
@@ -1387,6 +1795,7 @@ def require_permission(permission: str):
             label = _role_definition(user.get("role", "viewer"))["label"]
             raise _AuthError(403, f"Bu işlem için '{permission}' izni gerekiyor. Mevcut rol: {label}.")
         return user
+    setattr(dependency, "required_permission", permission)
     return dependency
 
 
@@ -1634,6 +2043,9 @@ def filter_devices_by_scope(devices: list[dict], scope: str = "current_network",
 
 def _discover_configured_devices() -> list[dict]:
     """Virgülle ayrılmış birden fazla subnet'i tarayıp IP bazında birleştir."""
+    exemption_conn = db_conn()
+    excluded_targets = tuple(row[0] for row in exemption_conn.execute("SELECT target FROM scan_exemptions").fetchall())
+    exemption_conn.close()
     subnets = [item.split("=")[0].strip() for item in (SUBNET_OVERRIDE or "").split(",") if item.strip()]
     if not subnets:
         # Discover every locally attached private IPv4 network instead of
@@ -1647,7 +2059,7 @@ def _discover_configured_devices() -> list[dict]:
         if auto_networks:
             subnets = auto_networks
         else:
-            devices = diag.get_connected_devices(fast=True)
+            devices = diag.get_connected_devices(fast=True, excluded_targets=excluded_targets)
             try:
                 fallback_cidr = diag.get_network_context().get("cidr")
             except Exception:
@@ -1668,7 +2080,9 @@ def _discover_configured_devices() -> list[dict]:
         if not _is_allowed_inventory_network(parsed):
             raise NetworkDiscoveryError(f"Yalnızca yerel/özel IPv4 subnetleri taranabilir: {subnet}")
         try:
-            discovered_devices = diag.get_connected_devices(subnet_override=str(parsed), fast=True)
+            discovered_devices = diag.get_connected_devices(
+                subnet_override=str(parsed), fast=True, excluded_targets=excluded_targets
+            )
         except TypeError:
             # Test doubles / older discovery adapters may not expose fast yet.
             discovered_devices = diag.get_connected_devices(subnet_override=str(parsed))
@@ -1770,8 +2184,9 @@ def _cached_firewall_status() -> dict:
         return _firewall_cache["data"]
     try:
         data = diag.get_firewall_status()
-    except Exception as exc:
-        data = {"state": "unknown", "profiles": {}, "source": "error", "error": str(exc)[:200]}
+    except Exception:
+        logger.exception("[FIREWALL] Güvenlik duvarı durumu alınamadı")
+        data = {"state": "unknown", "profiles": {}, "source": "error", "error": "Durum bilgisi alınamadı."}
     _firewall_cache["data"] = data
     _firewall_cache["ts"] = now
     return data
@@ -1790,8 +2205,9 @@ def get_network_info(user: dict = Depends(get_current_user)):
                 "mac": "Yerel ağ arayüzünün donanımsal adresidir; cihaz kimliğini takip etmede IP'den daha kararlıdır."
             }
         }
-    except Exception as exc:
-        return {"error": str(exc)}
+    except Exception:
+        logger.exception("[NETWORK] Ağ bağlamı alınamadı")
+        return {"error": "Ağ bağlamı şu anda alınamıyor."}
 
 def get_overview(
     scope: str = "current_network",
@@ -1840,8 +2256,17 @@ def get_overview(
                 "all_sockets": len(inet_connections),
                 "supported": True,
             }
-        except (OSError, RuntimeError, psutil.Error) as exc:
-            connection_stats = {"tcp": 0, "listen": 0, "udp": 0, "total": 0, "all_sockets": 0, "supported": False, "error": str(exc)}
+        except (OSError, RuntimeError, psutil.Error):
+            logger.exception("[NETWORK] Socket sayaçları okunamadı")
+            connection_stats = {
+                "tcp": 0,
+                "listen": 0,
+                "udp": 0,
+                "total": 0,
+                "all_sockets": 0,
+                "supported": False,
+                "error": "Socket bilgisi okunamadı.",
+            }
     else:
         connection_stats = {"tcp": 0, "listen": 0, "udp": 0, "total": 0, "all_sockets": 0, "supported": False}
     internet_test = _last_status.get("internet_test") or {}
@@ -2414,6 +2839,7 @@ def list_known_devices(user: dict = Depends(get_current_user)):
     }
 
 
+INVENTORY_PAYLOAD_SCHEMA_VERSION = 2
 _local_wmi_cache = {"ts": 0, "data": None}
 _mac_to_switch_port: dict[str, str] = {}
 
@@ -2671,6 +3097,9 @@ def _sync_normalized_inventory(dev: dict, inventory: dict, source: str | None = 
 def _persist_device_inventory(dev: dict, inventory: dict, source: str | None = None):
     if not inventory or inventory.get("status") != "Success" or not dev.get("ip"):
         return
+    # Eski başarılı kayıtlar yalnız özet donanımı içeriyordu. Sürüm işareti,
+    # ayrıntılı WMI/WinRM/SSH/SNMP sonucunu özet kayıttan ayırır.
+    inventory["inventory_schema_version"] = INVENTORY_PAYLOAD_SCHEMA_VERSION
     source = source or inventory.get("inventory_source") or "Verified"
     inferred_type = _apply_verified_inventory_identity(dev, inventory, source)
     conn = db_conn()
@@ -2723,6 +3152,15 @@ def _load_device_inventory(dev: dict):
         return row[0], json.loads(row[1])
     except (TypeError, json.JSONDecodeError):
         return None, None
+
+
+def _inventory_payload_needs_upgrade(inventory: dict | None) -> bool:
+    if not isinstance(inventory, dict) or inventory.get("status") != "Success":
+        return True
+    try:
+        return int(inventory.get("inventory_schema_version") or 0) < INVENTORY_PAYLOAD_SCHEMA_VERSION
+    except (TypeError, ValueError):
+        return True
 
 
 def _get_local_wmi_data():
@@ -2832,7 +3270,11 @@ def _enrich_device_inventory(dev: dict, allow_deep: bool = False):
             dev["deep_inventory"] = persisted
             dev["fallback_inventory"] = persisted
 
-    if is_local and (not dev.get("wmi_inventory") or dev.get("wmi_inventory", {}).get("status") != "Success"):
+    if is_local and (
+        not dev.get("wmi_inventory")
+        or dev.get("wmi_inventory", {}).get("status") != "Success"
+        or _inventory_payload_needs_upgrade(persisted)
+    ):
         local_wmi = _get_local_wmi_data()
         if local_wmi:
             if local_wmi.get("status") in ("Success", "Partial"):
@@ -3305,127 +3747,323 @@ def export_devices_csv(token: str | None = None, authorization: str | None = Hea
         logger.exception("[EXPORT] Excel/CSV export failed")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
-def export_devices_save_to_disk(user: dict = Depends(get_current_user)):
-    """Masaüstü (Desktop) veya İndirilenler (Downloads) klasörüne doğrudan dosyayı kaydeder ve Windows Gezgini'nde açar."""
+def _downloads_directory() -> Path:
+    """Windows'un gerçek (yönlendirilmiş/OneDrive dahil) İndirilenler klasörünü bul."""
+    candidates: list[Path] = []
+    if platform.system() == "Windows":
+        try:
+            import winreg
+
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders",
+            ) as key:
+                raw, _ = winreg.QueryValueEx(key, "{374DE290-123F-4565-9164-39C4925E467B}")
+                candidates.append(Path(os.path.expandvars(str(raw))))
+        except (OSError, ImportError):
+            pass
+    home = Path(os.path.expanduser("~"))
+    candidates.extend((home / "Downloads", home / "OneDrive" / "Downloads", home / "Desktop", home))
+    for candidate in candidates:
+        try:
+            if candidate.is_dir():
+                return candidate.resolve()
+        except OSError:
+            continue
+    raise OSError("Kullanılabilir İndirilenler veya Masaüstü klasörü bulunamadı.")
+
+
+def _devices_for_export() -> list[dict]:
+    devices = list(_devices_cache.get("data") or [])
+    conn = db_conn()
+    conn.row_factory = sqlite3.Row
     try:
-        devices = list(_devices_cache.get("data") or [])
         if not devices:
-            conn = db_conn()
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT mac, friendly_name, hostname, device_type, first_seen, last_seen, last_ip,
-                       last_vendor, last_network, connectivity_status, identification_status, open_ports
-                FROM known_devices
-                ORDER BY last_network, last_ip
-            """)
-            rows = cursor.fetchall()
-            conn.close()
+            rows = conn.execute(
+                """SELECT mac,friendly_name,hostname,device_type,first_seen,last_seen,last_ip,
+                last_vendor,last_network,connectivity_status,identification_status,open_ports
+                FROM known_devices ORDER BY last_network,last_ip"""
+            ).fetchall()
             devices = [
                 {
-                    "mac": r["mac"], "friendly_name": r["friendly_name"], "hostname": r["hostname"],
-                    "type": r["device_type"], "first_seen": r["first_seen"], "last_seen": r["last_seen"],
-                    "ip": r["last_ip"], "vendor": r["last_vendor"], "network": r["last_network"],
-                    "status": r["connectivity_status"], "open_ports": r["open_ports"]
+                    "mac": row["mac"], "friendly_name": row["friendly_name"], "hostname": row["hostname"],
+                    "type": row["device_type"], "first_seen": row["first_seen"], "last_seen": row["last_seen"],
+                    "ip": row["last_ip"], "vendor": row["last_vendor"], "network": row["last_network"],
+                    "status": row["connectivity_status"], "open_ports": row["open_ports"],
                 }
-                for r in rows
+                for row in rows
             ]
+        persisted = {}
+        for row in conn.execute("SELECT ip,source,payload FROM device_inventory").fetchall():
+            try:
+                persisted[row["ip"]] = (row["source"], json.loads(row["payload"]))
+            except (TypeError, json.JSONDecodeError):
+                continue
+    finally:
+        conn.close()
+    for device in devices:
+        if device.get("wmi_inventory") or device.get("fallback_inventory"):
+            continue
+        source_payload = persisted.get(device.get("ip"))
+        if source_payload:
+            source, payload = source_payload
+            key = "wmi_inventory" if any(tag in str(source).lower() for tag in ("wmi", "winrm", "local")) else "fallback_inventory"
+            device[key] = payload
+    return devices
 
-        output = io.StringIO()
-        writer = csv.writer(output, delimiter=";", quoting=csv.QUOTE_MINIMAL)
-        writer.writerow([
-            "IP Adresi", "MAC Adresi", "Cihaz Adı / Hostname", "Üretici (Vendor)",
-            "Cihaz Tipi", "Durum", "İşletim Sistemi", "İşlemci (CPU)", "Bellek (RAM)",
-            "Diskler", "Antivirüs", "Güvenlik Duvarı", "Açık Portlar", "Ağ / Alt Ağ", "Son Görülme"
+
+def _build_devices_xlsx(devices: list[dict], include_connections: bool) -> tuple[bytes, int]:
+    from io import BytesIO
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.worksheet.table import Table, TableStyleInfo
+
+    workbook = Workbook()
+    workbook.remove(workbook.active)
+    navy, blue, slate, white = "0F172A", "2563EB", "475569", "FFFFFF"
+    thin_rule = Side(style="thin", color="E2E8F0")
+
+    def create_data_sheet(title: str, subtitle: str, headers: list[str], widths: list[float], tab_color: str):
+        sheet = workbook.create_sheet(title)
+        sheet.sheet_properties.tabColor = tab_color
+        sheet.sheet_view.showGridLines = False
+        sheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
+        sheet["A1"] = title
+        sheet["A1"].font = Font(name="Aptos Display", size=18, bold=True, color=navy)
+        sheet["A1"].alignment = Alignment(vertical="center")
+        sheet.row_dimensions[1].height = 30
+        sheet.merge_cells(start_row=2, start_column=1, end_row=2, end_column=len(headers))
+        sheet["A2"] = subtitle
+        sheet["A2"].font = Font(name="Aptos", size=10, italic=True, color=slate)
+        sheet["A2"].alignment = Alignment(vertical="center")
+        sheet.row_dimensions[2].height = 22
+        sheet.append([])
+        sheet.append(headers)
+        sheet.row_dimensions[4].height = 28
+        for cell in sheet[4]:
+            cell.font = Font(name="Aptos", size=10, bold=True, color=white)
+            cell.fill = PatternFill("solid", fgColor=navy)
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell.border = Border(bottom=Side(style="medium", color=blue))
+        for index, width in enumerate(widths, start=1):
+            sheet.column_dimensions[chr(64 + index)].width = width
+        sheet.freeze_panes = "A5"
+        sheet.auto_filter.ref = f"A4:{chr(64 + len(headers))}4"
+        return sheet
+
+    def finish_table(sheet, table_name: str):
+        if sheet.max_row < 5:
+            sheet["A5"] = "Kayıt bulunamadı"
+            sheet["A5"].font = Font(name="Aptos", italic=True, color=slate)
+            sheet.merge_cells(start_row=5, start_column=1, end_row=5, end_column=sheet.max_column)
+            return
+        table = Table(displayName=table_name, ref=f"A4:{chr(64 + sheet.max_column)}{sheet.max_row}")
+        table.tableStyleInfo = TableStyleInfo(
+            name="TableStyleMedium2", showFirstColumn=False, showLastColumn=False,
+            showRowStripes=True, showColumnStripes=False,
+        )
+        sheet.add_table(table)
+        for row in sheet.iter_rows(min_row=5):
+            sheet.row_dimensions[row[0].row].height = 22
+            for cell in row:
+                cell.font = Font(name="Aptos", size=10, color=navy)
+                cell.alignment = Alignment(vertical="center", wrap_text=False)
+                cell.border = Border(bottom=thin_rule)
+
+    inventory_sheet = create_data_sheet(
+        "Cihaz Envanteri",
+        "Kimlik, erişilebilirlik ve keşif kaynağı · filtrelemek için sütun başlıklarını kullanın",
+        ["IP Adresi", "MAC Adresi", "Cihaz Adı", "Üretici", "Cihaz Tipi", "Durum", "Ağ / Alt Ağ", "Açık Portlar", "Son Görülme", "Envanter Kaynağı"],
+        [16, 20, 26, 24, 17, 18, 20, 24, 20, 20],
+        blue,
+    )
+    details_sheet = create_data_sheet(
+        "Donanım ve Yazılım",
+        "Yetkili envanter taramalarından alınan sistem, donanım, güvenlik ve lisans özeti",
+        ["IP Adresi", "Cihaz Adı", "İşletim Sistemi", "İşlemci", "Bellek (GB)", "Ekran Kartı", "Diskler", "Antivirüs", "Güvenlik Duvarı", "Windows Lisansı", "Aktif Kullanıcı"],
+        [16, 24, 28, 34, 15, 28, 34, 24, 20, 22, 24],
+        "0EA5E9",
+    )
+    online_count = offline_count = detailed_count = 0
+    for device in devices:
+        inventory = device.get("wmi_inventory") or device.get("deep_inventory") or device.get("fallback_inventory") or {}
+        hardware = inventory.get("hardware") or {}
+        software = inventory.get("software") or {}
+        security = inventory.get("security") or {}
+        license_data = software.get("license") or {}
+        disks = inventory.get("storage") or []
+        disk_parts = []
+        for disk in disks:
+            if not isinstance(disk, dict):
+                continue
+            total = disk.get("total_gb")
+            free = disk.get("free_gb")
+            total_text = f"{float(total):g}" if isinstance(total, (int, float)) else str(total or 0)
+            free_text = f"{float(free):g}" if isinstance(free, (int, float)) else str(free or 0)
+            disk_parts.append(f"{disk.get('drive_letter', 'Disk')} {total_text} GB ({free_text} GB boş)")
+        disk_text = " · ".join(disk_parts) or "-"
+        ports = (device.get("classification") or {}).get("open_ports") or device.get("open_ports") or []
+        if isinstance(ports, str):
+            try:
+                ports = json.loads(ports)
+            except json.JSONDecodeError:
+                ports = []
+        status = {
+            "online": "Çevrimiçi", "offline": "Çevrimdışı", "stale": "Çevrimdışı",
+            "discovered": "Yanıt Doğrulanamadı",
+        }.get(device.get("status"), "Belirsiz")
+        online_count += int(status == "Çevrimiçi")
+        offline_count += int(status == "Çevrimdışı")
+        detailed_count += int(bool(inventory))
+        last_seen = device.get("last_seen") or device.get("ts")
+        hostname = device.get("hostname") or device.get("friendly_name") or "-"
+        inventory_sheet.append([
+            device.get("ip") or "-", device.get("mac") or "-",
+            hostname, device.get("vendor") or "Bilinmiyor", device.get("type") or "unknown", status,
+            device.get("network") or device.get("last_network") or "-", ", ".join(map(str, ports)) if ports else "-",
+            datetime.fromtimestamp(last_seen) if last_seen else None,
+            inventory.get("inventory_source") or "Ağ keşfi",
         ])
-
-        import datetime
-        for d in devices:
-            inv = d.get("wmi_inventory") or d.get("fallback_inventory") or {}
-            hw = inv.get("hardware") or {}
-            sw = inv.get("software") or {}
-            sec = inv.get("security") or {}
-            disks = inv.get("storage") or []
-            disk_txt = " · ".join(f"{ds.get('drive_letter', 'Disk')}: {ds.get('total_gb', 0)}GB" for ds in disks) if isinstance(disks, list) and disks else "-"
-
-            raw_ports = (d.get("classification") or {}).get("open_ports") or d.get("open_ports") or []
-            if isinstance(raw_ports, str):
-                try: raw_ports = json.loads(raw_ports)
-                except Exception: raw_ports = []
-            ports_txt = ", ".join(map(str, raw_ports)) if raw_ports else "-"
-
-            st = d.get("status") or "unknown"
-            if st == "online": st_text = "Çevrimiçi"
-            elif st in ("offline", "stale"): st_text = "Çevrimdışı"
-            elif st == "discovered": st_text = "Yanıt Doğrulanamadı"
-            else: st_text = "Belirsiz"
-
-            last_ts = d.get("last_seen") or d.get("ts")
-            last_date = datetime.datetime.fromtimestamp(last_ts).strftime('%Y-%m-%d %H:%M:%S') if last_ts else "-"
-
-            writer.writerow([
-                d.get("ip") or "-",
-                d.get("mac") or "-",
-                d.get("hostname") or d.get("friendly_name") or "-",
-                d.get("vendor") or "Bilinmiyor",
-                d.get("type") or "unknown",
-                st_text,
-                sw.get("os_name") or d.get("os_fingerprint") or "-",
-                hw.get("cpu_model") or "-",
-                f"{hw.get('ram_gb')} GB" if hw.get("ram_gb") else "-",
-                disk_txt,
-                sec.get("antivirus") or "Bilinmiyor",
-                sec.get("firewall") or "Bilinmiyor",
-                ports_txt,
-                d.get("network") or d.get("last_network") or "-",
-                last_date
+        if inventory:
+            details_sheet.append([
+                device.get("ip") or "-", hostname, software.get("os_name") or device.get("os_fingerprint") or "-",
+                hardware.get("cpu_model") or "-", hardware.get("ram_gb"), hardware.get("gpu") or "-", disk_text,
+                security.get("antivirus") or "Bilinmiyor", security.get("firewall") or "Bilinmiyor",
+                license_data.get("status") or "Bilinmiyor", software.get("active_user") or inventory.get("active_user") or "-",
             ])
 
-        csv_bytes = output.getvalue().encode("utf-8-sig")
+    finish_table(inventory_sheet, "DeviceInventory")
+    finish_table(details_sheet, "HardwareSoftware")
+    for cell in inventory_sheet["I"][4:]:
+        if isinstance(cell.value, datetime):
+            cell.number_format = "yyyy-mm-dd hh:mm:ss"
+    for cell in details_sheet["E"][4:]:
+        if isinstance(cell.value, (int, float)):
+            cell.number_format = "0.0"
 
-        # Determine target folders
-        home_dir = os.path.expanduser("~")
-        downloads_dir = os.path.join(home_dir, "Downloads")
-        desktop_dir = os.path.join(home_dir, "Desktop")
+    connection_count = 0
+    if include_connections:
+        history = create_data_sheet(
+            "Bağlantı Geçmişi",
+            f"Son {RETENTION_HOURS} saat · işletim sistemi soket tablosu · içerik veya parola kaydı içermez",
+            ["Kullanıcı/Hesap", "Uygulama/İşlem", "Yerel IP", "Uzak Hedef", "DNS Eşleşmesi", "Port", "Protokol", "Yön", "Durum", "İlk Görülme", "Son Görülme", "Kapanma", "Kanıt Kaynağı"],
+            [24, 25, 16, 18, 30, 10, 11, 13, 18, 20, 20, 20, 28],
+            "14B8A6",
+        )
+        since = time.time() - RETENTION_HOURS * 3600
+        conn = db_conn()
+        try:
+            rows = conn.execute(
+                """SELECT username,process_name,local_ip,remote_ip,resolved_hostname,remote_port,protocol,
+                direction,status,first_seen,last_seen,closed_at FROM connections
+                WHERE last_seen>=? ORDER BY last_seen DESC LIMIT 50000""",
+                (since,),
+            ).fetchall()
+        finally:
+            conn.close()
+        connection_count = len(rows)
+        for row in rows:
+            history.append([
+                row[0] or "Hesap okunamadı", row[1] or "Uygulama okunamadı", row[2] or "-", row[3] or "-",
+                row[4] or "-", row[5], row[6] or "TCP", row[7] or "unknown", row[8] or "-",
+                datetime.fromtimestamp(row[9]) if row[9] else None,
+                datetime.fromtimestamp(row[10]) if row[10] else None,
+                datetime.fromtimestamp(row[11]) if row[11] else "Açık",
+                "İşletim sistemi soket tablosu",
+            ])
+        finish_table(history, "ConnectionHistory")
+        for column in ("J", "K", "L"):
+            for cell in history[column][4:]:
+                if isinstance(cell.value, datetime):
+                    cell.number_format = "yyyy-mm-dd hh:mm:ss"
 
-        target_dir = downloads_dir if os.path.isdir(downloads_dir) else (desktop_dir if os.path.isdir(desktop_dir) else home_dir)
-        filename = f"netmon_envanter_{datetime.datetime.now().strftime('%Y-%m-%d_%H%M%S')}.csv"
-        saved_path = os.path.join(target_dir, filename)
+    summary = create_data_sheet(
+        "Özet", "NetMon envanter dışa aktarımı", ["Gösterge", "Değer", "Açıklama"], [28, 18, 72], "64748B"
+    )
+    summary_rows = [
+        ("Toplam cihaz", len(devices), "Dışa aktarılan benzersiz cihaz sayısı"),
+        ("Çevrimiçi", online_count, "Son keşifte erişilebilir olan cihazlar"),
+        ("Çevrimdışı", offline_count, "Son keşifte erişilemeyen cihazlar"),
+        ("Detaylı envanter", detailed_count, "Yetkili WMI/WinRM veya yerel envanter verisi bulunan cihazlar"),
+        ("Bağlantı kaydı", connection_count, "Yetki varsa çalışma kitabına eklenen bağlantı geçmişi"),
+    ]
+    for row in summary_rows:
+        summary.append(row)
+    finish_table(summary, "ExportSummary")
+    for cell in summary["B"][4:]:
+        if isinstance(cell.value, (int, float)):
+            cell.number_format = "#,##0"
 
-        with open(saved_path, "wb") as f:
-            f.write(csv_bytes)
+    info = create_data_sheet(
+        "Rapor Bilgisi", "Kapsam, saklama ve hukuki kullanım notları", ["Alan", "Değer"], [28, 100], "64748B"
+    )
+    info.append(["Oluşturulma", datetime.now()])
+    info.append(["Cihaz sayısı", len(devices)])
+    info.append(["Bağlantı kaydı", connection_count])
+    info.append(["Saklama süresi", f"{RETENTION_HOURS} saat"])
+    info.append(["Veri minimizasyonu", "Paket içeriği, parola, mesaj ve ziyaret edilen sayfa içeriği toplanmaz."])
+    info.append(["Kanıt sınırı", "Uzak IP/DNS eşleşmesi bir ağ bağlantısı kanıtıdır; kişinin ziyaret ettiği URL veya yaptığı işlemin kesin kanıtı değildir."])
+    info.append(["Hukuki kullanım", "Yetkili kapsam, kurum politikası, çalışan bilgilendirmesi ve geçerli hukuki dayanak doğrulanmalıdır."])
+    finish_table(info, "ReportInformation")
+    info["B5"].number_format = "yyyy-mm-dd hh:mm:ss"
+    for row in info.iter_rows(min_row=5, min_col=2, max_col=2):
+        row[0].alignment = Alignment(vertical="top", wrap_text=True)
+        info.row_dimensions[row[0].row].height = 34
 
-        # Automatically select the file in Windows File Explorer
+    workbook._sheets.insert(0, workbook._sheets.pop(workbook._sheets.index(summary)))
+    workbook.active = 0
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue(), connection_count
+
+
+def export_devices_save_to_disk(user: dict = Depends(get_current_user)):
+    """Gerçek XLSX raporunu Windows'un bilinen İndirilenler klasörüne atomik kaydet."""
+    temporary_path: Path | None = None
+    try:
+        devices = _devices_for_export()
+        include_connections = has_permission(user, "connections.view")
+        content, connection_count = _build_devices_xlsx(devices, include_connections)
+        target_dir = _downloads_directory()
+        filename = f"netmon_envanter_{datetime.now().strftime('%Y-%m-%d_%H%M%S')}.xlsx"
+        saved_path = target_dir / filename
+        temporary_path = target_dir / f".{filename}.{secrets.token_hex(4)}.tmp"
+        temporary_path.write_bytes(content)
+        os.replace(temporary_path, saved_path)
+        if not saved_path.is_file() or saved_path.stat().st_size != len(content):
+            raise OSError("Dosya yazma doğrulaması başarısız oldu.")
+
         if platform.system() == "Windows":
-            import subprocess
             try:
                 subprocess.Popen(["explorer.exe", f"/select,{saved_path}"], **_hidden_subprocess_kwargs())
             except Exception as exc:
                 logger.debug("[EXPORT] Explorer launch failed: %s", exc)
-
+        _audit(
+            user.get("username"),
+            "inventory_export",
+            f"file={filename} devices={len(devices)} connections={connection_count}",
+        )
         return {
-            "ok": True,
-            "filename": filename,
-            "saved_path": saved_path,
-            "target_dir": target_dir,
-            "count": len(devices)
+            "ok": True, "filename": filename, "saved_path": str(saved_path), "target_dir": str(target_dir),
+            "count": len(devices), "connection_count": connection_count, "size_bytes": len(content),
         }
-    except Exception as e:
-        logger.exception("[EXPORT] Direct save to disk failed")
-        return JSONResponse(status_code=500, content={"error": str(e)})
+    except Exception:
+        logger.exception("[EXPORT] Direct XLSX save failed")
+        return JSONResponse(status_code=500, content={"error": "Excel dosyası kaydedilemedi. Klasör erişimini kontrol edin."})
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 def open_downloads_folder(user: dict = Depends(get_current_user)):
     """İndirilenler klasörünü Windows Dosya Gezgini'nde açar."""
     if platform.system() == "Windows":
-        home_dir = os.path.expanduser("~")
-        downloads_dir = os.path.join(home_dir, "Downloads")
-        if os.path.isdir(downloads_dir):
-            import subprocess
-            try:
-                subprocess.Popen(["explorer.exe", downloads_dir], **_hidden_subprocess_kwargs())
-                return {"ok": True, "path": downloads_dir}
-            except Exception as exc:
-                return JSONResponse(status_code=500, content={"error": str(exc)})
+        try:
+            downloads_dir = _downloads_directory()
+            subprocess.Popen(["explorer.exe", str(downloads_dir)], **_hidden_subprocess_kwargs())
+            return {"ok": True, "path": str(downloads_dir)}
+        except Exception:
+            logger.exception("[EXPORT] Downloads folder could not be opened")
+            return JSONResponse(status_code=500, content={"error": "İndirilenler klasörü açılamadı."})
     return {"ok": False}
 
 try:
@@ -3896,9 +4534,11 @@ def device_scan_loop(stop_event: threading.Event):
             logger.warning("[LOOP] Auto device scan failed: %s", exc)
             _devices_cache["error"] = str(exc)
             _discovery_schedule_state.update(last_status="failed", last_error=str(exc)[:500])
-        except Exception:
+        except Exception as exc:
             logger.exception("[LOOP] Unexpected error in device_scan_loop")
-            _discovery_schedule_state.update(last_status="failed", last_error="Beklenmeyen keşif hatası; uygulama günlüğünü inceleyin.")
+            error_detail = f"{type(exc).__name__}: {exc}"[:500]
+            _devices_cache["error"] = error_detail
+            _discovery_schedule_state.update(last_status="failed", last_error=error_detail)
         finally:
             _discovery_schedule_state["last_finished"] = time.time()
             _devices_cache["scan_status"] = "idle"
@@ -4316,6 +4956,114 @@ def _port_to_protocol(port: int) -> tuple[str, str]:
     return PORT_MAP.get(port, (f"TCP {port}", "Ağ Trafiği"))
 
 
+_TRAFFIC_DNS_CACHE_LOCK = threading.Lock()
+_TRAFFIC_DNS_CACHE = {"ts": 0.0, "names_by_ip": {}}
+_TRAFFIC_DNS_CACHE_TTL_SECONDS = 30.0
+
+
+def _traffic_dns_names_by_ip(remote_ips: set[str]) -> dict[str, list[str]]:
+    """Windows DNS önbelleğini IP -> olası alan adları olarak döndür.
+
+    Socket tablosu kullanıcının yazdığı URL'yi tutmaz. DNS önbelleği yalnızca
+    aynı IP ile yakın zamanda çözümlenen adları kanıt adayı olarak sağlar; bu
+    yüzden sonuçlar arayüzde kesin hedef alan adı olarak sunulmaz.
+    """
+    if not remote_ips or platform.system() != "Windows":
+        return {}
+
+    now = time.monotonic()
+    with _TRAFFIC_DNS_CACHE_LOCK:
+        cached_at = float(_TRAFFIC_DNS_CACHE.get("ts") or 0.0)
+        cached_names = _TRAFFIC_DNS_CACHE.get("names_by_ip") or {}
+        if now - cached_at < _TRAFFIC_DNS_CACHE_TTL_SECONDS:
+            return {ip: list(cached_names.get(ip, [])) for ip in remote_ips if cached_names.get(ip)}
+
+    names_by_ip: dict[str, list[str]] = {}
+    try:
+        command = (
+            "Get-DnsClientCache | Where-Object { $_.Data } | "
+            "Select-Object Entry,Data | ConvertTo-Json -Compress"
+        )
+        completed = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command],
+            capture_output=True,
+            text=True,
+            timeout=2.5,
+            **_hidden_subprocess_kwargs(),
+        )
+        if completed.returncode == 0 and completed.stdout.strip():
+            rows = json.loads(completed.stdout)
+            if isinstance(rows, dict):
+                rows = [rows]
+            for row in rows if isinstance(rows, list) else []:
+                ip = str(row.get("Data") or "").strip()
+                name = str(row.get("Entry") or "").strip().rstrip(".")
+                try:
+                    ipaddress.ip_address(ip)
+                except ValueError:
+                    continue
+                if not name or name == ip:
+                    continue
+                bucket = names_by_ip.setdefault(ip, [])
+                if name not in bucket and len(bucket) < 5:
+                    bucket.append(name)
+    except Exception:
+        names_by_ip = {}
+
+    with _TRAFFIC_DNS_CACHE_LOCK:
+        _TRAFFIC_DNS_CACHE["ts"] = now
+        _TRAFFIC_DNS_CACHE["names_by_ip"] = names_by_ip
+    return {ip: list(names_by_ip.get(ip, [])) for ip in remote_ips if names_by_ip.get(ip)}
+
+
+def _traffic_process_details(pid: int | None) -> dict:
+    details = {"name": "", "username": "", "started_at": None}
+    if not pid or not HAS_PSUTIL:
+        return details
+    try:
+        process = psutil.Process(pid)
+    except Exception:
+        return details
+
+    for key, attribute in (("name", "name"), ("username", "username"), ("started_at", "create_time")):
+        try:
+            getter = getattr(process, attribute, None)
+            value = getter() if callable(getter) else None
+            if key in {"name", "username"}:
+                details[key] = str(value or "").strip()
+            elif value is not None:
+                details[key] = float(value)
+        except Exception:
+            continue
+    return details
+
+
+def _traffic_session_direction(pid: int | None, status: str, local_port: int, listening_ports: set[tuple[int, int]]) -> tuple[str, str]:
+    if pid and (pid, local_port) in listening_ports:
+        return "inbound", "Aynı süreç ve yerel port dinleme durumunda."
+    if status == "SYN_SENT":
+        return "outbound", "İşletim sistemi uzak hedefe bağlantı başlatıyor."
+    if local_port >= 32768:
+        return "outbound", "Yerel uç dinamik istemci portu kullanıyor."
+    return "unknown", "Socket tablosu bağlantı yönünü kesinleştirmeye yetmedi."
+
+
+def _traffic_attention(scope: str, direction: str, service_port: int, state: str) -> tuple[str, str]:
+    sensitive_outbound_ports = {
+        445: "İnternete SMB bağlantısı",
+        3389: "İnternete RDP bağlantısı",
+        1433: "İnternete MSSQL bağlantısı",
+        3306: "İnternete MySQL bağlantısı",
+        5432: "İnternete PostgreSQL bağlantısı",
+        6379: "İnternete Redis bağlantısı",
+    }
+    if scope == "internet" and direction == "outbound" and service_port in sensitive_outbound_ports:
+        return "review", f"{sensitive_outbound_ports[service_port]} doğrulanmalı."
+    if state == "CLOSE_WAIT":
+        return "review", "Bağlantı uzak tarafça kapatılmış; yerel uygulama hâlâ sonlandırmamış."
+    return "normal", ""
+
+
 def _clean_vendor_display(raw_vendor: str) -> str:
     if not raw_vendor:
         return ""
@@ -4401,6 +5149,69 @@ def _runtime_network_visibility() -> dict:
 # ============================================================
 # TOP TALKERS & TRAFFIC BREAKDOWN (REAL-TIME LIVE SOCKET TELEMETRY)
 # ============================================================
+def get_active_sessions() -> list[dict]:
+    """Aktif uzak TCP oturumlarını yerel süreç ve kullanıcı bilgisiyle döndür."""
+    if not HAS_PSUTIL:
+        return []
+
+    raw_sessions = []
+    try:
+        conns = psutil.net_connections(kind="inet")
+        listening_ports = {
+            (connection.pid, connection.laddr.port)
+            for connection in conns
+            if connection.status == "LISTEN"
+            and connection.pid
+            and connection.laddr
+            and connection.laddr.port
+        }
+        for connection in conns:
+            if connection.status not in ("ESTABLISHED", "SYN_SENT", "CLOSE_WAIT") or not connection.raddr:
+                continue
+            remote_ip = connection.raddr.ip
+            if not remote_ip or remote_ip in ("127.0.0.1", "::1", "0.0.0.0"):
+                continue
+            remote_port = connection.raddr.port
+            local_port = connection.laddr.port if connection.laddr else 0
+            direction, direction_evidence = _traffic_session_direction(
+                connection.pid,
+                connection.status,
+                local_port,
+                listening_ports,
+            )
+            raw_sessions.append({
+                "remote_ip": remote_ip,
+                "remote_port": remote_port,
+                "local_ip": connection.laddr.ip if connection.laddr else "",
+                "local_port": local_port,
+                "pid": connection.pid,
+                "state": connection.status,
+                "protocol": "TCP",
+                "direction": direction,
+                "direction_evidence": direction_evidence,
+            })
+    except Exception:
+        return []
+
+    process_details_by_pid = {
+        pid: _traffic_process_details(pid)
+        for pid in {session["pid"] for session in raw_sessions if session.get("pid")}
+    }
+    sessions = []
+    for session in raw_sessions:
+        process_details = process_details_by_pid.get(session.get("pid")) or {}
+        process_name = process_details.get("name", "")
+        sessions.append({
+            **session,
+            "process_name": process_name,
+            "local_process_name": process_name,
+            "process_visible": bool(process_name),
+            "process_username": process_details.get("username", ""),
+            "process_started_at": process_details.get("started_at"),
+        })
+    return sessions
+
+
 def get_top_talkers(user: dict = Depends(get_current_user)):
     devices_list = _devices_cache.get("data", [])
     device_by_ip = {d.get("ip"): d for d in devices_list if d.get("ip")}
@@ -4419,60 +5230,40 @@ def get_top_talkers(user: dict = Depends(get_current_user)):
     tx_total_mbps = round(tx_bps / 1_000_000, 2)
 
     # Collect real active socket endpoints
+    active_sessions = get_active_sessions()
     endpoints = {}
-    raw_sessions = []
-    if HAS_PSUTIL:
+    for session in active_sessions:
+        remote_ip = session["remote_ip"]
         try:
-            conns = psutil.net_connections(kind="inet")
-            for c in conns:
-                if c.status in ("ESTABLISHED", "SYN_SENT", "CLOSE_WAIT") and c.raddr:
-                    rip = c.raddr.ip
-                    rport = c.raddr.port if c.raddr else (c.laddr.port if c.laddr else 0)
-                    if not rip or rip in ("127.0.0.1", "::1", "0.0.0.0"):
-                        continue
-                    if rip not in endpoints:
-                        endpoints[rip] = {
-                            "count": 0,
-                            "pids": set(),
-                            "ports": [],
-                            "is_local": ipaddress.ip_address(rip).is_private
-                        }
-                    endpoints[rip]["count"] += 1
-                    if c.pid:
-                        endpoints[rip]["pids"].add(c.pid)
-                    if rport:
-                        endpoints[rip]["ports"].append(rport)
-                    raw_sessions.append({
-                        "remote_ip": rip,
-                        "remote_port": rport,
-                        "local_ip": c.laddr.ip if c.laddr else "",
-                        "local_port": c.laddr.port if c.laddr else 0,
-                        "pid": c.pid,
-                        "state": c.status,
-                    })
-        except Exception:
-            pass
+            is_local = ipaddress.ip_address(remote_ip).is_private
+        except ValueError:
+            is_local = False
+        if remote_ip not in endpoints:
+            endpoints[remote_ip] = {
+                "count": 0,
+                "ports": [],
+                "processes": set(),
+                "users": set(),
+                "is_local": is_local,
+            }
+        endpoint = endpoints[remote_ip]
+        endpoint["count"] += 1
+        if session.get("remote_port"):
+            endpoint["ports"].append(session["remote_port"])
+        if session.get("process_name"):
+            endpoint["processes"].add(session["process_name"])
+        if session.get("process_username"):
+            endpoint["users"].add(session["process_username"])
 
-    process_names_by_pid = {}
-    for pid in {s["pid"] for s in raw_sessions if s.get("pid")}:
-        try:
-            process_names_by_pid[pid] = psutil.Process(pid).name().strip()
-        except Exception:
-            process_names_by_pid[pid] = ""
+    unknown_remote_ips = {ip for ip in endpoints if ip not in device_by_ip}
+    dns_names_by_ip = _traffic_dns_names_by_ip(unknown_remote_ips)
 
     candidates = []
 
     # 1. Process all real active socket endpoints
     for ip, ep_info in endpoints.items():
-        pnames = set()
-        for pid in ep_info["pids"]:
-            try:
-                pname = process_names_by_pid.get(pid, "")
-                if pname:
-                    pnames.add(pname)
-            except Exception:
-                pass
-        pnames = sorted(pnames, key=str.casefold)
+        pnames = sorted(ep_info["processes"], key=str.casefold)
+        pusers = sorted(ep_info["users"], key=str.casefold)
 
         ports = ep_info["ports"]
         common_port = max(set(ports), key=ports.count) if ports else 443
@@ -4490,7 +5281,7 @@ def get_top_talkers(user: dict = Depends(get_current_user)):
             mac = dev.get("mac") or "-"
         else:
             label, kind = _identify_cloud_or_ip(ip)
-            hostname = label
+            hostname = (dns_names_by_ip.get(ip) or [label])[0]
             dtype = "unknown" if ep_info["is_local"] else "cloud"
             dstatus = "online"
             mac = "-"
@@ -4507,6 +5298,7 @@ def get_top_talkers(user: dict = Depends(get_current_user)):
             "active_conns": ep_info["count"],
             # These are local socket owners, not names of the remote endpoint.
             "local_processes": pnames,
+            "local_users": pusers,
             "local_process_name": proc_name,
             "process_name": proc_name
         })
@@ -4531,29 +5323,51 @@ def get_top_talkers(user: dict = Depends(get_current_user)):
             "app_category": c["app_category"],
             "active_conns": c.get("active_conns", 1),
             "local_processes": c.get("local_processes", []),
+            "local_users": c.get("local_users", []),
             "local_process_name": c.get("local_process_name", ""),
             "process_name": c.get("process_name", "")
         })
 
     sessions = []
-    for item in raw_sessions:
+    for item in active_sessions:
         remote_ip = item["remote_ip"]
         remote_port = item["remote_port"]
-        proto_name, proto_cat = _port_to_protocol(remote_port)
         try:
             scope = "local" if ipaddress.ip_address(remote_ip).is_private else "internet"
         except ValueError:
             scope = "unknown"
-        process_name = process_names_by_pid.get(item.get("pid"), "")
+        process_name = item.get("process_name", "")
+        direction = item.get("direction") or "unknown"
+        service_port = item["local_port"] if direction == "inbound" else remote_port
+        proto_name, proto_cat = _port_to_protocol(service_port)
+        dev = device_by_ip.get(remote_ip)
+        dns_names = dns_names_by_ip.get(remote_ip, [])
+        if dev:
+            destination_name = dev.get("friendly_name") or dev.get("hostname") or ""
+            destination_source = "inventory" if destination_name else "ip_only"
+        else:
+            destination_name = dns_names[0] if dns_names else ""
+            destination_source = "dns_cache" if destination_name else "ip_only"
+        attention_level, attention_reason = _traffic_attention(
+            scope, direction, service_port, item.get("state") or ""
+        )
         sessions.append({
             **item,
             "process_name": process_name,
             "process_visible": bool(process_name),
+            "destination_name": destination_name,
+            "destination_source": destination_source,
+            "dns_names": dns_names,
+            "service_port": service_port,
             "primary_protocol": proto_name,
             "app_category": proto_cat,
             "scope": scope,
+            "attention_level": attention_level,
+            "attention_reason": attention_reason,
         })
     sessions.sort(key=lambda s: (
+        0 if s.get("attention_level") == "review" else 1,
+        (s.get("process_username") or "~").casefold(),
         (s.get("process_name") or "~").casefold(),
         s.get("remote_ip") or "",
         s.get("remote_port") or 0,
@@ -4571,6 +5385,11 @@ def get_top_talkers(user: dict = Depends(get_current_user)):
         "session_count": len(sessions),
         "distinct_remote_count": len(endpoints),
         "distinct_process_count": len({s["process_name"] for s in sessions if s.get("process_name")}),
+        "distinct_user_count": len({s["process_username"] for s in sessions if s.get("process_username")}),
+        "outbound_session_count": sum(1 for s in sessions if s.get("direction") == "outbound"),
+        "inbound_session_count": sum(1 for s in sessions if s.get("direction") == "inbound"),
+        "unknown_direction_count": sum(1 for s in sessions if s.get("direction") == "unknown"),
+        "attention_count": sum(1 for s in sessions if s.get("attention_level") == "review"),
         "runtime_visibility": _runtime_network_visibility(),
         "sample_ts": sample_ts,
         "sample_time": datetime.fromtimestamp(sample_ts).strftime("%H:%M:%S") if sample_ts else None,
@@ -4579,7 +5398,7 @@ def get_top_talkers(user: dict = Depends(get_current_user)):
         "measurement_source": "psutil_interface_counters_and_socket_table",
         "per_endpoint_bandwidth_supported": False,
         "endpoint_metric": "active_connections",
-        "note": "Toplam hız yerel arayüz sayaçlarından ölçülür. Uç noktalar gerçek aktif uzak soketlerdir; local_processes alanı bağlantıyı bu bilgisayarda açan uygulamaları gösterir. Paket yakalama olmadan uç nokta başına byte miktarı ölçülemez.",
+        "note": "Toplam hız yerel arayüz sayaçlarından ölçülür. Uç noktalar gerçek aktif uzak soketlerdir; local_processes alanı bağlantıyı bu bilgisayarda açan uygulamaları, process_username alanı ise işletim sistemi hesabını gösterir. DNS adları önbellek eşleşmesidir; kullanıcının yazdığı URL olduğunun kesin kanıtı değildir. Paket yakalama olmadan uç nokta başına byte miktarı ölçülemez.",
     }
 
 
@@ -4754,6 +5573,7 @@ def assign_asset_location(req: LocationAssignmentRequest, user: dict = Depends(r
 
 
 try:
+    from .routers.assurance import create_assurance_router
     from .routers.auth import create_auth_router
     from .routers.analyst import create_analyst_router
     from .routers.diagnostics import create_diagnostics_router
@@ -4762,9 +5582,11 @@ try:
     from .routers.ipam import create_ipam_router
     from .routers.ncm import create_ncm_router
     from .routers.operations import create_operations_router
+    from .routers.search import create_search_router
     from .routers.security import create_security_router
     from .routers.settings import create_settings_router
 except ImportError:
+    from routers.assurance import create_assurance_router
     from routers.auth import create_auth_router
     from routers.analyst import create_analyst_router
     from routers.diagnostics import create_diagnostics_router
@@ -4773,9 +5595,11 @@ except ImportError:
     from routers.ipam import create_ipam_router
     from routers.ncm import create_ncm_router
     from routers.operations import create_operations_router
+    from routers.search import create_search_router
     from routers.security import create_security_router
     from routers.settings import create_settings_router
 
+app.include_router(create_assurance_router(sys.modules[__name__]))
 app.include_router(create_auth_router(sys.modules[__name__]))
 app.include_router(create_analyst_router(sys.modules[__name__]))
 app.include_router(create_diagnostics_router(sys.modules[__name__]))
@@ -4784,6 +5608,7 @@ app.include_router(create_inventory_router(sys.modules[__name__]))
 app.include_router(create_ipam_router(sys.modules[__name__]))
 app.include_router(create_ncm_router(sys.modules[__name__]))
 app.include_router(create_operations_router(sys.modules[__name__]))
+app.include_router(create_search_router(sys.modules[__name__]))
 app.include_router(create_security_router(sys.modules[__name__]))
 app.include_router(create_settings_router(sys.modules[__name__]))
 

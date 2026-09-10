@@ -75,8 +75,7 @@ def _migrate_alert_identity(conn: sqlite3.Connection) -> None:
             """
         )
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_alert_user_states_user "
-        "ON alert_user_states(user_id, is_read, suppressed)"
+        "CREATE INDEX IF NOT EXISTS idx_alert_user_states_user ON alert_user_states(user_id, is_read, suppressed)"
     )
 
 
@@ -181,6 +180,21 @@ def ensure_operations_schema(conn: sqlite3.Connection) -> None:
             FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
         );
         CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id, revoked_at);
+        CREATE TABLE IF NOT EXISTS change_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            config_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            reason TEXT NOT NULL DEFAULT '',
+            risk TEXT NOT NULL DEFAULT 'medium',
+            status TEXT NOT NULL DEFAULT 'pending',
+            requested_by TEXT NOT NULL,
+            reviewed_by TEXT,
+            review_note TEXT,
+            created_at REAL NOT NULL,
+            reviewed_at REAL,
+            FOREIGN KEY(config_id) REFERENCES device_configs(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_change_requests_status ON change_requests(status, created_at DESC);
         """
     )
     _migrate_alert_identity(conn)

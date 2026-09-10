@@ -53,8 +53,6 @@ def create_inventory_router(ctx) -> APIRouter:
         now = time.time()
         if not force and ctx._devices_cache["data"] and now - ctx._devices_cache["ts"] < ctx.DEVICES_CACHE_SECONDS:
             devices = ctx._devices_cache["data"]
-            for device in devices:
-                ctx._enrich_device_inventory(device)
             return {
                 "devices": ctx.filter_devices_by_scope(devices, scope, network_id),
                 "cached": True,
@@ -77,11 +75,11 @@ def create_inventory_router(ctx) -> APIRouter:
             except ctx.NetworkDiscoveryError as exc:
                 ctx.logger.warning("[API] Device scan failed: %s", exc)
                 devices = []
-                ctx._devices_cache["error"] = str(exc)
-            except Exception as exc:
+                ctx._devices_cache["error"] = "Ağ keşfi tamamlanamadı. Yapılandırmayı ve erişimi kontrol edin."
+            except Exception:
                 ctx.logger.exception("[API] Unexpected error during device scan")
                 devices = []
-                ctx._devices_cache["error"] = f"Beklenmeyen hata: {exc}"
+                ctx._devices_cache["error"] = "Cihaz taraması beklenmeyen bir nedenle tamamlanamadı."
             if devices:
                 for device in devices:
                     ctx._enrich_device_inventory(device)
@@ -258,19 +256,22 @@ def create_inventory_router(ctx) -> APIRouter:
                 "mode": scan_mode,
                 "error": None,
             }
-            ctx.manager.broadcast_threadsafe({
-                "type": "devices",
-                **scan_result,
-                "devices": ctx.filter_devices_by_scope(devices),
-            })
+            ctx.manager.broadcast_threadsafe(
+                {
+                    "type": "devices",
+                    **scan_result,
+                    "devices": ctx.filter_devices_by_scope(devices),
+                }
+            )
             return scan_result
         except ctx.NetworkDiscoveryError as exc:
             ctx.logger.warning("[API] Manual scan failed: %s", exc)
-            ctx._devices_cache["error"] = str(exc)
-            return JSONResponse(status_code=503, content={"status": "error", "devices": [], "error": str(exc)})
-        except Exception as exc:
+            message = "Ağ keşfi tamamlanamadı. Yapılandırmayı ve erişimi kontrol edin."
+            ctx._devices_cache["error"] = message
+            return JSONResponse(status_code=503, content={"status": "error", "devices": [], "error": message})
+        except Exception:
             ctx.logger.exception("[API] Unexpected error during manual scan")
-            ctx._devices_cache["error"] = f"Beklenmeyen hata: {exc}"
+            ctx._devices_cache["error"] = "Cihaz taraması beklenmeyen bir nedenle tamamlanamadı."
             return JSONResponse(
                 status_code=500,
                 content={"status": "error", "devices": [], "error": ctx._devices_cache["error"]},

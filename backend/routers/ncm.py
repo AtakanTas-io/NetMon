@@ -3,17 +3,41 @@
 import difflib
 import hashlib
 import ipaddress
+import json
 import time
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+try:
+    from ..core.assurance import COMPLIANCE_BASELINES, evaluate_compliance
+except ImportError:
+    from core.assurance import COMPLIANCE_BASELINES, evaluate_compliance  # type: ignore[no-redef]
+
 
 class NcmBackupRequest(BaseModel):
     ip: str
     version_label: str | None = None
     manual_config: str | None = None
+
+
+class NcmComplianceRequest(BaseModel):
+    ip: str
+    config_id: int | None = None
+    baseline_id: str = "network_device_level1"
+
+
+class ChangeRequestInput(BaseModel):
+    config_id: int
+    title: str
+    reason: str = ""
+    risk: str = "medium"
+
+
+class ChangeDecisionInput(BaseModel):
+    decision: str
+    note: str = ""
 
 
 def create_ncm_router(ctx) -> APIRouter:
@@ -128,6 +152,85 @@ def create_ncm_router(ctx) -> APIRouter:
             ]
         }
 
+    @router.get("/api/ncm/baselines")
+    def get_ncm_baselines(user: dict = Depends(ctx.get_current_user)):
+        return {
+            "baselines": [
+                {
+                    "id": baseline_id,
+                    "name": baseline["name"],
+                    "description": baseline["description"],
+                    "control_count": len(baseline["rules"]),
+                }
+                for baseline_id, baseline in COMPLIANCE_BASELINES.items()
+            ]
+        }
+
+    @router.post("/api/ncm/compliance")
+    def run_ncm_compliance(
+        req: NcmComplianceRequest,
+        user: dict = Depends(ctx.require_permission("ncm.manage")),
+    ):
+        ip = req.ip.strip()
+        try:
+            parsed_ip = ipaddress.ip_address(ip)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Geçerli bir IP adresi gereklidir.") from exc
+        if not ctx._is_allowed_inventory_ip(parsed_ip):
+            raise HTTPException(status_code=400, detail="Uyumluluk yalnız yerel/özel ağ cihazlarında çalıştırılabilir.")
+        if req.baseline_id not in COMPLIANCE_BASELINES:
+            raise HTTPException(status_code=400, detail="Desteklenmeyen temel çizgi.")
+        conn = ctx.db_conn()
+        if req.config_id is None:
+            row = conn.execute(
+                "SELECT id,hostname,config_text,version_label,created_at FROM device_configs "
+                "WHERE ip=? ORDER BY created_at DESC LIMIT 1",
+                (ip,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT id,hostname,config_text,version_label,created_at FROM device_configs WHERE id=? AND ip=?",
+                (req.config_id, ip),
+            ).fetchone()
+        if not row:
+            conn.close()
+            raise HTTPException(status_code=404, detail="Uyumluluk için kayıtlı konfigürasyon bulunamadı.")
+        started_at = time.time()
+        result = evaluate_compliance(row[2], req.baseline_id)
+        findings = [item for item in result["controls"] if item["status"] == "fail"]
+        cursor = conn.execute(
+            "INSERT INTO assurance_scan_runs "
+            "(kind,started_at,finished_at,requested_by,status,target_count,finding_count,result_json) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (
+                "ncm_compliance",
+                started_at,
+                time.time(),
+                user["username"],
+                "completed",
+                1,
+                len(findings),
+                json.dumps({"ip": ip, "config_id": row[0], **result}),
+            ),
+        )
+        conn.commit()
+        run_id = int(cursor.lastrowid)
+        conn.close()
+        ctx._audit(
+            user["username"],
+            "ncm_compliance",
+            f"run_id={run_id} ip={ip} config_id={row[0]} baseline={req.baseline_id} failed={len(findings)}",
+        )
+        return {
+            "run_id": run_id,
+            "ip": ip,
+            "hostname": row[1],
+            "config_id": row[0],
+            "version_label": row[3],
+            "config_created_at": row[4],
+            **result,
+        }
+
     @router.get("/api/ncm/diff")
     def get_ncm_diff(
         ip: str,
@@ -204,5 +307,92 @@ def create_ncm_router(ctx) -> APIRouter:
             },
             "diff_lines": parsed_lines,
         }
+
+    @router.get("/api/ncm/change-requests")
+    def list_change_requests(ip: str | None = None, user: dict = Depends(ctx.get_current_user)):
+        conn = ctx.db_conn()
+        query = (
+            "SELECT r.id,r.config_id,c.ip,c.hostname,c.version_label,r.title,r.reason,r.risk,r.status,"
+            "r.requested_by,r.reviewed_by,r.review_note,r.created_at,r.reviewed_at "
+            "FROM change_requests r JOIN device_configs c ON c.id=r.config_id"
+        )
+        params: tuple[object, ...] = ()
+        if ip:
+            query += " WHERE c.ip=?"
+            params = (ip,)
+        rows = conn.execute(query + " ORDER BY r.created_at DESC LIMIT 100", params).fetchall()
+        conn.close()
+        keys = (
+            "id",
+            "config_id",
+            "ip",
+            "hostname",
+            "version_label",
+            "title",
+            "reason",
+            "risk",
+            "status",
+            "requested_by",
+            "reviewed_by",
+            "review_note",
+            "created_at",
+            "reviewed_at",
+        )
+        return {"requests": [dict(zip(keys, row)) for row in rows], "current_user": user["username"]}
+
+    @router.post("/api/ncm/change-requests")
+    def create_change_request(body: ChangeRequestInput, user: dict = Depends(ctx.require_permission("ncm.manage"))):
+        title = body.title.strip()
+        reason = body.reason.strip()
+        if not 3 <= len(title) <= 120 or len(reason) > 1000:
+            raise HTTPException(status_code=400, detail="Başlık 3-120, gerekçe en fazla 1000 karakter olmalıdır.")
+        if body.risk not in {"low", "medium", "high", "critical"}:
+            raise HTTPException(status_code=400, detail="Geçersiz risk seviyesi.")
+        conn = ctx.db_conn()
+        if not conn.execute("SELECT 1 FROM device_configs WHERE id=?", (body.config_id,)).fetchone():
+            conn.close()
+            raise HTTPException(status_code=404, detail="Konfigürasyon sürümü bulunamadı.")
+        now = time.time()
+        cursor = conn.execute(
+            "INSERT INTO change_requests(config_id,title,reason,risk,status,requested_by,created_at) "
+            "VALUES(?,?,?,?, 'pending', ?,?)",
+            (body.config_id, title, reason, body.risk, user["username"], now),
+        )
+        conn.commit()
+        request_id = int(cursor.lastrowid)
+        conn.close()
+        ctx._audit(user["username"], "ncm_change_request", f"request_id={request_id} config_id={body.config_id}")
+        return {"ok": True, "id": request_id, "status": "pending"}
+
+    @router.post("/api/ncm/change-requests/{request_id}/decision")
+    def decide_change_request(
+        request_id: int,
+        body: ChangeDecisionInput,
+        user: dict = Depends(ctx.require_permission("ncm.manage")),
+    ):
+        if body.decision not in {"approved", "rejected"} or len(body.note.strip()) > 1000:
+            raise HTTPException(
+                status_code=400, detail="Karar approved/rejected olmalı; not en fazla 1000 karakterdir."
+            )
+        conn = ctx.db_conn()
+        row = conn.execute("SELECT requested_by,status FROM change_requests WHERE id=?", (request_id,)).fetchone()
+        if row is None:
+            conn.close()
+            raise HTTPException(status_code=404, detail="Değişiklik talebi bulunamadı.")
+        if row[1] != "pending":
+            conn.close()
+            raise HTTPException(status_code=409, detail="Bu talep daha önce sonuçlandırılmış.")
+        if row[0].casefold() == user["username"].casefold():
+            conn.close()
+            raise HTTPException(status_code=409, detail="Talebi oluşturan kullanıcı kendi talebini onaylayamaz.")
+        now = time.time()
+        conn.execute(
+            "UPDATE change_requests SET status=?,reviewed_by=?,review_note=?,reviewed_at=? WHERE id=?",
+            (body.decision, user["username"], body.note.strip(), now, request_id),
+        )
+        conn.commit()
+        conn.close()
+        ctx._audit(user["username"], "ncm_change_decision", f"request_id={request_id} decision={body.decision}")
+        return {"ok": True, "id": request_id, "status": body.decision, "reviewed_by": user["username"]}
 
     return router

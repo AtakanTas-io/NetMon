@@ -10,8 +10,9 @@ def create_discovery_router(ctx) -> APIRouter:
     def network_scopes(user: dict = Depends(ctx.get_current_user)):
         try:
             scopes = [str(network) for network in ctx.diag._local_ipv4_networks()]
-        except Exception as exc:
-            return {"scopes": [], "error": str(exc)}
+        except Exception:
+            ctx.logger.exception("[DISCOVERY] Ağ kapsamları okunamadı")
+            return {"scopes": [], "error": "Ağ kapsamları şu anda okunamıyor."}
         return {"scopes": scopes, "count": len(scopes), "policy": "local-private-networks-only"}
 
     @router.get("/api/networks")

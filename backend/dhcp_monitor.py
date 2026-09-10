@@ -14,6 +14,9 @@ _monitor_state: dict[str, Any] = {
     "error": None,
     "last_event_ts": None,
     "last_source_ip": None,
+    "last_rogue_ts": None,
+    "last_rogue_source": None,
+    "rogue_detected_count": 0,
 }
 
 
@@ -71,6 +74,11 @@ def _dhcp_monitor_loop():
                 if source_ip not in auth_servers and auth_servers:
                     # Rogue DHCP detected!
                     logger.warning(f"Rogue DHCP offer detected from {source_ip}")
+                    _monitor_state.update(
+                        last_rogue_ts=time.time(),
+                        last_rogue_source=source_ip,
+                        rogue_detected_count=int(_monitor_state.get("rogue_detected_count") or 0) + 1,
+                    )
 
                     try:
                         from server import db_conn, manager
