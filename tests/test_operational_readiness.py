@@ -33,6 +33,24 @@ def _bootstrap_admin(client, password_path):
     return headers
 
 
+def test_healthz_reports_database_readiness_without_authentication(isolated_server, monkeypatch):
+    client, _, _ = isolated_server
+
+    healthy = client.get("/healthz")
+
+    assert healthy.status_code == 200
+    assert healthy.json()["status"] == "ok"
+    assert healthy.json()["database"] == "ready"
+
+    def unavailable_database():
+        raise OSError("database unavailable")
+
+    monkeypatch.setattr(server, "db_conn", unavailable_database)
+    degraded = client.get("/healthz")
+    assert degraded.status_code == 503
+    assert degraded.json() == {"status": "degraded", "database": "unavailable"}
+
+
 def test_device_owner_is_persisted_and_reflected_in_cache(isolated_server):
     client, _, password_path = isolated_server
     headers = _bootstrap_admin(client, password_path)

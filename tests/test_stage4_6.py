@@ -11,9 +11,11 @@ def test_academy_content_and_quiz_endpoint():
     assert len(server.ACADEMY_CONTENT) >= 8
 
 
-def test_scan_run_table_exists():
+def test_scan_run_table_exists(tmp_path, monkeypatch):
     import server
 
+    monkeypatch.setattr(server, "DB_PATH", tmp_path / "scan-runs.db")
+    monkeypatch.setattr(server, "INITIAL_PASSWORD_PATH", tmp_path / "initial-admin.txt")
     server.init_db()
     conn = server.db_conn()
     row = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='inventory_scan_runs'").fetchone()

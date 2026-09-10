@@ -137,10 +137,13 @@ def test_rogue_offer_is_persisted_and_broadcast(monkeypatch):
     monkeypatch.setattr(server.manager, "broadcast_threadsafe", events.append)
     monkeypatch.setattr(module.socket, "socket", lambda *a: FakeSocket())
     monkeypatch.setattr(module, "_authorized_provider", lambda: ["10.0.0.1"])
+    previous_rogue_count = int(module._monitor_state.get("rogue_detected_count") or 0)
     module._stop_event.clear()
     module._dhcp_monitor_loop()
     assert connection.committed is True
     assert events[0]["level"] == "critical"
+    assert module._monitor_state["rogue_detected_count"] == previous_rogue_count + 1
+    assert module._monitor_state["last_rogue_source"] == "10.0.0.66"
 
 
 def test_start_creates_daemon_thread(monkeypatch):

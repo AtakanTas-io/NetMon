@@ -11,7 +11,17 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_pyinstaller_spec_includes_dynamic_application_and_report_modules():
     spec = (ROOT / "backend" / "NetMon.spec").read_text(encoding="utf-8")
 
-    for module in ("application", "core.operations", "routers.operations", "openpyxl", "reportlab"):
+    for module in (
+        "application",
+        "core.assurance",
+        "core.operations",
+        "core.search_engine",
+        "routers.assurance",
+        "routers.operations",
+        "routers.search",
+        "openpyxl",
+        "reportlab",
+    ):
         assert f"'{module}'" in spec
 
 
@@ -19,7 +29,7 @@ def test_release_workflow_builds_and_hashes_windows_executable():
     workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
 
     assert 'tags:\n      - "v*"' in workflow
-    assert "pyinstaller --clean NetMon.spec" in workflow
+    assert "python -m PyInstaller --clean --noconfirm NetMon.spec" in workflow
     assert "Get-FileHash backend/dist/NetMon.exe -Algorithm SHA256" in workflow
     assert "gh release create" in workflow
 
@@ -32,7 +42,14 @@ def test_source_package_excludes_runtime_files_and_preserves_existing_zip(tmp_pa
     script = project / "scripts/windows/package_release.ps1"
     script.parent.mkdir(parents=True)
     shutil.copyfile(ROOT / "scripts/windows/package_release.ps1", script)
-    included = ["backend/app.py", "frontend/index.html", "tests/test_app.py", "docs/guide.md", "README.md"]
+    included = [
+        "backend/app.py",
+        "frontend/index.html",
+        "tests/test_app.py",
+        "docs/guide.md",
+        "scripts/windows/package_release.ps1",
+        "README.md",
+    ]
     excluded = [
         "backend/.buildenv/python.exe",
         "backend/pytest_temp_final/trace.txt",
@@ -52,6 +69,8 @@ def test_source_package_excludes_runtime_files_and_preserves_existing_zip(tmp_pa
         "unrelated/private.txt",
     ]
     for name in included + excluded:
+        if name == "scripts/windows/package_release.ps1":
+            continue
         path = project / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("fixture", encoding="utf-8")

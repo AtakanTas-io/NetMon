@@ -1,6 +1,5 @@
-import server
 import pytest
-
+import server
 from conftest import persistent_test_client
 
 
@@ -10,13 +9,15 @@ def network_server(tmp_path, monkeypatch, test_portal):
     password_path = tmp_path / "initial-admin.txt"
     monkeypatch.setattr(server, "DB_PATH", db_path)
     monkeypatch.setattr(server, "INITIAL_PASSWORD_PATH", password_path)
-    server._devices_cache.update({
-        "ts": 0,
-        "data": [],
-        "error": None,
-        "scan_status": "idle",
-        "active_networks": [],
-    })
+    server._devices_cache.update(
+        {
+            "ts": 0,
+            "data": [],
+            "error": None,
+            "scan_status": "idle",
+            "active_networks": [],
+        }
+    )
     server.init_db()
     with persistent_test_client(server.app, test_portal) as client:
         yield client, password_path
@@ -39,14 +40,22 @@ def _admin_headers(client, password_path):
 def test_current_network_is_default_and_known_networks_can_be_selected(network_server):
     client, password_path = network_server
     headers = _admin_headers(client, password_path)
-    server._devices_cache.update({
-        "ts": 10**12,
-        "active_networks": [{"id": 2, "subnet_cidr": "192.168.10.0/24"}],
-        "data": [
-            {"ip": "10.20.0.8", "mac": "00:11:22:33:44:55", "network_id": 1, "status": "online", "type": "server"},
-            {"ip": "192.168.10.8", "mac": "00:11:22:33:44:66", "network_id": 2, "status": "online", "type": "computer"},
-        ],
-    })
+    server._devices_cache.update(
+        {
+            "ts": 10**12,
+            "active_networks": [{"id": 2, "subnet_cidr": "192.168.10.0/24"}],
+            "data": [
+                {"ip": "10.20.0.8", "mac": "00:11:22:33:44:55", "network_id": 1, "status": "online", "type": "server"},
+                {
+                    "ip": "192.168.10.8",
+                    "mac": "00:11:22:33:44:66",
+                    "network_id": 2,
+                    "status": "online",
+                    "type": "computer",
+                },
+            ],
+        }
+    )
 
     current = client.get("/api/devices", headers=headers).json()["devices"]
     all_known = client.get("/api/devices?scope=all_known", headers=headers).json()["devices"]
@@ -61,13 +70,39 @@ def test_current_network_is_default_and_known_networks_can_be_selected(network_s
     assert {node.get("ip") for node in topology["nodes"] if node.get("ip")} <= {"192.168.10.8"}
 
 
+def test_cached_device_reads_do_not_repeat_inventory_collection(network_server, monkeypatch):
+    client, password_path = network_server
+    headers = _admin_headers(client, password_path)
+    server._devices_cache.update(
+        {
+            "ts": 10**12,
+            "active_networks": [{"id": 1, "subnet_cidr": "192.168.10.0/24"}],
+            "data": [{"ip": "192.168.10.8", "network_id": 1, "status": "online"}],
+        }
+    )
+    monkeypatch.setattr(
+        server,
+        "_enrich_device_inventory",
+        lambda _device: pytest.fail("Önbellek okuması yeniden envanter toplamamalı"),
+    )
+
+    response = client.get("/api/devices", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["cached"] is True
+
+
 def test_network_contexts_are_persisted_and_devices_are_tagged(network_server, monkeypatch):
     client, password_path = network_server
     headers = _admin_headers(client, password_path)
-    monkeypatch.setattr(server.diag, "get_network_context", lambda: {
-        "gateway": "192.168.10.1",
-        "interface": "Ethernet",
-    })
+    monkeypatch.setattr(
+        server.diag,
+        "get_network_context",
+        lambda: {
+            "gateway": "192.168.10.1",
+            "interface": "Ethernet",
+        },
+    )
     devices = [
         {"ip": "192.168.10.1", "mac": "AA:BB:CC:DD:EE:01"},
         {"ip": "10.20.0.8", "mac": "AA:BB:CC:DD:EE:02"},
@@ -83,14 +118,18 @@ def test_network_contexts_are_persisted_and_devices_are_tagged(network_server, m
 
 
 def test_previous_network_devices_are_retained_as_network_changed(network_server):
-    server._devices_cache.update({
-        "active_networks": [{"id": 2, "subnet_cidr": "192.168.10.0/24"}],
-        "data": [{"ip": "10.20.0.8", "mac": "00:11:22:33:44:55", "network_id": 1, "status": "online"}],
-    })
+    server._devices_cache.update(
+        {
+            "active_networks": [{"id": 2, "subnet_cidr": "192.168.10.0/24"}],
+            "data": [{"ip": "10.20.0.8", "mac": "00:11:22:33:44:55", "network_id": 1, "status": "online"}],
+        }
+    )
 
-    merged = server.merge_scan_into_inventory([
-        {"ip": "192.168.10.8", "mac": "00:11:22:33:44:66", "network_id": 2, "status": "online"},
-    ])
+    merged = server.merge_scan_into_inventory(
+        [
+            {"ip": "192.168.10.8", "mac": "00:11:22:33:44:66", "network_id": 2, "status": "online"},
+        ]
+    )
     previous = next(device for device in merged if device["ip"] == "10.20.0.8")
 
     assert previous["status"] == "network_changed"

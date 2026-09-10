@@ -21,8 +21,7 @@ def _headers_for_role(db_path, role: str) -> dict[str, str]:
             (f"{role}-diagnostics", "unused", "unused", role),
         )
         conn.execute(
-            "INSERT INTO sessions (token,user_id,created_at,expires_at) "
-            "SELECT ?,id,0,? FROM users WHERE username=?",
+            "INSERT INTO sessions (token,user_id,created_at,expires_at) SELECT ?,id,0,? FROM users WHERE username=?",
             (token, server.time.time() + 3600, f"{role}-diagnostics"),
         )
     return {"Authorization": f"Bearer {token}"}

@@ -61,6 +61,62 @@ def test_operations_modules_expose_real_data_and_permission_guidance(isolated_se
     assert any("TCP/23" in item["evidence"] for item in posture.json()["findings"])
 
 
+def test_ncm_change_request_requires_second_person_approval(isolated_server):
+    client, _, password_path = isolated_server
+    admin_headers = _bootstrap_admin(client, password_path)
+    with server.db_conn() as conn:
+        conn.execute(
+            "INSERT INTO device_configs(ip,hostname,device_type,config_text,config_hash,version_label,created_at) "
+            "VALUES(?,?,?,?,?,?,?)",
+            ("10.0.0.1", "core-sw", "switch", "hostname core-sw", "abc", "Planlanan", 1.0),
+        )
+        config_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.commit()
+
+    created = client.post(
+        "/api/ncm/change-requests",
+        headers=admin_headers,
+        json={"config_id": config_id, "title": "VLAN erişim değişikliği", "reason": "Bakım", "risk": "high"},
+    )
+    assert created.status_code == 200
+    request_id = created.json()["id"]
+    self_review = client.post(
+        f"/api/ncm/change-requests/{request_id}/decision",
+        headers=admin_headers,
+        json={"decision": "approved", "note": ""},
+    )
+    assert self_review.status_code == 409
+
+    reviewer_password = "Reviewer-Initial-2026!"
+    assert (
+        client.post(
+            "/api/admin/users",
+            headers=admin_headers,
+            json={"username": "reviewer", "password": reviewer_password, "role": "noc_operator"},
+        ).status_code
+        == 200
+    )
+    login = client.post("/api/auth/login", json={"username": "reviewer", "password": reviewer_password}).json()
+    reviewer_headers = {"Authorization": f"Bearer {login['token']}"}
+    assert (
+        client.post(
+            "/api/auth/change-password",
+            headers=reviewer_headers,
+            json={"current_password": reviewer_password, "new_password": "Reviewer-Changed-2026!"},
+        ).status_code
+        == 200
+    )
+    approved = client.post(
+        f"/api/ncm/change-requests/{request_id}/decision",
+        headers=reviewer_headers,
+        json={"decision": "approved", "note": "Kontrol edildi"},
+    )
+    assert approved.status_code == 200
+    listed = client.get("/api/ncm/change-requests?ip=10.0.0.1", headers=admin_headers).json()["requests"]
+    assert listed[0]["status"] == "approved"
+    assert listed[0]["reviewed_by"] == "reviewer"
+
+
 def test_location_assignment_roundtrip(isolated_server):
     client, db_path, password_path = isolated_server
     headers = _bootstrap_admin(client, password_path)
@@ -247,7 +303,15 @@ def test_top_talkers_returns_only_measured_traffic_and_real_sockets(isolated_ser
         pid=123,
     )
     monkeypatch.setattr(server.psutil, "net_connections", lambda kind="inet": [fake_conn])
-    monkeypatch.setattr(server.psutil, "Process", lambda pid: SimpleNamespace(name=lambda: "sync-client.exe"))
+    monkeypatch.setattr(
+        server.psutil,
+        "Process",
+        lambda pid: SimpleNamespace(
+            name=lambda: "sync-client.exe",
+            username=lambda: "CORP\\backup.user",
+            create_time=lambda: 1_700_000_000.0,
+        ),
+    )
 
     res = client.get("/api/traffic/top-talkers", headers=headers)
     assert res.status_code == 200
@@ -265,13 +329,19 @@ def test_top_talkers_returns_only_measured_traffic_and_real_sockets(isolated_ser
     assert talker1["total_mbps"] is None
     assert talker1["share_pct"] is None
     assert talker1["local_processes"] == ["sync-client.exe"]
+    assert talker1["local_users"] == ["CORP\\backup.user"]
     assert talker1["local_process_name"] == "sync-client.exe"
     assert "bu bilgisayarda açan uygulamaları" in data["note"]
     assert data["session_count"] == 1
     assert data["distinct_remote_count"] == 1
     assert data["distinct_process_count"] == 1
+    assert data["distinct_user_count"] == 1
+    assert data["outbound_session_count"] == 1
+    assert data["inbound_session_count"] == 0
     session = data["sessions"][0]
     assert session["process_name"] == "sync-client.exe"
+    assert session["process_username"] == "CORP\\backup.user"
+    assert session["process_started_at"] == 1_700_000_000.0
     assert session["pid"] == 123
     assert session["local_ip"] == "192.168.1.5"
     assert session["local_port"] == 50123
@@ -279,7 +349,91 @@ def test_top_talkers_returns_only_measured_traffic_and_real_sockets(isolated_ser
     assert session["remote_port"] == 445
     assert session["state"] == "ESTABLISHED"
     assert session["scope"] == "local"
+    assert session["direction"] == "outbound"
+    assert session["destination_name"] == "SRV-BACKUP"
+    assert session["destination_source"] == "inventory"
+    assert session["service_port"] == 445
+    assert session["attention_level"] == "normal"
     assert "is_elevated" in data["runtime_visibility"]
+
+
+def test_top_talkers_reports_users_direction_dns_candidates_and_review_flags(isolated_server, monkeypatch):
+    client, _, password_path = isolated_server
+    headers = _bootstrap_admin(client, password_path)
+    server._devices_cache["data"] = []
+
+    listener = SimpleNamespace(
+        status="LISTEN",
+        raddr=None,
+        laddr=SimpleNamespace(ip="0.0.0.0", port=8443),
+        pid=77,
+    )
+    inbound = SimpleNamespace(
+        status="ESTABLISHED",
+        raddr=SimpleNamespace(ip="8.8.8.8", port=55000),
+        laddr=SimpleNamespace(ip="192.168.1.5", port=8443),
+        pid=77,
+    )
+    outbound_review = SimpleNamespace(
+        status="ESTABLISHED",
+        raddr=SimpleNamespace(ip="1.1.1.1", port=445),
+        laddr=SimpleNamespace(ip="192.168.1.5", port=50100),
+        pid=88,
+    )
+    monkeypatch.setattr(server.psutil, "net_connections", lambda kind="inet": [listener, inbound, outbound_review])
+    monkeypatch.setattr(
+        server.psutil,
+        "Process",
+        lambda pid: SimpleNamespace(
+            name=lambda: "web-server.exe" if pid == 77 else "sync.exe",
+            username=lambda: "CORP\\service.web" if pid == 77 else "CORP\\atakan",
+            create_time=lambda: 1_700_000_000.0 + pid,
+        ),
+    )
+    monkeypatch.setattr(
+        server,
+        "_traffic_dns_names_by_ip",
+        lambda ips: {"8.8.8.8": ["dns.google"], "1.1.1.1": ["one.one.one.one"]},
+    )
+
+    data = client.get("/api/traffic/top-talkers", headers=headers).json()
+
+    assert data["session_count"] == 2
+    assert data["distinct_user_count"] == 2
+    assert data["outbound_session_count"] == 1
+    assert data["inbound_session_count"] == 1
+    assert data["unknown_direction_count"] == 0
+    assert data["attention_count"] == 1
+
+    incoming = next(item for item in data["sessions"] if item["direction"] == "inbound")
+    assert incoming["process_username"] == "CORP\\service.web"
+    assert incoming["destination_name"] == "dns.google"
+    assert incoming["destination_source"] == "dns_cache"
+    assert incoming["dns_names"] == ["dns.google"]
+    assert incoming["service_port"] == 8443
+    assert incoming["primary_protocol"] == "HTTPS (TCP 8443)"
+
+    review = next(item for item in data["sessions"] if item["attention_level"] == "review")
+    assert review["direction"] == "outbound"
+    assert review["service_port"] == 445
+    assert "SMB" in review["attention_reason"]
+
+
+def test_traffic_dns_cache_maps_only_valid_ip_records(monkeypatch):
+    monkeypatch.setattr(server.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(server, "_TRAFFIC_DNS_CACHE", {"ts": 0.0, "names_by_ip": {}})
+    monkeypatch.setattr(
+        server.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout='[{"Entry":"example.test","Data":"8.8.8.8"},{"Entry":"ignored.test","Data":"not-an-ip"}]',
+        ),
+    )
+
+    result = server._traffic_dns_names_by_ip({"8.8.8.8", "1.1.1.1"})
+
+    assert result == {"8.8.8.8": ["example.test"]}
 
 
 def test_top_talkers_does_not_invent_idle_baseline(isolated_server, monkeypatch):
@@ -347,6 +501,9 @@ def test_ncm_never_fabricates_config_when_ssh_is_unconfigured(isolated_server, m
         json={"ip": "192.168.1.254"},
     )
     assert response.status_code == 503
-    assert "Gerçek cihaz konfigürasyonu alınamadı" in response.json()["detail"]
+    assert response.json()["code"] == "SERVICE_UNAVAILABLE"
+    assert response.json()["detail"] == "İstek işlenirken beklenmeyen bir hata oluştu."
+    assert response.json()["trace_id"] == response.headers["X-Trace-ID"]
+    assert "SSH kullanıcı adı" not in response.text
     with server.sqlite3.connect(db_path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM device_configs").fetchone()[0] == 0

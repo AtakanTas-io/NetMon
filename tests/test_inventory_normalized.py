@@ -9,6 +9,7 @@ import server
 def test_inventory_identity_survives_ip_change(tmp_path, monkeypatch):
     db = tmp_path / "inventory.db"
     monkeypatch.setattr(server, "DB_PATH", db)
+    monkeypatch.setattr(server, "INITIAL_PASSWORD_PATH", tmp_path / "initial-admin.txt")
     server.init_db()
 
     dev = {

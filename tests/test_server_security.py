@@ -768,3 +768,38 @@ def test_logout_invalidates_token(isolated_server):
     logout = client.post("/api/auth/logout", headers=headers)
     assert logout.status_code == 200
     assert client.get("/api/status", headers=headers).status_code == 401
+
+
+def test_api_errors_use_traceable_envelope(isolated_server):
+    client, _, _ = isolated_server
+    trace_id = "qa-auth-check-2026"
+    response = client.get("/api/status", headers={"X-Trace-ID": trace_id})
+
+    assert response.status_code == 401
+    assert response.headers["X-Trace-ID"] == trace_id
+    assert response.json() == {
+        "code": "AUTHENTICATION_REQUIRED",
+        "message": "Giriş gerekli.",
+        "detail": "Giriş gerekli.",
+        "trace_id": trace_id,
+        "error": "Giriş gerekli.",
+    }
+
+
+def test_validation_errors_do_not_echo_request_values(isolated_server):
+    client, _, password_path = isolated_server
+    headers = _bootstrap_admin(client, password_path)
+    secret_input = "should-not-be-reflected"
+    response = client.post(
+        "/api/tools/portscan",
+        headers=headers,
+        json={"target": secret_input, "preset": ["invalid-type"]},
+    )
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["code"] == "VALIDATION_ERROR"
+    assert body["message"] == "İstek alanları doğrulanamadı."
+    assert body["trace_id"] == response.headers["X-Trace-ID"]
+    assert secret_input not in response.text
+    assert all(set(item) == {"type", "location", "message"} for item in body["detail"])

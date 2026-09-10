@@ -91,10 +91,16 @@ def test_registry_software_is_deduplicated():
             return 0, ["one", "two"]
 
         def GetStringValue(self, sValueName, **kwargs):
-            return (0, "App") if sValueName == "DisplayName" else (0, "1.0")
+            values = {
+                "DisplayName": "App",
+                "DisplayVersion": "1.0",
+                "Publisher": "ACME",
+                "InstallDate": "20260907",
+            }
+            return 0, values.get(sValueName)
 
     result = module.WmiNetworkScanner()._get_software_from_registry(SimpleNamespace(StdRegProv=Registry()))
-    assert result == [{"name": "App", "version": "1.0"}]
+    assert result == [{"name": "App", "version": "1.0", "publisher": "ACME", "install_date": "20260907"}]
 
 
 def test_local_wmi_inventory_success(monkeypatch):
@@ -105,13 +111,33 @@ def test_local_wmi_inventory_success(monkeypatch):
         TotalPhysicalMemory=str(16 * gib),
         PCSystemType=2,
         DomainRole=1,
+        Manufacturer="ACME",
+        Model="Workstation",
     )
-    os_info = SimpleNamespace(Caption="Windows 11", BuildNumber="26100", OSArchitecture="64-bit", ProductType=1)
-    cpu = SimpleNamespace(Name=" Mock CPU ", NumberOfLogicalProcessors=8, NumberOfCores=4)
+    os_info = SimpleNamespace(
+        Caption="Windows 11",
+        BuildNumber="26100",
+        Version="10.0.26100",
+        OSArchitecture="64-bit",
+        ProductType=1,
+        RegisteredUser="Atakan",
+        InstallDate="20260901000000.000000+180",
+        LastBootUpTime="20260907090000.000000+180",
+    )
+    cpu = SimpleNamespace(Name=" Mock CPU ", NumberOfLogicalProcessors=8, NumberOfCores=4, MaxClockSpeed=4200)
     board = SimpleNamespace(Manufacturer="ACME", Product="Board")
     enclosure = SimpleNamespace(ChassisTypes=[10])
-    disk = SimpleNamespace(Size=str(100 * gib), FreeSpace=str(40 * gib), DeviceID="C:")
-    gpu = SimpleNamespace(Name="Mock GPU")
+    disk = SimpleNamespace(
+        Size=str(100 * gib), FreeSpace=str(40 * gib), DeviceID="C:", VolumeName="Windows", FileSystem="NTFS"
+    )
+    gpu = SimpleNamespace(
+        Name="Mock GPU",
+        AdapterRAM=str(4 * gib),
+        DriverVersion="1.2.3",
+        VideoProcessor="Mock Chip",
+        CurrentHorizontalResolution=1920,
+        CurrentVerticalResolution=1080,
+    )
     license_item = SimpleNamespace(OA3xOriginalProductKey=None)
 
     class Connection:
@@ -132,6 +158,42 @@ def test_local_wmi_inventory_success(monkeypatch):
 
         def Win32_SystemEnclosure(self):
             return [enclosure]
+
+        def Win32_BIOS(self):
+            return [
+                SimpleNamespace(Manufacturer="ACME", SMBIOSBIOSVersion="1.0", SerialNumber="SER1", ReleaseDate="2026")
+            ]
+
+        def Win32_PhysicalMemory(self):
+            return [
+                SimpleNamespace(
+                    BankLabel="BANK 0",
+                    Capacity=str(8 * gib),
+                    ConfiguredClockSpeed=3200,
+                    Manufacturer="ACME",
+                    PartNumber="RAM1",
+                    SerialNumber="MEM1",
+                )
+            ]
+
+        def Win32_DiskDrive(self):
+            return [
+                SimpleNamespace(
+                    Model="Mock SSD", Size=str(100 * gib), InterfaceType="NVMe", MediaType="SSD", SerialNumber="SSD1"
+                )
+            ]
+
+        def Win32_NetworkAdapterConfiguration(self, **kwargs):
+            return [
+                SimpleNamespace(
+                    Description="Ethernet",
+                    MACAddress="00:11:22:33:44:55",
+                    IPAddress=["10.0.0.1"],
+                    DHCPEnabled=True,
+                    DefaultIPGateway=["10.0.0.254"],
+                    DNSServerSearchOrder=["1.1.1.1"],
+                )
+            ]
 
         def Win32_LogicalDisk(self, **kwargs):
             return [disk]
@@ -162,7 +224,37 @@ def test_local_wmi_inventory_success(monkeypatch):
     result = scanner._scan_single_ip("127.0.0.1")
     assert result["status"] == "Success"
     assert result["hardware"]["ram_gb"] == 16
+    assert result["hardware"]["memory_modules"][0]["speed_mhz"] == 3200
+    assert result["hardware"]["physical_disks"][0]["model"] == "Mock SSD"
+    assert result["hardware"]["network_adapters"][0]["dhcp_enabled"] is True
+    assert result["software"]["os_version"] == "10.0.26100"
     assert result["security"]["antivirus"] == "Mock AV"
+
+
+def test_windows_license_reports_activation_without_full_product_key():
+    product = SimpleNamespace(
+        ApplicationID="55c92734-d682-4d71-983e-d6ec3f16059f",
+        PartialProductKey="3V66T",
+        LicenseStatus=1,
+        Name="Windows 11 Pro",
+        Description="Windows Operating System, RETAIL channel",
+        ProductKeyChannel="Retail",
+        GracePeriodRemaining=0,
+    )
+    connection = SimpleNamespace(SoftwareLicensingProduct=lambda: [product])
+
+    result = module._windows_license_details(connection)
+
+    assert result["licensed"] is True
+    assert result["status"] == "Etkinleştirildi"
+    assert result["partial_product_key"] == "3V66T"
+    assert "product_key" not in result
+
+
+def test_signed_wmi_gpu_memory_is_normalized():
+    assert module._adapter_ram_gb(-1048576) == 4.0
+    assert module._adapter_ram_gb(1024**3) == 1.0
+    assert module._adapter_ram_gb(None) is None
 
 
 def test_wmi_access_failure_is_classified(monkeypatch):

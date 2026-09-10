@@ -1,4 +1,5 @@
 import io
+import sqlite3
 import time
 
 import pytest
@@ -57,6 +58,23 @@ def test_phase4_schema_is_migrated(isolated_server):
     assert "alert_id" in state_columns
     assert "alert_ts" not in state_columns
     assert "network_id" in known_device_columns
+
+
+def test_legacy_known_devices_schema_adds_owner_and_notes(tmp_path, monkeypatch):
+    db_path = tmp_path / "legacy-netmon.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "CREATE TABLE known_devices (mac TEXT PRIMARY KEY, friendly_name TEXT, hostname TEXT, "
+            "device_type TEXT, first_seen REAL NOT NULL, last_seen REAL NOT NULL)"
+        )
+    monkeypatch.setattr(server, "DB_PATH", db_path)
+    monkeypatch.setattr(server, "INITIAL_PASSWORD_PATH", tmp_path / "initial-admin.txt")
+
+    server.init_db()
+
+    with sqlite3.connect(db_path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(known_devices)")}
+    assert {"owner", "notes", "network_id", "open_ports"}.issubset(columns)
 
 
 def test_alarm_inbox_read_and_suppressed_state_is_persistent(isolated_server):

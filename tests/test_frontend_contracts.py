@@ -8,6 +8,15 @@ def frontend_source() -> str:
     return "\n".join(path.read_text(encoding="utf-8") for path in files)
 
 
+def test_login_form_never_embeds_a_default_password():
+    index_html = (ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
+    login_password = index_html.split('id="loginPass"', 1)[1].split("/>", 1)[0]
+
+    assert "value=" not in login_password
+    assert "admin1234" not in index_html
+    assert "initial_admin_password.txt" in index_html
+
+
 def test_frontend_uses_small_native_es_modules():
     index_html = (ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
     module_files = sorted((ROOT / "frontend" / "js").glob("*.js"))
@@ -39,6 +48,13 @@ def test_active_sessions_use_network_engineer_table_contract():
     assert "trafficSessionSearch" in app_js
     assert "trafficStateFilter" in app_js
     assert "trafficScopeFilter" in app_js
+    assert "trafficUserFilter" in app_js
+    assert "trafficDirectionFilter" in app_js
+    assert "trafficAttentionFilter" in app_js
+    assert "Kullanan hesap" in app_js
+    assert "Windows DNS önbelleği adayı" in app_js
+    assert "İncelenmesi önerilenler" in app_js
+    assert "Bu bir kesin tehdit tespiti değildir" in app_js
     assert "runtime_visibility" in app_js
     assert "tek tek bağlantılara dağıtılmaz" in app_js
 
@@ -126,6 +142,7 @@ def test_shared_device_drawer_search_and_virtual_list_contracts():
     assert 'bindClickOutside("globalSearchResults"' in source
     assert 'bindClickOutside("topoDetailDrawer"' in source
     assert "clickOutsideBindings.has(elementId)" in source
+    assert 'document.addEventListener("click", closeWhenOpen, true)' in source
 
 
 def test_empty_inventory_onboarding_and_backend_theme_preference_contracts():
@@ -146,3 +163,100 @@ def test_clock_starts_immediately_and_refreshes_every_second():
 
     assert "tickClock();" in dom_ready
     assert "setInterval(tickClock, 1000);" in dom_ready
+
+
+def test_frontend_exposes_stable_test_selectors_and_traceable_api_errors():
+    core = (ROOT / "frontend" / "js" / "core.js").read_text(encoding="utf-8")
+    api = (ROOT / "frontend" / "js" / "api.js").read_text(encoding="utf-8")
+
+    assert "function applyStableTestSelectors" in core
+    assert 'querySelectorAll?.("[id]")' in core
+    assert "element.dataset.testid = element.id" in core
+    assert "new MutationObserver" in core
+    assert "data.message || data.error || data.detail" in api
+    assert 'res.headers.get("X-Trace-ID")' in api
+    assert "requestError.traceId" in api
+
+
+def test_dashboard_exposes_phase2_network_visibility_contract():
+    index_html = (ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
+    dashboard = (ROOT / "frontend" / "js" / "dashboard.js").read_text(encoding="utf-8")
+    ipam = (ROOT / "frontend" / "js" / "ipam.js").read_text(encoding="utf-8")
+
+    assert "networkQualityChart" in index_html
+    assert "dashboardSecurityScore" in index_html
+    assert "dashboardCertificateDhcp" in index_html
+    assert "Gecikme, Jitter ve Paket Kaybı Trendi" in index_html
+    assert "function drawNetworkQualityChart" in dashboard
+    assert 'yAxisID: "latency"' in dashboard
+    assert 'yAxisID: "loss"' in dashboard
+    assert "function renderSecurityScore" in dashboard
+    assert "function renderCertificateDhcp" in dashboard
+    assert "get(`/api/visibility/summary?range=" in dashboard
+    assert "await refreshPhase2Visibility()" in ipam
+
+
+def test_frontend_exposes_phase3_assurance_workflows():
+    diagnostics = (ROOT / "frontend" / "js" / "diagnostics.js").read_text(encoding="utf-8")
+    ncm = (ROOT / "frontend" / "js" / "ncm.js").read_text(encoding="utf-8")
+
+    assert "securityAssuranceBody" in diagnostics
+    assert 'post("/api/security/cve-scan"' in diagnostics
+    assert 'post("/api/discovery/passive-snapshot"' in diagnostics
+    assert 'post("/api/security/credential-audit"' in diagnostics
+    assert 'post("/api/discovery/exemptions"' in diagnostics
+    assert "acknowledge_authorized:true" in diagnostics
+    assert "runNcmCompliance" in ncm
+    assert 'post("/api/ncm/compliance"' in ncm
+
+
+def test_frontend_exposes_phase4_command_search_contract():
+    index_html = (ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
+    search_ui = (ROOT / "frontend" / "js" / "device-experience.js").read_text(encoding="utf-8")
+
+    assert "Ctrl+K" in index_html
+    assert "ip:, type:, port:, cve:" in index_html
+    assert "function runGlobalSearch" in search_ui
+    assert "get(`/api/search?q=" in search_ui
+    assert 'get("/api/search/saved")' in search_ui
+    assert 'post("/api/search/saved"' in search_ui
+    assert "/api/search/export" in search_ui
+
+
+def test_phase5_license_change_approval_and_mobile_drawer_contracts():
+    index_html = (ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
+    device = (ROOT / "frontend" / "js" / "device-experience.js").read_text(encoding="utf-8")
+    ncm = (ROOT / "frontend" / "js" / "ncm.js").read_text(encoding="utf-8")
+
+    assert "Microsoft Windows lisansı" in device
+    assert "partial_product_key" in device
+    assert "filterDeviceSoftware" in device
+    assert "memory_modules" in device
+    assert "physical_disks" in device
+    assert "network_adapters" in device
+    assert "Windows ve oturum" in device
+    assert "device-license-card" in index_html
+    assert "device-inventory-section" in index_html
+    assert "@media(max-width:480px)" in index_html
+    assert "box-shadow:none;transform:translateX(105%);visibility:hidden;pointer-events:none" in index_html
+    assert (
+        ".device-experience-drawer.open{transform:none;visibility:visible;pointer-events:auto;box-shadow:" in index_html
+    )
+    assert "/api/ncm/change-requests" in ncm
+    assert "Talep sahibi kendi değişikliğini onaylayamaz" in ncm
+
+
+def test_excel_export_reports_only_verified_disk_save():
+    dashboard = (ROOT / "frontend" / "js" / "dashboard.js").read_text(encoding="utf-8")
+    notifications = (ROOT / "frontend" / "js" / "notifications.js").read_text(encoding="utf-8")
+    traffic = (ROOT / "frontend" / "js" / "traffic.js").read_text(encoding="utf-8")
+
+    assert "const token = getToken();" in dashboard
+    assert "!saveResult.ok || !saveResult.saved_path" in dashboard
+    assert "İndirilenler klasörünüze kaydedildi" not in dashboard
+    assert "recordDownload(saveResult);" in dashboard
+    assert "downloadCenterPopover" in notifications
+    assert "Klasörde göster" in notifications
+    assert "downloadCenterBadge" not in notifications
+    assert "Kanıt kapsamı ve veri minimizasyonu" in traffic
+    assert "URL, sayfa içeriği, mesaj, parola veya paket içeriği toplamaz" in traffic
