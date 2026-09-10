@@ -63,10 +63,10 @@ def create_diagnostics_router(ctx) -> APIRouter:
 
     @router.post("/api/tools/ping")
     def run_ping(req: PingRequest, user: dict = Depends(ctx.require_permission("diagnostics.run"))):
-        target = req.target.strip().split(":")[0].split("/")[0]
+        target = _clean_command_target(req.target)
         count = max(1, min(req.count, 20))
         if not target:
-            return {"error": "Hedef adresi boş olamaz."}
+            return JSONResponse(status_code=400, content={"error": "Hedef adresi boş olamaz."})
 
         if ctx.platform.system().lower() == "windows":
             cmd = ["ping", "-n", str(count), "-w", "1200", target]

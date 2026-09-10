@@ -49,6 +49,19 @@ def test_active_diagnostics_require_permission(isolated_server, monkeypatch, pat
     assert operator_response.status_code == 200
 
 
+@pytest.mark.parametrize("target", ["-t", "--flood"])
+def test_ping_rejects_option_like_targets_before_subprocess(isolated_server, monkeypatch, target):
+    client, _, password_path = isolated_server
+    headers = _bootstrap_admin(client, password_path)
+    run = Mock()
+    monkeypatch.setattr(server.subprocess, "run", run)
+
+    response = client.post("/api/tools/ping", headers=headers, json={"target": target})
+
+    assert response.status_code == 400
+    run.assert_not_called()
+
+
 @pytest.mark.parametrize("target", ["", "   ", "-help", "example.com;whoami", "host name"])
 @pytest.mark.parametrize("endpoint", ["traceroute", "network-cmd"])
 def test_diagnostic_targets_rejected_before_subprocess(isolated_server, monkeypatch, target, endpoint):
