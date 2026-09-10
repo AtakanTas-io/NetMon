@@ -28,7 +28,7 @@ jobs:
 
       - name: Windows uygulamasını derle
         working-directory: backend
-        run: pyinstaller --clean NetMon.spec
+        run: python -m PyInstaller --clean --noconfirm NetMon.spec
 
       - name: SHA256 özeti oluştur
         shell: pwsh

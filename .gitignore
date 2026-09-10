@@ -77,6 +77,9 @@ initial_admin_password.txt
 *.exe
 *.dll
 
+# Embedded browser runtime data
+backend/webview_data/
+
 # Antigravity Context & Memory
 GEMINI.md
 

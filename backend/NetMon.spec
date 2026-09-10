@@ -11,8 +11,12 @@ a = Analysis(
         # server.py uygulamayi importlib ile dinamik yukler. PyInstaller bu
         # baglantiyi statik analizde goremedigi icin ana uygulamayi elle ekle.
         'application',
+        'core.assurance',
         'core.operations',
+        'core.search_engine',
+        'routers.assurance',
         'routers.operations',
+        'routers.search',
         # Rapor ureticileri fonksiyon icinde tembel yuklenir.
         'openpyxl',
         'reportlab',
@@ -64,6 +68,7 @@ exe = EXE(
     a.datas,
     [],
     name='NetMon',
+    icon='../assets/netmon-app-icon.ico',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

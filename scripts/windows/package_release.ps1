@@ -38,13 +38,17 @@ function Get-PackageFiles {
 }
 
 $packageFiles = @(
-    foreach ($name in @("backend", "frontend", "tests", "docs")) {
+    foreach ($name in @(".github", "assets", "backend", "frontend", "tests", "docs", "scripts")) {
         $directory = Join-Path $projectRoot $name
         if (Test-Path -LiteralPath $directory -PathType Container) {
             Get-PackageFiles (Get-Item -LiteralPath $directory)
         }
     }
-    foreach ($name in @("README.md", "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md", "ROADMAP.md", "LICENSE", "LICENSE.md", "LICENSE.txt")) {
+    foreach ($name in @(
+        ".env.example", ".gitattributes", ".gitignore", "pyproject.toml", "pytest.ini",
+        "requirements.txt", "requirements-dev.txt", "README.md", "CHANGELOG.md",
+        "CONTRIBUTING.md", "SECURITY.md", "ROADMAP.md", "LICENSE", "LICENSE.md", "LICENSE.txt"
+    )) {
         $document = Join-Path $projectRoot $name
         if (Test-Path -LiteralPath $document -PathType Leaf) {
             $item = Get-Item -LiteralPath $document
