@@ -115,6 +115,7 @@ def test_nmap_service_scan_does_not_use_the_too_short_default_timeout(monkeypatc
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(netdiag_core.subprocess, "run", fake_run)
+    monkeypatch.setattr(diagnostics, "_nmap_executable", lambda: "nmap")
     diagnostics.nmap_service_scan("192.168.1.50")
     assert seen["timeout"] is not None
     assert seen["timeout"] > diagnostics.command_timeout
@@ -132,6 +133,7 @@ def test_nmap_discover_timeout_scales_with_network_size(monkeypatch):
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(netdiag_core.subprocess, "run", fake_run)
+    monkeypatch.setattr(diagnostics, "_nmap_executable", lambda: "nmap")
     small_network = ipaddress.ip_network("192.168.1.0/28")  # 16 adres
     diagnostics.nmap_discover(small_network)
     assert seen["timeout"] >= 15.0
@@ -156,10 +158,23 @@ def test_nmap_service_scan_parses_open_ports_and_services(monkeypatch):
         return SimpleNamespace(returncode=0, stdout=fake_output, stderr="")
 
     monkeypatch.setattr(netdiag_core.subprocess, "run", fake_run)
+    monkeypatch.setattr(diagnostics, "_nmap_executable", lambda: "nmap")
     result = diagnostics.nmap_service_scan("192.168.1.10")
     assert result["open_ports"] == [22, 80]
     assert {"port": 22, "service": "ssh", "banner": "OpenSSH 8.9"} in result["services"]
     assert not any(svc["port"] == 443 for svc in result["services"])
+
+
+def test_nmap_is_found_in_standard_windows_install_directory(monkeypatch, tmp_path):
+    executable = tmp_path / "Nmap" / "nmap.exe"
+    executable.parent.mkdir()
+    executable.write_bytes(b"fixture")
+    monkeypatch.setattr(netdiag_core.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(netdiag_core.platform, "system", lambda: "Windows")
+    monkeypatch.setenv("ProgramFiles", str(tmp_path))
+    monkeypatch.delenv("ProgramFiles(x86)", raising=False)
+
+    assert netdiag_core.NetworkDiagnostics._nmap_executable() == str(executable)
 
 
 def test_active_device_is_marked_online_even_when_icmp_is_blocked():
