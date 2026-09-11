@@ -50,6 +50,7 @@ try:
     from .core.config import RUNTIME_CONFIG
     from .core.database import connect_sqlite
     from .core.errors import api_error_response, ensure_trace_id, normalize_error_response
+    from .core.initial_access import write_password_file
     from .core.operations import collect_snapshot, deliver_events, ensure_operations_schema, evaluate_rules, run_due_reports
     from .netdiag_core import NetworkDiagnostics, NetworkDiscoveryError
     from .wmi_scanner import WmiNetworkScanner
@@ -60,6 +61,7 @@ except ImportError:
     from core.config import RUNTIME_CONFIG
     from core.database import connect_sqlite
     from core.errors import api_error_response, ensure_trace_id, normalize_error_response
+    from core.initial_access import write_password_file
     from core.operations import collect_snapshot, deliver_events, ensure_operations_schema, evaluate_rules, run_due_reports
     from netdiag_core import NetworkDiagnostics, NetworkDiscoveryError
     from wmi_scanner import WmiNetworkScanner
@@ -797,13 +799,18 @@ def init_db():
     if existing == 0:
         default_password = secrets.token_urlsafe(16)
         salt, pw_hash = _hash_password(default_password)
-        conn.execute(
-            "INSERT INTO users (username, password_hash, salt, role, active, must_change_password, created_at) "
-            "VALUES (?, ?, ?, 'admin', 1, 1, ?)",
-            ("admin", pw_hash, salt, time.time()),
-        )
-        conn.commit()
-        INITIAL_PASSWORD_PATH.write_text(f"Default admin password:\n{default_password}\n", encoding="utf-8")
+        try:
+            conn.execute(
+                "INSERT INTO users (username, password_hash, salt, role, active, must_change_password, created_at) "
+                "VALUES (?, ?, ?, 'admin', 1, 1, ?)",
+                ("admin", pw_hash, salt, time.time()),
+            )
+            write_password_file(INITIAL_PASSWORD_PATH, username="admin", password=default_password)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            INITIAL_PASSWORD_PATH.unlink(missing_ok=True)
+            raise
 
     # Eski sürümde düz metin tutulmuş gizli ayarları ilk açılışta platformun
     # güvenli deposuna taşı; mevcut dpapi:/fernet: kayıtlarını yeniden şifreleme.

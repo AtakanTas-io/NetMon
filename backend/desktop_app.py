@@ -59,6 +59,19 @@ def wait_until_up(port: int, timeout: float = 15.0) -> bool:
     return False
 
 
+def open_initial_password_file() -> bool:
+    """İlk giriş belgesini Windows'ta kullanıcının varsayılan metin düzenleyicisinde aç."""
+    path = server.INITIAL_PASSWORD_PATH
+    if os.name != "nt" or not path.is_file():
+        return False
+    try:
+        os.startfile(str(path))
+    except OSError as exc:
+        print(f"İlk giriş dosyası açılamadı: {path} ({exc})")
+        return False
+    return True
+
+
 def main():
     port = find_free_port()
 
@@ -77,6 +90,8 @@ def main():
     if not wait_until_up(port):
         print(f"Sunucu baslatilamadi. Elle deneyin: python server.py -> {url}")
         sys.exit(1)
+
+    open_initial_password_file()
 
     try:
         import webview

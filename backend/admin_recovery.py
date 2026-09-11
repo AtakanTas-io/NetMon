@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import os
 import secrets
 import sqlite3
 import sys
@@ -14,8 +13,10 @@ from pathlib import Path
 
 try:
     from .core.config import load_config as _load_config
+    from .core.initial_access import write_password_file
 except ImportError:
     from core.config import load_config as _load_config  # type: ignore[no-redef]
+    from core.initial_access import write_password_file  # type: ignore[no-redef]
 
 
 PASSWORD_HASH_ITERATIONS = 600_000
@@ -27,15 +28,6 @@ def _hash_password(password: str) -> tuple[str, str]:
         "sha256", password.encode("utf-8"), salt.encode("utf-8"), PASSWORD_HASH_ITERATIONS
     ).hex()
     return salt, f"pbkdf2_sha256${PASSWORD_HASH_ITERATIONS}${digest}"
-
-
-def _write_private_file(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
-    temporary.write_text(content, encoding="utf-8")
-    if os.name != "nt":
-        temporary.chmod(0o600)
-    temporary.replace(path)
 
 
 def recover_admin(database: Path, username: str = "admin", output: Path | None = None) -> dict[str, object]:
@@ -86,10 +78,7 @@ def recover_admin(database: Path, username: str = "admin", output: Path | None =
                         "INSERT INTO audit_log (ts, username, action, detail, success) VALUES (?, ?, ?, ?, ?)",
                         (now, "local-recovery", "admin_password_recovery", f"hesap={username}", 1),
                     )
-            _write_private_file(
-                output,
-                "NetMon temporary admin password (change after first login):\n" + password + "\n",
-            )
+            write_password_file(output, username=username, password=password, recovery=True)
             conn.commit()
         except Exception:
             conn.rollback()
