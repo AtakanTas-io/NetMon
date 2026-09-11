@@ -1,5 +1,6 @@
 import ipaddress
 import logging
+import os
 import platform
 import re
 import shutil
@@ -1357,6 +1358,17 @@ class NetworkDiagnostics:
     # ------------------------------------------------------------
     # NMAP ENTEGRASYONU (opsiyonel — kurulu değilse sessizce devre dışı)
     # ------------------------------------------------------------
+    @staticmethod
+    def _nmap_executable() -> str | None:
+        """PATH, açık ayar ve standart Windows klasörlerinden Nmap'i bul."""
+        candidates = [os.environ.get("NETMON_NMAP_PATH", "").strip().strip('"'), shutil.which("nmap")]
+        if platform.system() == "Windows":
+            for root_name in ("ProgramFiles(x86)", "ProgramFiles"):
+                root = os.environ.get(root_name, "").strip()
+                if root:
+                    candidates.append(os.path.join(root, "Nmap", "nmap.exe"))
+        return next((path for path in candidates if path and os.path.isfile(path)), None)
+
     def get_firewall_status(self) -> dict:
         """Yalnızca YEREL makine için gerçek firewall durumu tespiti.
         Uzak cihazlarda kesin sonuç iddia edilmez (bkz. server.py firewall
@@ -1546,11 +1558,11 @@ class NetworkDiagnostics:
         }
 
     def nmap_available(self) -> bool:
-        """nmap PATH'te var mı diye bakar. Binary'yi projeye gömmüyoruz,
-        yalnızca kullanıcının kendi kurduğu nmap'i (varsa) çağırıyoruz."""
-        if not shutil.which("nmap"):
+        """Kullanıcının kurduğu Nmap çalıştırılabiliyor mu diye bakar."""
+        executable = self._nmap_executable()
+        if not executable:
             return False
-        result = self.run_command(["nmap", "--version"])
+        result = self.run_command([executable, "--version"])
         return result.returncode == 0
 
     def nmap_discover(self, network, excluded_targets: tuple[str, ...] = ()) -> set[str]:
@@ -1564,7 +1576,10 @@ class NetworkDiagnostics:
         artık ağ boyutuna göre ölçeklenir."""
         timeout = min(90.0, max(15.0, network.num_addresses * 0.05))
         try:
-            command = ["nmap", "-sn"]
+            executable = self._nmap_executable()
+            if not executable:
+                return set()
+            command = [executable, "-sn"]
             if excluded_targets:
                 command.extend(["--exclude", ",".join(excluded_targets)])
             command.append(str(network))
@@ -1591,7 +1606,10 @@ class NetworkDiagnostics:
         port bilgisi) hiç kullanıcıya ulaşmıyordu."""
         out = {"open_ports": [], "services": []}
         try:
-            result = self.run_command(["nmap", "-sV", "--top-ports", "100", ip], timeout=20.0)
+            executable = self._nmap_executable()
+            if not executable:
+                return out
+            result = self.run_command([executable, "-sV", "--top-ports", "100", ip], timeout=20.0)
         except Exception as exc:
             logger.warning("[NMAP] service scan failed for %s: %s", ip, exc)
             return out
