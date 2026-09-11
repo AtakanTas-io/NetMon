@@ -6,6 +6,7 @@ Bu dosya [Keep a Changelog](https://keepachangelog.com/tr-TR/1.1.0/) düzenini i
 
 ### Eklendi
 
+- İlk giriş bilgilerinin masaüstü uygulaması açılırken otomatik gösterilmesi eklendi.
 - Birleşik komut araması, alan filtreleri, kayıtlı sorgular ve CSV dışa aktarma eklendi.
 - Bağlantı geçmişi, yeni hedef/bağlantı patlaması/periyodik bağlantı sinyalleri ve filtrelenebilir API uçları eklendi.
 - Yapılandırma uyumluluğu, CVE korelasyonu, varsayılan kimlik bilgisi denetimi ve pasif komşu doğrulaması eklendi.
@@ -26,6 +27,8 @@ Bu dosya [Keep a Changelog](https://keepachangelog.com/tr-TR/1.1.0/) düzenini i
 
 ### Düzeltildi
 
+- İlk yönetici parola dosyası kullanıcı adı, geçici parola, dosya konumu ve sonraki adımları Türkçe gösterecek biçimde düzenlendi.
+- Artık kullanılmayan eski parola sıfırlama ve geliştirme inceleme betikleri kaldırıldı.
 - Ping, traceroute ve ağ komutu uçları `diagnostics.run` iznine bağlandı; ping istekleri ortak araç kotasına alındı.
 - Ping hedefinde seçenek benzeri girdilerin komuta argüman olarak sızması engellendi.
 - Giriş kilidi kullanıcı adı ve istemci IP'si çiftiyle izlenirken dağıtık denemeler için daha yüksek eşikli genel kilit eklendi.

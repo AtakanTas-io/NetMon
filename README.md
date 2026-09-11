@@ -101,7 +101,7 @@ pip install -r requirements.txt
 python backend\desktop_app.py
 ```
 
-İlk açılışta yönetici parolası otomatik oluşturulur ve aktif veri dizinindeki `initial_admin_password.txt` dosyasına yazılır. Paketli masaüstü sürümünde bu dizin `%USERPROFILE%\.netmon`, kaynak koddan varsayılan çalıştırmada `backend` klasörüdür. İlk girişte parola değişikliği istenir ve dosya silinir.
+İlk açılışta `admin` hesabı için rastgele bir geçici parola oluşturulur. Masaüstü uygulaması giriş bilgilerini içeren `initial_admin_password.txt` dosyasını otomatik olarak açar. Dosyayı daha sonra elle bulmak gerekirse paketli sürümde `%USERPROFILE%\.netmon\initial_admin_password.txt`, kaynak koddan varsayılan çalıştırmada `backend\initial_admin_password.txt` konumundadır. İlk girişte yeni parola belirlemek zorunludur; değişiklik tamamlanınca geçici parola dosyası otomatik olarak silinir. Bu dosyayı GitHub'a yüklemeyin veya başka kişilerle paylaşmayın.
 
 Yönetici parolası kaybolursa veritabanını silmeyin. Uygulama kapalıyken `scripts\windows\yonetici-parolasi-kurtar.bat` dosyasını çalıştırın. Araç önce zaman damgalı bir veritabanı yedeği alır, `admin` hesabını etkinleştirir, eski oturum ve giriş kilitlerini kapatır ve tek kullanımlık parolayı aktif veri dizinine yazar. Farklı bir veri dizini kullanan kurulumlarda aynı işlemi şu şekilde çalıştırın:
 
