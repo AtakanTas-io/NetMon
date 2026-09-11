@@ -2356,7 +2356,11 @@
           placeholder="Parolanızı girin"
           required
         />
-        <div class="hint" style="margin-top:6px">İlk kurulum veya yönetici kurtarma parolası, NetMon veri dizinindeki <code>initial_admin_password.txt</code> dosyasındadır.</div>
+        <div class="hint" style="margin-top:6px">
+          İlk çalıştırmada giriş bilgileri otomatik olarak açılır. Dosyayı tekrar bulmak için
+          <code>%USERPROFILE%\.netmon\initial_admin_password.txt</code> konumuna bakın.
+          Kaynak koddan çalıştırmada dosya <code>backend</code> klasöründedir.
+        </div>
         <label
           style="
             display: flex;
