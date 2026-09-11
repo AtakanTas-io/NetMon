@@ -37,7 +37,7 @@ def test_recovery_backs_up_database_and_invalidates_old_access(tmp_path):
 
     assert result["backup"].is_file()
     assert output.is_file()
-    password = output.read_text(encoding="utf-8").splitlines()[-1]
+    password = output.read_text(encoding="utf-8").splitlines()[1]
     conn = sqlite3.connect(database)
     user = conn.execute(
         "SELECT password_hash, salt, active, must_change_password FROM users WHERE username='admin'"
@@ -73,7 +73,7 @@ def test_recovery_rolls_back_when_password_file_cannot_be_written(tmp_path, monk
     def fail_write(*_args, **_kwargs):
         raise OSError("disk full")
 
-    monkeypatch.setattr(recovery, "_write_private_file", fail_write)
+    monkeypatch.setattr(recovery, "write_password_file", fail_write)
     with pytest.raises(OSError, match="disk full"):
         recover_admin(database, output=output)
 
